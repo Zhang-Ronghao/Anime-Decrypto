@@ -529,6 +529,7 @@ function App() {
   const opponentSubmission = self?.team ? currentRoundSubmissionByTeam[otherTeam(self.team)] : undefined;
   const myVisibleCode = self?.team ? currentRoundCodeByTeam[self.team]?.code ?? null : null;
   const myTeamWordRecord = snapshot?.teamWords.find((entry) => entry.team === myTeam);
+  const opponentTeamWords = snapshot ? getTeamWords(snapshot, opponentTeam) : [];
   const myScore = snapshot ? scoreFor(snapshot, myTeam) : { intercepts: 0, miscomms: 0, net: 0 };
   const opponentScore = snapshot ? scoreFor(snapshot, opponentTeam) : { intercepts: 0, miscomms: 0, net: 0 };
   const myTeamWords = snapshot ? getTeamWords(snapshot, myTeam) : [];
@@ -548,6 +549,7 @@ function App() {
   const isCurrentEncryptPhase = isEncryptPhase(snapshot?.room.phase ?? 'lobby');
   const isDecodePhase = snapshot?.room.phase === 'decode';
   const isInterceptPhase = snapshot?.room.phase === 'intercept';
+  const isFinishedPhase = snapshot?.room.phase === 'finished';
   const isFirstRoundInterceptSkip = isInterceptPhase && snapshot?.room.round_number === 1;
   const canLeaveCurrentRoom = snapshot ? snapshot.room.status === 'lobby' || snapshot.room.status === 'finished' : false;
   const canTerminateCurrentGame = snapshot ? self?.is_host === true && snapshot.room.status === 'active' : false;
@@ -1698,7 +1700,9 @@ function App() {
               <div className="clue-matrix">
                 <div className="matrix-row matrix-head">
                   {[1, 2, 3, 4].map((number) => (
-                    <div key={number}>{number} ??</div>
+                    <div key={number}>
+                      {number} {isFinishedPhase ? opponentTeamWords[number - 1]?.trim() || '待公开' : '??'}
+                    </div>
                   ))}
                 </div>
                 {opponentClueRows.length > 0 ? (

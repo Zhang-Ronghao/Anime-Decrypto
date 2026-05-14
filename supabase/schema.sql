@@ -228,19 +228,29 @@ for select
 to authenticated
 using (
   public.is_room_member(room_id)
-  and team = public.current_player_team(room_id)
   and (
-    confirmed
-    or exists (
+    exists (
       select 1
       from public.rooms
-      join public.room_players
-        on public.room_players.room_id = public.team_words.room_id
       where public.rooms.id = public.team_words.room_id
-        and public.rooms.phase = 'word_assignment'
-        and public.room_players.auth_user_id = auth.uid()
-        and public.room_players.team = public.team_words.team
-        and public.room_players.role = 'encoder'
+        and public.rooms.phase = 'finished'
+    )
+    or (
+      team = public.current_player_team(room_id)
+      and (
+        confirmed
+        or exists (
+          select 1
+          from public.rooms
+          join public.room_players
+            on public.room_players.room_id = public.team_words.room_id
+          where public.rooms.id = public.team_words.room_id
+            and public.rooms.phase = 'word_assignment'
+            and public.room_players.auth_user_id = auth.uid()
+            and public.room_players.team = public.team_words.team
+            and public.room_players.role = 'encoder'
+        )
+      )
     )
   )
 );
