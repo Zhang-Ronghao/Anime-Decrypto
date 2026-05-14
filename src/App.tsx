@@ -977,7 +977,7 @@ function App() {
     return (
       <main className="app-shell">
         <section className="panel hero-panel">
-          <p className="eyebrow">解码战</p>
+          <p className="eyebrow">动漫高手——截码战</p>
           <h1>正在建立匿名会话...</h1>
         </section>
       </main>
@@ -988,7 +988,7 @@ function App() {
     return (
       <main className="app-shell">
         <section className="panel hero-panel">
-          <p className="eyebrow">解码战</p>
+          <p className="eyebrow">动漫高手——截码战</p>
           <h1>先接入 Supabase 再开始</h1>
           <p className="muted">
             需要在项目根目录创建 <code>.env.local</code>，填写 <code>VITE_SUPABASE_URL</code> 和{' '}
@@ -1026,42 +1026,50 @@ function App() {
   if (!roomId || !snapshot || !self) {
     return (
       <main className="app-shell">
-        <section className="panel hero-panel">
+        <section className="panel hero-panel hero-panel-home">
+          <div className="hero-orb hero-orb-red" aria-hidden="true" />
+          <div className="hero-orb hero-orb-blue" aria-hidden="true" />
           <div className="hero-copy">
-            <p className="eyebrow">Decrypto / 解码战</p>
-            <h1>多人联机密码对抗</h1>
-            <p className="muted">支持 4 / 6 / 8 / 10 / 12 / 14 席，开局后按队内顺序轮换加密/拦截者、解码者与队员</p>
+            <p className="eyebrow">动漫高手</p>
+            <h1>动漫高手——截码战</h1>
+            <div className="hero-tags" aria-label="游戏特点">
+              <span>4-14 人</span>
+              <span>双队对抗</span>
+              <span>实时房间</span>
+            </div>
           </div>
 
-          <div className="form-grid">
-            <label>
-              <span>你的昵称</span>
-              <input
-                maxLength={18}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="例如：阿澄"
-                value={displayName}
-              />
-            </label>
+          <div className="hero-form-card">
+            <div className="form-grid">
+              <label>
+                <span>你的昵称</span>
+                <input
+                  maxLength={18}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  placeholder="例如：阿澄"
+                  value={displayName}
+                />
+              </label>
 
-            <label>
-              <span>房间码</span>
-              <input
-                maxLength={6}
-                onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-                placeholder="6 位房间码"
-                value={joinCode}
-              />
-            </label>
-          </div>
+              <label>
+                <span>房间码</span>
+                <input
+                  maxLength={6}
+                  onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                  placeholder="6位数字/字母"
+                  value={joinCode}
+                />
+              </label>
+            </div>
 
-          <div className="button-row">
-            <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleCreateRoom()} type="button">
-              创建房间
-            </button>
-            <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleJoinRoom()} type="button">
-              加入房间
-            </button>
+            <div className="button-row hero-button-row">
+              <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleCreateRoom()} type="button">
+                创建房间
+              </button>
+              <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleJoinRoom()} type="button">
+                加入房间
+              </button>
+            </div>
           </div>
 
           {actionError ? <p className="error-text">{actionError}</p> : null}

@@ -99,6 +99,55 @@ select:focus {
   padding: 32px;
 }
 
+.hero-panel-home {
+  position: relative;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 420px);
+  align-items: center;
+  gap: 28px;
+  padding: 48px;
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top left, rgba(232, 76, 76, 0.18), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(48, 96, 212, 0.22), transparent 38%),
+    linear-gradient(135deg, #fffaf8 0%, #f7f9ff 52%, #fefefe 100%);
+  box-shadow: 0 30px 80px rgba(22, 35, 68, 0.14);
+}
+
+.hero-panel-home::after {
+  content: '';
+  position: absolute;
+  inset: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 22px;
+  pointer-events: none;
+}
+
+.hero-orb {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(10px);
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.hero-orb-red {
+  top: -44px;
+  left: -26px;
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(circle, rgba(233, 88, 88, 0.36), rgba(233, 88, 88, 0));
+}
+
+.hero-orb-blue {
+  right: -34px;
+  bottom: -54px;
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(69, 117, 228, 0.28), rgba(69, 117, 228, 0));
+}
+
 .hero-copy h1,
 .panel h2,
 .panel h3,
@@ -113,6 +162,44 @@ select:focus {
   line-height: 1.05;
 }
 
+.hero-panel-home .hero-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 22px;
+}
+
+.hero-panel-home .hero-copy h1 {
+  font-family: 'STZhongsong', 'Noto Serif SC', 'Songti SC', serif;
+  font-size: clamp(2.2rem, 5vw, 4.4rem);
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: #16233f;
+  text-shadow: 0 8px 24px rgba(22, 35, 63, 0.08);
+  white-space: nowrap;
+}
+
+.hero-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hero-tags span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid rgba(20, 33, 61, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #26344f;
+  font-size: 0.92rem;
+  font-weight: 800;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
+}
+
 .eyebrow,
 .section-label {
   margin: 0;
@@ -122,13 +209,72 @@ select:focus {
 }
 
 .eyebrow {
-  margin-bottom: 10px;
-  text-transform: uppercase;
+  width: fit-content;
+  margin-bottom: 2px;
+  padding: 0.42rem 0.8rem;
+  border: 1px solid rgba(22, 35, 63, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #4f5d75;
+  letter-spacing: 0.14em;
+  box-shadow: 0 10px 24px rgba(28, 42, 76, 0.06);
 }
 
 .muted {
   margin: 0;
   color: var(--muted);
+}
+
+.hero-form-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 18px;
+  padding: 26px;
+  border: 1px solid rgba(185, 196, 212, 0.6);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 250, 255, 0.82)),
+    rgba(255, 255, 255, 0.86);
+  box-shadow: 0 20px 44px rgba(24, 39, 74, 0.12);
+  backdrop-filter: blur(16px);
+}
+
+.hero-button-row {
+  gap: 14px;
+}
+
+.hero-button-row .primary-button,
+.hero-button-row .ghost-button {
+  flex: 1 1 0;
+  min-height: 52px;
+  border-radius: 14px;
+}
+
+.hero-form-card input {
+  min-height: 50px;
+  border-radius: 14px;
+  border-color: rgba(155, 169, 191, 0.8);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.hero-form-card input::placeholder {
+  color: #8b96aa;
+}
+
+.hero-form-card .primary-button {
+  background: linear-gradient(135deg, #d94a4a, #255fe0);
+  box-shadow: 0 14px 30px rgba(63, 92, 176, 0.24);
+}
+
+.hero-form-card .ghost-button {
+  border: 1px solid rgba(112, 133, 174, 0.25);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.hero-form-card .primary-button:hover,
+.hero-form-card .ghost-button:hover {
+  box-shadow: 0 16px 32px rgba(24, 39, 74, 0.12);
 }
 
 .top-bar {
@@ -1390,6 +1536,16 @@ code {
 @media (max-width: 900px) {
   .app-shell {
     padding: 18px 14px 36px;
+  }
+
+  .hero-panel-home {
+    grid-template-columns: 1fr;
+    min-height: auto;
+    padding: 30px 22px;
+  }
+
+  .hero-panel-home .hero-copy h1 {
+    font-size: clamp(1.5rem, 6.8vw, 2.2rem);
   }
 
   .layout-grid,
