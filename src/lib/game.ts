@@ -115,12 +115,25 @@ export async function disbandRoom(roomId: string) {
   }
 }
 
-export async function updateSelfSeat(roomId: string, team: Team | null, role: 'encoder' | 'decoder' | null) {
+export async function updateRoomLobbySettings(roomId: string, seatCount: number, roleRotationEnabled: boolean) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('update_room_lobby_settings', {
+    p_room_id: roomId,
+    p_seat_count: seatCount,
+    p_role_rotation_enabled: roleRotationEnabled,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function updateSelfSeat(roomId: string, team: Team | null, teamSeat: number | null) {
   const client = assertSupabase();
   const { error } = await client.rpc('update_self_seat', {
     p_room_id: roomId,
     p_team: team,
-    p_role: role,
+    p_team_seat: teamSeat,
   });
 
   if (error) {
@@ -258,6 +271,8 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
     .from('room_players')
     .select('*')
     .eq('room_id', roomId)
+    .order('team', { ascending: true })
+    .order('team_seat', { ascending: true, nullsFirst: false })
     .order('joined_at', { ascending: true });
   const wordsQuery = client
     .from('team_words')

@@ -8,6 +8,8 @@ create table if not exists public.rooms (
   phase text not null default 'lobby',
   round_number integer not null default 0,
   max_rounds integer not null default 8,
+  seat_count integer not null default 4 check (seat_count in (4, 6, 8, 10, 12, 14)),
+  role_rotation_enabled boolean not null default true,
   winner text null check (winner in ('A', 'B')),
   score_team_a_intercepts integer not null default 0,
   score_team_b_intercepts integer not null default 0,
@@ -25,6 +27,17 @@ add column if not exists team_a_words_confirmed boolean not null default false;
 alter table public.rooms
 add column if not exists team_b_words_confirmed boolean not null default false;
 
+alter table public.rooms
+add column if not exists seat_count integer not null default 4;
+
+alter table public.rooms
+add column if not exists role_rotation_enabled boolean not null default true;
+
+alter table public.rooms drop constraint if exists rooms_seat_count_check;
+alter table public.rooms
+add constraint rooms_seat_count_check
+check (seat_count in (4, 6, 8, 10, 12, 14));
+
 alter table public.rooms drop constraint if exists rooms_phase_check;
 update public.rooms
 set phase = 'encrypt'
@@ -39,13 +52,42 @@ create table if not exists public.room_players (
   auth_user_id uuid not null,
   player_name text not null,
   team text null check (team in ('A', 'B')),
-  role text null check (role in ('encoder', 'decoder')),
+  role text null check (role in ('encoder', 'decoder', 'member')),
+  team_seat integer null check (team_seat is null or team_seat > 0),
   is_host boolean not null default false,
   connected boolean not null default true,
   joined_at timestamptz not null default timezone('utc', now()),
   unique (room_id, auth_user_id),
-  unique (room_id, team, role)
+  unique (room_id, team, team_seat)
 );
+
+alter table public.room_players
+add column if not exists team_seat integer null;
+
+alter table public.room_players drop constraint if exists room_players_role_check;
+alter table public.room_players
+add constraint room_players_role_check
+check (role is null or role in ('encoder', 'decoder', 'member'));
+
+alter table public.room_players drop constraint if exists room_players_team_seat_check;
+alter table public.room_players
+add constraint room_players_team_seat_check
+check (team_seat is null or team_seat > 0);
+
+alter table public.room_players drop constraint if exists room_players_room_id_team_role_key;
+alter table public.room_players drop constraint if exists room_players_room_id_team_team_seat_key;
+alter table public.room_players
+add constraint room_players_room_id_team_team_seat_key
+unique (room_id, team, team_seat);
+
+update public.room_players
+set team_seat = case
+      when team_seat is not null then team_seat
+      when role = 'encoder' then 1
+      when role = 'decoder' then 2
+      else null
+    end
+where team is not null;
 
 create table if not exists public.team_words (
   id uuid primary key default gen_random_uuid(),
@@ -269,6 +311,111 @@ as $$
   ) picked;
 $$;
 
+create or replace function public.room_team_capacity(p_seat_count integer)
+returns integer
+language sql
+immutable
+as $$
+  select p_seat_count / 2;
+$$;
+
+create or replace function public.role_for_team_seat(p_team_seat integer)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when p_team_seat = 1 then 'encoder'
+    when p_team_seat = 2 then 'decoder'
+    else 'member'
+  end;
+$$;
+
+create or replace function public.compress_room_team_seats(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  with ranked as (
+    select
+      id,
+      row_number() over (
+        partition by team
+        order by team_seat asc, joined_at asc, id asc
+      ) as next_team_seat
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+      and team_seat is not null
+  )
+  update public.room_players as players
+  set team_seat = ranked.next_team_seat
+  from ranked
+  where players.id = ranked.id;
+end;
+$$;
+
+create or replace function public.assign_room_roles(p_room_id uuid, p_round_number integer default 1)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rotation_enabled boolean;
+  v_team text;
+  v_team_count integer;
+  v_encoder_seat integer;
+  v_decoder_seat integer;
+begin
+  select role_rotation_enabled
+  into v_rotation_enabled
+  from public.rooms
+  where id = p_room_id;
+
+  update public.room_players
+  set role = null
+  where room_id = p_room_id
+    and (team is null or team_seat is null);
+
+  foreach v_team in array array['A', 'B']
+  loop
+    select count(*)
+    into v_team_count
+    from public.room_players
+    where room_id = p_room_id
+      and team = v_team
+      and team_seat is not null;
+
+    if v_team_count = 0 then
+      continue;
+    end if;
+
+    v_encoder_seat := case
+      when v_rotation_enabled then mod(greatest(p_round_number, 1) - 1, v_team_count) + 1
+      else 1
+    end;
+
+    v_decoder_seat := case
+      when v_team_count >= 2 then (v_encoder_seat % v_team_count) + 1
+      else null
+    end;
+
+    update public.room_players
+    set role = case
+      when team_seat = v_encoder_seat then 'encoder'
+      when team_seat = v_decoder_seat then 'decoder'
+      else 'member'
+    end
+    where room_id = p_room_id
+      and team = v_team
+      and team_seat is not null;
+  end loop;
+end;
+$$;
+
 create or replace function public.generate_code_text()
 returns text
 language sql
@@ -441,7 +588,7 @@ begin
   from public.room_players as rp
   where rp.room_id = v_room.id;
 
-  if v_existing_player_count >= 4
+  if v_existing_player_count >= v_room.seat_count
      and not exists (
        select 1
        from public.room_players as rp
@@ -564,7 +711,89 @@ begin
 end;
 $$;
 
-create or replace function public.update_self_seat(p_room_id uuid, p_team text, p_role text)
+create or replace function public.update_room_lobby_settings(
+  p_room_id uuid,
+  p_seat_count integer,
+  p_role_rotation_enabled boolean
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_player_count integer;
+  v_max_team_players integer;
+begin
+  perform public.assert_authenticated();
+
+  if p_seat_count not in (4, 6, 8, 10, 12, 14) then
+    raise exception '席位数必须为 4、6、8、10、12 或 14。';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以修改房间设置。';
+  end if;
+
+  if v_room.status <> 'lobby' or v_room.phase <> 'lobby' then
+    raise exception '只有大厅阶段可以修改房间设置。';
+  end if;
+
+  select count(*)
+  into v_player_count
+  from public.room_players
+  where room_id = p_room_id;
+
+  if v_player_count > p_seat_count then
+    raise exception '当前房间人数已超过目标席位数。';
+  end if;
+
+  select coalesce(max(team_count), 0)
+  into v_max_team_players
+  from (
+    select count(*) as team_count
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+    group by team
+  ) teams;
+
+  if v_max_team_players > public.room_team_capacity(p_seat_count) then
+    raise exception '缩小席位失败：某队已超过新的队伍容量。';
+  end if;
+
+  if exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+      and team_seat is not null
+      and team_seat > public.room_team_capacity(p_seat_count)
+  ) then
+    raise exception '缩小席位失败：存在超出新队伍容量的已选座位。';
+  end if;
+
+  update public.rooms
+  set seat_count = p_seat_count,
+      role_rotation_enabled = p_role_rotation_enabled
+  where id = p_room_id;
+end;
+$$;
+
+drop function if exists public.update_self_seat(uuid, text, text);
+
+create or replace function public.update_self_seat(p_room_id uuid, p_team text, p_team_seat integer)
 returns void
 language plpgsql
 security definer
@@ -573,15 +802,12 @@ as $$
 declare
   v_room public.rooms%rowtype;
   v_self_id uuid;
+  v_team_capacity integer;
 begin
   perform public.assert_authenticated();
 
-  if (p_team is null) <> (p_role is null) then
+  if (p_team is null) <> (p_team_seat is null) then
     raise exception '席位信息不完整。';
-  end if;
-
-  if p_team is not null and (p_team not in ('A', 'B') or p_role not in ('encoder', 'decoder')) then
-    raise exception '无效席位。';
   end if;
 
   select *
@@ -589,8 +815,24 @@ begin
   from public.rooms
   where id = p_room_id;
 
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
   if v_room.status <> 'lobby' then
     raise exception '游戏开始后不能换座位。';
+  end if;
+
+  v_team_capacity := public.room_team_capacity(v_room.seat_count);
+
+  if p_team is not null then
+    if p_team not in ('A', 'B') then
+      raise exception '无效队伍。';
+    end if;
+
+    if p_team_seat is null or p_team_seat < 1 or p_team_seat > v_team_capacity then
+      raise exception '无效座位。';
+    end if;
   end if;
 
   select id
@@ -609,7 +851,7 @@ begin
       from public.room_players
       where room_id = p_room_id
         and team = p_team
-        and role = p_role
+        and team_seat = p_team_seat
         and id <> v_self_id
     ) then
       raise exception '该席位已被占用。';
@@ -618,7 +860,11 @@ begin
 
   update public.room_players
   set team = p_team,
-      role = p_role
+      team_seat = p_team_seat,
+      role = case
+        when p_team is null or p_team_seat is null then null
+        else public.role_for_team_seat(p_team_seat)
+      end
   where id = v_self_id;
 end;
 $$;
@@ -631,8 +877,8 @@ set search_path = public
 as $$
 declare
   v_room public.rooms%rowtype;
-  v_player_count integer;
   v_round integer := 1;
+  v_team_capacity integer;
 begin
   perform public.assert_authenticated();
 
@@ -646,29 +892,63 @@ begin
     raise exception '只有房主可以开始游戏。';
   end if;
 
-  select count(*)
-  into v_player_count
-  from public.room_players
-  where room_id = p_room_id
-    and team is not null
-    and role is not null;
+  v_team_capacity := public.room_team_capacity(v_room.seat_count);
 
-  if v_player_count <> 4 then
-    raise exception '需要 4 名玩家且席位完整。';
+  if exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and team is null
+  ) then
+    raise exception '开始游戏前，所有已加入玩家都需要先入座。';
+  end if;
+
+  if v_room.seat_count = 4 then
+    if (
+      select count(*)
+      from public.room_players
+      where room_id = p_room_id
+        and team in ('A', 'B')
+        and team_seat is not null
+    ) <> 4 then
+      raise exception '4 人房需要正好 4 名已入座玩家。';
+    end if;
   end if;
 
   if exists (
     select 1
-    from (
-      select team, role, count(*) as seat_count
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+      and team_seat is not null
+      and team_seat > v_team_capacity
+  ) then
+    raise exception '存在超出席位上限的已选座位。';
+  end if;
+
+  if exists (
+    select 1
+    from unnest(array['A', 'B']) as teams(team_code)
+    where not exists (
+      select 1
       from public.room_players
       where room_id = p_room_id
-      group by team, role
-    ) seats
-    where seat_count <> 1
+        and team = teams.team_code
+        and team_seat = 1
+    )
+    or not exists (
+      select 1
+      from public.room_players
+      where room_id = p_room_id
+        and team = teams.team_code
+        and team_seat = 2
+    )
   ) then
-    raise exception '队伍或角色分配不完整。';
+    raise exception '开始游戏前，两队的加密/拦截者和解码者位置都必须有人。';
   end if;
+
+  perform public.compress_room_team_seats(p_room_id);
+  perform public.assign_room_roles(p_room_id, v_round);
 
   delete from public.round_submissions where room_id = p_room_id;
   delete from public.round_codes where room_id = p_room_id;
@@ -728,7 +1008,7 @@ begin
       and team = p_team
       and role = 'encoder'
   ) then
-    raise exception '只有本队加密者可以生成词语。';
+    raise exception '只有本队加密/拦截者可以生成词语。';
   end if;
 
   if exists (
@@ -788,7 +1068,7 @@ begin
       and team = p_team
       and role = 'encoder'
   ) then
-    raise exception '只有本队加密者可以编辑词语。';
+    raise exception '只有本队加密/拦截者可以编辑词语。';
   end if;
 
   if exists (
@@ -847,7 +1127,7 @@ begin
       and team = p_team
       and role = 'encoder'
   ) then
-    raise exception '只有本队加密者可以确认词语。';
+    raise exception '只有本队加密/拦截者可以确认词语。';
   end if;
 
   if exists (
@@ -1322,7 +1602,7 @@ begin
       and team = v_attacker_team
       and role = 'encoder'
   ) then
-    raise exception '只有本队加密者可以提交拦截。';
+    raise exception '只有本队加密/拦截者可以提交拦截。';
   end if;
 
   update public.round_submissions
@@ -1434,6 +1714,8 @@ begin
 
   v_next_round := v_room.round_number + 1;
 
+  perform public.assign_room_roles(p_room_id, v_next_round);
+
   select id into v_a_encoder
   from public.room_players
   where room_id = p_room_id and team = 'A' and role = 'encoder';
@@ -1495,6 +1777,7 @@ begin
   update public.room_players
   set team = null,
       role = null,
+      team_seat = null,
       connected = true
   where room_id = p_room_id;
 
@@ -1548,6 +1831,7 @@ begin
   update public.room_players
   set team = null,
       role = null,
+      team_seat = null,
       connected = true
   where room_id = p_room_id;
 
@@ -1573,7 +1857,8 @@ grant execute on function public.join_room(text, text) to authenticated;
 grant execute on function public.cleanup_expired_rooms() to authenticated;
 grant execute on function public.leave_room(uuid) to authenticated;
 grant execute on function public.disband_room(uuid) to authenticated;
-grant execute on function public.update_self_seat(uuid, text, text) to authenticated;
+grant execute on function public.update_room_lobby_settings(uuid, integer, boolean) to authenticated;
+grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;
 grant execute on function public.generate_team_words(uuid, text) to authenticated;
 grant execute on function public.save_team_words(uuid, text, text[]) to authenticated;

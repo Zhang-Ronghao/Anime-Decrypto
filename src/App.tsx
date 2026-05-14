@@ -17,14 +17,29 @@ import {
   submitOwnGuess,
   subscribeToRoom,
   terminateGame,
+  updateRoomLobbySettings,
   updateSelfSeat,
 } from './lib/game';
 import { ensureSession, isSupabaseConfigured, supabase } from './lib/supabase';
-import { cn, isEncryptPhase, isSeatTaken, normalizeGuess, otherTeam, phaseLabel, roleName, roleOrder, teamName, teamOrder } from './lib/utils';
+import {
+  cn,
+  isEncryptPhase,
+  isSeatTaken,
+  lobbySeatOptions,
+  normalizeGuess,
+  otherTeam,
+  phaseLabel,
+  roleForSeat,
+  roleName,
+  teamCapacity,
+  teamOrder,
+} from './lib/utils';
 import type { PlayerRecord, Role, RoomSnapshot, RoundSubmissionRecord, Team } from './types';
 
 interface SeatCardProps {
-  title: string;
+  team: Team;
+  seatNumber: number;
+  previewRole: Role;
   occupant?: PlayerRecord;
   active?: boolean;
   onClick?: () => void;
@@ -42,42 +57,28 @@ interface ScoreTrackProps {
   tone: 'red' | 'blue';
 }
 
-function SeatCard({ title, occupant, active, onClick }: SeatCardProps) {
+interface RoleGroupProps {
+  team: Team;
+  players: PlayerRecord[];
+  selfId?: string;
+}
+
+function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: SeatCardProps) {
   return (
     <button
-      className={cn('seat-card', active && 'seat-card-active')}
+      className={cn('seat-card', `seat-card-${teamTone(team)}`, active && 'seat-card-active')}
       disabled={!onClick}
       onClick={onClick}
       type="button"
     >
-      <span className="seat-card-title">{title}</span>
+      <div className="seat-card-head">
+        <span className="seat-card-title">{seatNumber} 号位</span>
+        <span className={cn('seat-role-pill', `seat-role-pill-${previewRole}`)}>{roleName(previewRole)}</span>
+      </div>
       <strong>{occupant ? occupant.player_name : '空位'}</strong>
+      <small>{occupant ? `当前座位 #${seatNumber}` : '点击入座'}</small>
     </button>
   );
-}
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  if (error && typeof error === 'object') {
-    const record = error as Record<string, unknown>;
-    const parts = [record.message, record.details, record.hint]
-      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-
-    if (parts.length > 0) {
-      return parts.join(' | ');
-    }
-  }
-
-  return fallback;
-}
-
-function scoreFor(snapshot: RoomSnapshot, team: Team): TeamScore {
-  const intercepts = team === 'A' ? snapshot.room.score_team_a_intercepts : snapshot.room.score_team_b_intercepts;
-  const miscomms = team === 'A' ? snapshot.room.score_team_a_miscomms : snapshot.room.score_team_b_miscomms;
-  return { intercepts, miscomms, net: intercepts - miscomms };
 }
 
 function ScoreTrack({ count, kind, tone }: ScoreTrackProps) {
@@ -105,6 +106,63 @@ function ScoreTrack({ count, kind, tone }: ScoreTrackProps) {
       </span>
     </div>
   );
+}
+
+function RoleGroup({ team, players, selfId }: RoleGroupProps) {
+  const groups = [
+    { role: 'encoder', players: players.filter((player) => player.role === 'encoder') },
+    { role: 'decoder', players: players.filter((player) => player.role === 'decoder') },
+    { role: 'member', players: players.filter((player) => player.role === 'member') },
+  ] satisfies Array<{ role: Role; players: PlayerRecord[] }>;
+
+  return (
+    <article className={cn('role-strip-team', `role-strip-team-${teamTone(team)}`)}>
+      <div className="role-strip-line">
+        <strong className="role-strip-team-name">{displayTeamName(team)}</strong>
+        <span className="role-strip-divider" aria-hidden="true">
+          |
+        </span>
+        {groups.map((group) =>
+          group.players.length > 0 ? (
+            <div className="role-inline-group" key={group.role}>
+              <span className="role-inline-label">{roleName(group.role)}：</span>
+              <div className="role-inline-names">
+                {group.players.map((player) => (
+                  <span className={cn('role-chip', player.id === selfId && 'role-chip-self')} key={player.id}>
+                    {player.player_name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null,
+        )}
+      </div>
+    </article>
+  );
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const parts = [record.message, record.details, record.hint]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+    if (parts.length > 0) {
+      return parts.join(' | ');
+    }
+  }
+
+  return fallback;
+}
+
+function scoreFor(snapshot: RoomSnapshot, team: Team): TeamScore {
+  const intercepts = team === 'A' ? snapshot.room.score_team_a_intercepts : snapshot.room.score_team_b_intercepts;
+  const miscomms = team === 'A' ? snapshot.room.score_team_a_miscomms : snapshot.room.score_team_b_miscomms;
+  return { intercepts, miscomms, net: intercepts - miscomms };
 }
 
 function displayTeamName(team: Team): string {
@@ -156,6 +214,42 @@ function getTeamWords(snapshot: RoomSnapshot, team: Team): string[] {
   return snapshot.teamWords.find((entry) => entry.team === team)?.words ?? [];
 }
 
+function getTeamPlayers(players: PlayerRecord[], team: Team): PlayerRecord[] {
+  return players
+    .filter((player) => player.team === team)
+    .slice()
+    .sort((left, right) => {
+      const leftSeat = left.team_seat ?? Number.MAX_SAFE_INTEGER;
+      const rightSeat = right.team_seat ?? Number.MAX_SAFE_INTEGER;
+
+      if (leftSeat !== rightSeat) {
+        return leftSeat - rightSeat;
+      }
+
+      return left.joined_at.localeCompare(right.joined_at);
+    });
+}
+
+function getSortedRoster(players: PlayerRecord[]): PlayerRecord[] {
+  return players.slice().sort((left, right) => {
+    const leftTeam = left.team ?? 'Z';
+    const rightTeam = right.team ?? 'Z';
+
+    if (leftTeam !== rightTeam) {
+      return leftTeam.localeCompare(rightTeam);
+    }
+
+    const leftSeat = left.team_seat ?? Number.MAX_SAFE_INTEGER;
+    const rightSeat = right.team_seat ?? Number.MAX_SAFE_INTEGER;
+
+    if (leftSeat !== rightSeat) {
+      return leftSeat - rightSeat;
+    }
+
+    return left.joined_at.localeCompare(right.joined_at);
+  });
+}
+
 function getTeamSubmissions(snapshot: RoomSnapshot, team: Team): RoundSubmissionRecord[] {
   return snapshot.submissions
     .filter((entry) => entry.team === team)
@@ -194,6 +288,20 @@ function buildClueMatrixRows(
         cells,
       };
     });
+}
+
+function hasCoreSeats(players: PlayerRecord[], team: Team): boolean {
+  return [1, 2].every((seat) => players.some((player) => player.team === team && player.team_seat === seat));
+}
+
+function teamLobbyStatus(players: PlayerRecord[], team: Team): string {
+  const missingSeats = [1, 2].filter((seat) => !players.some((player) => player.team === team && player.team_seat === seat));
+
+  if (missingSeats.length === 0) {
+    return '已满足开局核心位';
+  }
+
+  return `缺少 ${missingSeats.join('、')} 号位`;
 }
 
 function isMissingRoomError(error: unknown): boolean {
@@ -291,7 +399,7 @@ function App() {
       } catch (error) {
         if (!cancelled) {
           if (isMissingRoomError(error)) {
-            resetRoomState('房间已结束或不存在。');
+            resetRoomState('房间已结束或不存在');
           } else {
             setActionError(getErrorMessage(error, '读取房间失败'));
           }
@@ -353,6 +461,10 @@ function App() {
     ) as Partial<Record<Team, (typeof snapshot.roundCodes)[number]>>;
   }, [snapshot]);
 
+  const rosterPlayers = useMemo(() => (snapshot ? getSortedRoster(snapshot.players) : []), [snapshot]);
+  const teamAPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'A') : []), [snapshot]);
+  const teamBPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'B') : []), [snapshot]);
+
   const myTeam = self?.team ?? 'A';
   const opponentTeam = otherTeam(myTeam);
   const myTeamSubmission = self?.team ? currentRoundSubmissionByTeam[self.team] : undefined;
@@ -373,16 +485,24 @@ function App() {
   const opponentClueRows = buildClueMatrixRows(opponentSubmissions, { showGuessNumbers: true });
   const decodeDigits = guessDigits(decodeGuess);
   const interceptDigits = guessDigits(interceptGuess);
+  const isLobbyPhase = snapshot?.room.phase === 'lobby';
   const isWordAssignmentPhase = snapshot?.room.phase === 'word_assignment';
   const isCurrentEncryptPhase = isEncryptPhase(snapshot?.room.phase ?? 'lobby');
   const isDecodePhase = snapshot?.room.phase === 'decode';
   const isInterceptPhase = snapshot?.room.phase === 'intercept';
   const canLeaveCurrentRoom = snapshot ? snapshot.room.status === 'lobby' || snapshot.room.status === 'finished' : false;
   const canTerminateCurrentGame = snapshot ? self?.is_host === true && snapshot.room.status === 'active' : false;
-  const allSeatsFilled = snapshot
-    ? teamOrder.every((team) =>
-        roleOrder.every((role) => snapshot.players.some((player) => player.team === team && player.role === role)),
-      )
+  const currentSeatCount = snapshot?.room.seat_count ?? 4;
+  const perTeamCapacity = teamCapacity(currentSeatCount);
+  const allPlayersSeated = snapshot
+    ? snapshot.players.every((player) => Boolean(player.team) && player.team_seat !== null)
+    : false;
+  const coreSeatsReady = snapshot ? teamOrder.every((team) => hasCoreSeats(snapshot.players, team)) : false;
+  const seatedPlayerCount = snapshot
+    ? snapshot.players.filter((player) => Boolean(player.team) && player.team_seat !== null).length
+    : 0;
+  const startGameReady = snapshot
+    ? allPlayersSeated && coreSeatsReady && (snapshot.room.seat_count > 4 || seatedPlayerCount === 4)
     : false;
   const wordAssignmentCount = snapshot
     ? Number(snapshot.room.team_a_words_confirmed) + Number(snapshot.room.team_b_words_confirmed)
@@ -400,7 +520,15 @@ function App() {
   const canSubmitDecode = isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept = isInterceptPhase && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
   const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
-  const displayedInterceptDigits = opponentSubmission?.intercept_guess ? guessDigits(opponentSubmission.intercept_guess) : interceptDigits;
+  const displayedInterceptDigits = opponentSubmission?.intercept_guess
+    ? guessDigits(opponentSubmission.intercept_guess)
+    : interceptDigits;
+  const myTeamCluesSubmitted = Boolean(myTeamSubmission?.clues);
+  const opponentCluesSubmitted = Boolean(opponentSubmission?.clues);
+  const myTeamDecodeSubmitted = Boolean(myTeamSubmission?.own_guess);
+  const opponentDecodeSubmitted = Boolean(opponentSubmission?.own_guess);
+  const myTeamInterceptSubmitted = Boolean(opponentSubmission?.intercept_guess);
+  const opponentInterceptSubmitted = Boolean(myTeamSubmission?.intercept_guess);
   const encryptCodeDigits = myVisibleCode?.split('-') ?? [];
   const encryptRows = [0, 1, 2].map((index) => {
     const digit = encryptCodeDigits[index] ?? '';
@@ -413,27 +541,53 @@ function App() {
   });
   const displayedOwnWords = isWordAssignmentPhase && canEditWordAssignment ? teamWordForm : myTeamWords;
   const actionTitle = isWordAssignmentPhase
-    ? canEditWordAssignment
-      ? '设置本队词语'
-      : myTeamConfirmed
-        ? '本队词语已确认'
-        : '等待加密者分配词语'
-    : canSubmitClues
+    ? '设置本队词语'
+    : snapshot?.room.phase === 'encrypt'
       ? '填写本轮线索'
+      : isDecodePhase
+        ? '讨论己方密码'
+        : isInterceptPhase
+          ? '讨论对方密码'
+          : snapshot?.room.phase === 'result'
+            ? '查看本轮结果'
+            : snapshot?.room.phase === 'finished'
+              ? '游戏已结束'
+              : '等待其他玩家';
+  const actionHint = isWordAssignmentPhase
+    ? canEditWordAssignment
+      ? '填好 4 个词语后确认'
+      : myTeamConfirmed
+        ? '本队已确认，等待另一队加密者确认词语'
+        : '等待本队加密者确认词语'
+    : canSubmitClues
+      ? '按密码顺序填写 3 条线索'
+      : snapshot?.room.phase === 'encrypt'
+        ? myTeamCluesSubmitted
+          ? opponentCluesSubmitted
+            ? '双方线索已提交，等待进入解密阶段'
+            : '本队线索已提交，等待另一队加密者提交线索'
+          : '等待本队加密者提交线索'
       : canSubmitDecode
-        ? '解出我方密码'
-        : canSubmitIntercept
-          ? '截获对方密码'
-          : isDecodePhase
-            ? '讨论我方解密'
+        ? '根据线索选择 3 位解码'
+        : isDecodePhase
+          ? myTeamDecodeSubmitted
+            ? opponentDecodeSubmitted
+              ? '双方解码已提交，等待进入截码阶段'
+              : '本队解码已提交，等待另一队解码者提交'
+            : '等待本队解码者提交'
+          : canSubmitIntercept
+            ? '根据对方线索进行拦截'
             : isInterceptPhase
-              ? '讨论对方拦截'
+              ? myTeamInterceptSubmitted
+                ? opponentInterceptSubmitted
+                  ? '双方截码已提交，等待公布结果'
+                  : '本队截码已提交，等待另一队拦截者提交截码'
+                : '等待本队拦截者提交截码'
               : snapshot?.room.phase === 'result'
-                ? '查看本轮结果'
+                ? '查看本轮结算'
                 : snapshot?.room.phase === 'finished'
-                  ? '游戏已结束'
-                  : '等待其他玩家';
-  const actionMeta = self?.team ? `${displayTeamName(myTeam)} · ${self.role ? roleName(self.role) : '未入座'}` : '未入座';
+                  ? '本局结束，可重新开始'
+                  : '等待房间同步';
   const progressText =
     snapshot?.room.phase === 'word_assignment'
       ? `词语确认 ${wordAssignmentCount}/2`
@@ -446,8 +600,17 @@ function App() {
             : snapshot?.room.phase === 'result'
               ? '本轮已经结算'
               : snapshot?.room.phase === 'finished'
-                ? '可以重新开始或解散房间'
+                ? '对局已结束'
                 : '等待房间同步';
+  const lobbyStartHint = snapshot
+    ? !allPlayersSeated
+      ? '开始前，所有已加入房间的玩家都需要先入座'
+      : !coreSeatsReady
+        ? '开始前，两队的 1 号位和 2 号位都必须有人'
+        : snapshot.room.seat_count === 4 && seatedPlayerCount !== 4
+          ? '4 人房需要满员开局'
+          : '已满足开局条件'
+    : '';
 
   useEffect(() => {
     canEditWordsRef.current = canEditWordAssignment;
@@ -491,6 +654,8 @@ function App() {
       return;
     }
 
+    const team = self.team;
+
     if (teamWordFormKey === teamWordSavedKey) {
       return;
     }
@@ -498,7 +663,7 @@ function App() {
     const timer = window.setTimeout(() => {
       const nextWords = [...teamWordForm];
 
-      void saveTeamWords(snapshot.room.id, self.team!, nextWords)
+      void saveTeamWords(snapshot.room.id, team, nextWords)
         .then(() => {
           setTeamWordSavedKey(serializeWords(nextWords));
         })
@@ -560,7 +725,7 @@ function App() {
   async function handleCreateRoom() {
     const name = displayName.trim();
     if (!name) {
-      setActionError('先输入你的昵称。');
+      setActionError('先输入你的昵称');
       return;
     }
 
@@ -580,7 +745,7 @@ function App() {
     const code = joinCode.trim();
 
     if (!name || !code) {
-      setActionError('加入房间前需要填写昵称和房间码。');
+      setActionError('加入房间前需要填写昵称和房间码');
       return;
     }
 
@@ -595,20 +760,40 @@ function App() {
     window.history.replaceState({}, '', `?room=${result.room_code}`);
   }
 
-  async function handleSeat(team: Team, role: Role) {
+  async function handleSeat(team: Team, teamSeat: number) {
     if (!snapshot) {
       return;
     }
 
-    await withAction(`seat-${team}-${role}`, () => updateSelfSeat(snapshot.room.id, team, role));
+    await withAction(`seat-${team}-${teamSeat}`, () => updateSelfSeat(snapshot.room.id, team, teamSeat));
   }
 
   async function handleStandUp() {
-    if (!snapshot || !self?.team || !self.role) {
+    if (!snapshot || !self?.team || self.team_seat === null) {
       return;
     }
 
     await withAction('seat-clear', () => updateSelfSeat(snapshot.room.id, null, null));
+  }
+
+  async function handleSeatCountChange(seatCount: number) {
+    if (!snapshot || !self?.is_host || seatCount === snapshot.room.seat_count) {
+      return;
+    }
+
+    await withAction('lobby-seat-count', () =>
+      updateRoomLobbySettings(snapshot.room.id, seatCount, snapshot.room.role_rotation_enabled),
+    );
+  }
+
+  async function handleRoleRotationToggle(enabled: boolean) {
+    if (!snapshot || !self?.is_host || enabled === snapshot.room.role_rotation_enabled) {
+      return;
+    }
+
+    await withAction('lobby-rotation', () =>
+      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, enabled),
+    );
   }
 
   async function handleStartGame() {
@@ -633,7 +818,8 @@ function App() {
       return;
     }
 
-    const result = await withAction('generate-team-words', () => generateTeamWords(snapshot.room.id, self.team!));
+    const team = self.team;
+    const result = await withAction('generate-team-words', () => generateTeamWords(snapshot.room.id, team));
     if (!result || result.length !== 4) {
       return;
     }
@@ -647,19 +833,23 @@ function App() {
       return;
     }
 
+    const team = self.team;
+
     const normalizedWords = teamWordForm.map((word) => word.trim());
     if (normalizedWords.some((word) => !word)) {
-      setActionError('需要填写 4 个词语。');
+      setActionError('需要填写 4 个词语');
       return;
     }
 
     const uniqueWords = new Set(normalizedWords);
     if (uniqueWords.size !== normalizedWords.length) {
-      setActionError('同队词语不能重复。');
+      setActionError('同队词语不能重复');
       return;
     }
 
-    const result = await withAction('confirm-team-words', () => confirmTeamWords(snapshot.room.id, self.team!, normalizedWords));
+    const result = await withAction('confirm-team-words', () =>
+      confirmTeamWords(snapshot.room.id, team, normalizedWords),
+    );
     if (result === null) {
       return;
     }
@@ -673,12 +863,14 @@ function App() {
       return;
     }
 
+    const team = self.team;
+
     if (clueForm.some((value) => !value.trim())) {
-      setActionError('需要填写 3 条加密结果。');
+      setActionError('需要填写 3 条加密结果');
       return;
     }
 
-    await withAction('submit-clues', () => submitClues(snapshot.room.id, self.team!, clueForm));
+    await withAction('submit-clues', () => submitClues(snapshot.room.id, team, clueForm));
     setClueForm(['', '', '']);
   }
 
@@ -687,13 +879,15 @@ function App() {
       return;
     }
 
+    const team = self.team;
+
     const guess = normalizeGuess(decodeGuess);
     if (guess.length !== 5) {
-      setActionError('解密密码格式应为 1-2-3。');
+      setActionError('解密密码格式应为 1-2-3');
       return;
     }
 
-    await withAction('submit-decode', () => submitOwnGuess(snapshot.room.id, self.team!, guess));
+    await withAction('submit-decode', () => submitOwnGuess(snapshot.room.id, team, guess));
     setDecodeGuess('');
   }
 
@@ -702,13 +896,15 @@ function App() {
       return;
     }
 
+    const team = self.team;
+
     const guess = normalizeGuess(interceptGuess);
     if (guess.length !== 5) {
-      setActionError('拦截密码格式应为 1-2-3。');
+      setActionError('拦截密码格式应为 1-2-3');
       return;
     }
 
-    await withAction('submit-intercept', () => submitInterceptGuess(snapshot.room.id, otherTeam(self.team!), guess));
+    await withAction('submit-intercept', () => submitInterceptGuess(snapshot.room.id, otherTeam(team), guess));
     setInterceptGuess('');
   }
 
@@ -762,7 +958,7 @@ function App() {
       return;
     }
 
-    const confirmed = window.confirm('确定要终止当前游戏吗？所有玩家将返回选座大厅。');
+    const confirmed = window.confirm('确定要终止当前游戏吗？所有玩家将返回选座大厅');
     if (!confirmed) {
       return;
     }
@@ -793,10 +989,10 @@ function App() {
       <main className="app-shell">
         <section className="panel hero-panel">
           <p className="eyebrow">解码战</p>
-          <h1>先接入 Supabase 再开始。</h1>
+          <h1>先接入 Supabase 再开始</h1>
           <p className="muted">
             需要在项目根目录创建 <code>.env.local</code>，填写 <code>VITE_SUPABASE_URL</code> 和{' '}
-            <code>VITE_SUPABASE_ANON_KEY</code>，并执行 <code>supabase/schema.sql</code>。
+            <code>VITE_SUPABASE_ANON_KEY</code>，并执行 <code>supabase/schema.sql</code>
           </p>
         </section>
       </main>
@@ -820,8 +1016,8 @@ function App() {
       <main className="app-shell">
         <section className="panel hero-panel">
           <p className="eyebrow">房间 {snapshot.room.room_code}</p>
-          <h1>你还没有加入这个房间。</h1>
-          <p className="muted">请返回首页重新加入，或检查匿名登录是否被浏览器重置。</p>
+          <h1>你还没有加入这个房间</h1>
+          <p className="muted">请返回首页重新加入，或检查匿名登录是否被浏览器重置</p>
         </section>
       </main>
     );
@@ -833,8 +1029,8 @@ function App() {
         <section className="panel hero-panel">
           <div className="hero-copy">
             <p className="eyebrow">Decrypto / 解码战</p>
-            <h1>四人联机密码对抗</h1>
-            <p className="muted">2v2 分队，一人加密，一人解码。每轮依次进行加密、解密、拦截，再统一结算。</p>
+            <h1>多人联机密码对抗</h1>
+            <p className="muted">支持 4 / 6 / 8 / 10 / 12 / 14 席，开局后按队内顺序轮换加密/拦截者、解码者与队员</p>
           </div>
 
           <div className="form-grid">
@@ -874,7 +1070,8 @@ function App() {
     );
   }
 
-  const myWordPlaceholder = isWordAssignmentPhase && self.role === 'decoder' && !myTeamConfirmed ? '待确认' : '等待发牌';
+  const myWordPlaceholder =
+    isWordAssignmentPhase && self.role !== 'encoder' && !myTeamConfirmed ? '待确认' : '等待发牌';
 
   return (
     <main className="app-shell">
@@ -947,67 +1144,129 @@ function App() {
 
       {actionError ? <p className="error-banner">{actionError}</p> : null}
 
-      {snapshot.room.phase === 'lobby' ? (
+      {isLobbyPhase ? (
         <section className="layout-grid">
           <article className="panel">
-            <h2>座位选择</h2>
-            <p className="muted">每队固定 1 名加密者和 1 名解码者。点击空位直接入座。</p>
-
-            <div className="seat-grid">
-              {teamOrder.map((team) =>
-                roleOrder.map((role) => {
-                  const occupant = snapshot.players.find((player) => player.team === team && player.role === role);
-                  return (
-                    <SeatCard
-                      active={self.team === team && self.role === role}
-                      key={`${team}-${role}`}
-                      occupant={occupant}
-                      onClick={
-                        isSeatTaken(snapshot.players, team, role, self.id) || busyKey !== null
-                          ? undefined
-                          : () => void handleSeat(team, role)
-                      }
-                      title={`${teamName(team)} · ${roleName(role)}`}
-                    />
-                  );
-                }),
-              )}
+            <div className="panel-head">
+              <div>
+                <h2>选座大厅</h2>
+                <p className="muted">队内可自由选择任意空位 1 号位是加密/拦截者，2 号位是解码者，其余为队员位</p>
+              </div>
             </div>
 
-            {self.team && self.role ? (
-              <div className="seat-action-row">
+            {self.is_host ? (
+              <div className="lobby-settings">
+                <label className="lobby-setting">
+                  <span>房间席位</span>
+                  <select
+                    disabled={busyKey !== null}
+                    onChange={(event) => void handleSeatCountChange(Number(event.target.value))}
+                    value={snapshot.room.seat_count}
+                  >
+                    {lobbySeatOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option} 席
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="lobby-toggle">
+                  <input
+                    checked={snapshot.room.role_rotation_enabled}
+                    disabled={busyKey !== null}
+                    onChange={(event) => void handleRoleRotationToggle(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>身份轮换</strong>
+                    <span>默认开启，每轮结束后按队内顺序轮换身份</span>
+                  </div>
+                </label>
+              </div>
+            ) : (
+              <div className="lobby-settings lobby-settings-readonly">
+                <div className="tag">房间席位：{snapshot.room.seat_count} 席</div>
+                <div className="tag">身份轮换：{snapshot.room.role_rotation_enabled ? '开启' : '关闭'}</div>
+              </div>
+            )}
+
+            <div className="team-seat-columns">
+              {teamOrder.map((team) => (
+                <section className={cn('team-seat-panel', `team-seat-panel-${teamTone(team)}`)} key={team}>
+                  <header className="team-seat-head">
+                    <div>
+                      <h3>{displayTeamName(team)}</h3>
+                      <p>{teamLobbyStatus(snapshot.players, team)}</p>
+                    </div>
+                    <span className={cn('team-badge', `team-badge-${teamTone(team)}`)}>{perTeamCapacity} 席</span>
+                  </header>
+
+                  <div className="seat-grid">
+                    {Array.from({ length: perTeamCapacity }, (_, index) => {
+                      const seatNumber = index + 1;
+                      const previewRole = roleForSeat(seatNumber);
+                      const occupant = snapshot.players.find(
+                        (player) => player.team === team && player.team_seat === seatNumber,
+                      );
+
+                      return (
+                        <SeatCard
+                          active={self.team === team && self.team_seat === seatNumber}
+                          key={`${team}-${seatNumber}`}
+                          occupant={occupant}
+                          onClick={
+                            isSeatTaken(snapshot.players, team, seatNumber, self.id) || busyKey !== null
+                              ? undefined
+                              : () => void handleSeat(team, seatNumber)
+                          }
+                          previewRole={previewRole}
+                          seatNumber={seatNumber}
+                          team={team}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+
+            <div className="seat-action-row">
+              {self.team && self.team_seat ? (
                 <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleStandUp()} type="button">
                   站起
                 </button>
-              </div>
-            ) : null}
+              ) : null}
 
-            {self.is_host ? (
-              <button
-                className="primary-button wide-button"
-                disabled={!allSeatsFilled || busyKey !== null}
-                onClick={() => void handleStartGame()}
-                type="button"
-              >
-                开始游戏
-              </button>
-            ) : (
-              <p className="muted">等待房主开始游戏。</p>
-            )}
+              {self.is_host ? (
+                <button
+                  className="primary-button"
+                  disabled={!startGameReady || busyKey !== null}
+                  onClick={() => void handleStartGame()}
+                  type="button"
+                >
+                  开始游戏
+                </button>
+              ) : null}
+            </div>
+
+            <p className="muted lobby-hint">{self.is_host ? lobbyStartHint : '等待房主开始游戏'}</p>
           </article>
 
           <article className="panel">
             <h2>房间玩家</h2>
             <div className="roster-list">
-              {snapshot.players.map((player) => (
+              {rosterPlayers.map((player) => (
                 <div className="roster-item" key={player.id}>
                   <div>
                     <strong>{player.player_name}</strong>
                     <p>{player.is_host ? '房主' : '成员'}</p>
                   </div>
                   <div className="tag-row">
-                    <span className="tag">{player.team ? teamName(player.team) : '未分队'}</span>
-                    <span className="tag">{player.role ? roleName(player.role) : '未选角色'}</span>
+                    <span className="tag">{player.team ? displayTeamName(player.team) : '未入队'}</span>
+                    <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
+                      {player.role ? roleName(player.role) : '未选座位'}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -1016,12 +1275,20 @@ function App() {
         </section>
       ) : (
         <>
+          <section className="role-strip">
+            <RoleGroup players={teamAPlayers} selfId={self.id} team="A" />
+            <RoleGroup players={teamBPlayers} selfId={self.id} team="B" />
+          </section>
+
           <section className="action-panel">
             <div className="action-header">
-              <div>
-                <p className="section-label">当前操作</p>
+              <div className="action-header-card">
+                <div className="identity-banner">
+                  <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
+                  {self.role ? <span className="identity-role">{roleName(self.role)}</span> : null}
+                </div>
                 <h2>{actionTitle}</h2>
-                <span>{actionMeta}</span>
+                <p className="action-hint">{actionHint}</p>
               </div>
 
               {canEditWordAssignment ? (
@@ -1059,7 +1326,7 @@ function App() {
               <div className="action-body-main">
                 {canEditWordAssignment ? (
                   <div className="action-lines">
-                    <div className="action-line-head">
+                    <div className="action-line-head action-line-head-balanced">
                       <span>本队词位</span>
                       <span>填写词语</span>
                     </div>
@@ -1088,24 +1355,24 @@ function App() {
                       >
                         随机生成
                       </button>
-                      <span className="muted">随机后仍可继续修改，双方确认后自动进入第一轮加密。</span>
+                      <span className="muted">随机后仍可继续修改，双方确认后自动进入第一轮加密</span>
                     </div>
                   </div>
                 ) : isWordAssignmentPhase ? (
                   <div className="wait-card">
                     <strong>{progressText}</strong>
                     <p className="muted">
-                      {myTeamConfirmed ? '本队词语已锁定，等待另一队确认。' : '等待本队加密者完成词语分配。'}
+                      {myTeamConfirmed ? '本队词语已锁定，等待另一队加密者确认词语' : '等待本队加密者确认词语'}
                     </p>
                   </div>
                 ) : isDecodePhase && (myTeamSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
-                    <div className="action-line-head">
-                      <span>本轮线索</span>
-                      <span>选择解码</span>
+                    <div className="action-line-head action-line-head-balanced">
+                      <span className="action-line-head-cell">本轮线索</span>
+                      <span className="action-line-head-cell">选择解码</span>
                     </div>
                     {(myTeamSubmission?.clues ?? []).map((clue, index) => (
-                      <label className="action-line" key={`${clue}-${index}`}>
+                      <label className="action-line action-line-balanced" key={`${clue}-${index}`}>
                         <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
                         <select
                           disabled={!canSubmitDecode}
@@ -1124,12 +1391,12 @@ function App() {
                   </div>
                 ) : isInterceptPhase && (opponentSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
-                    <div className="action-line-head">
-                      <span>对方线索</span>
-                      <span>选择截码</span>
+                    <div className="action-line-head action-line-head-balanced">
+                      <span className="action-line-head-cell">对方线索</span>
+                      <span className="action-line-head-cell">选择截码</span>
                     </div>
                     {(opponentSubmission?.clues ?? []).map((clue, index) => (
-                      <label className="action-line" key={`${clue}-${index}`}>
+                      <label className="action-line action-line-balanced" key={`${clue}-${index}`}>
                         <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
                         <select
                           disabled={!canSubmitIntercept}
@@ -1148,6 +1415,10 @@ function App() {
                   </div>
                 ) : canSubmitClues ? (
                   <div className="action-lines">
+                    <div className="action-line-head">
+                      <span className="action-line-head-cell">本轮密码</span>
+                      <span className="action-line-head-cell">填写线索</span>
+                    </div>
                     {encryptRows.map((row, index) => (
                       <label className="action-line" key={index}>
                         <span className={cn('code-word', `code-word-${teamTone(myTeam)}`)}>
@@ -1167,6 +1438,18 @@ function App() {
                       </label>
                     ))}
                   </div>
+                ) : snapshot.room.phase === 'finished' ? (
+                  <div
+                    className={cn(
+                      'finished-result-card',
+                      snapshot.room.winner
+                        ? `finished-result-card-${teamTone(snapshot.room.winner)}`
+                        : 'finished-result-card-draw',
+                    )}
+                  >
+                    <span className="finished-result-chip">最终结果</span>
+                    <strong>{snapshot.room.winner ? `${displayTeamName(snapshot.room.winner)} 获胜` : '本局平局'}</strong>
+                  </div>
                 ) : (
                   <div className="wait-card">
                     <strong>{progressText}</strong>
@@ -1184,7 +1467,7 @@ function App() {
           <section className="main-info-grid">
             <article className={cn('info-panel', `info-panel-${teamTone(myTeam)}`)}>
               <header className="info-header">
-                <div>
+                <div className="info-header-copy">
                   <h2>我方信息区</h2>
                   {isWordAssignmentPhase ? (
                     <small className="header-note">
@@ -1225,7 +1508,7 @@ function App() {
                   ))
                 ) : (
                   <div className="matrix-empty">
-                      {isWordAssignmentPhase
+                    {isWordAssignmentPhase
                       ? myTeamConfirmed || canEditWordAssignment
                         ? '词语确认后，将从这里开始积累我方线索记录'
                         : '待本队加密者确认词语'
@@ -1235,7 +1518,9 @@ function App() {
               </div>
 
               <section className="record-block" id="round-records">
+                <div className="record-block-header">
                 <h3>我方轮次记录</h3>
+                </div>
                 <div className="record-table">
                   <div className="record-row record-head">
                     <span>轮次</span>
@@ -1259,7 +1544,8 @@ function App() {
 
             <article className={cn('info-panel', `info-panel-${teamTone(opponentTeam)}`)}>
               <header className="info-header">
-                <div>
+                <div className="info-header-copy">
+                  <small className="header-note">鎷彿琛ㄧず瀵规柟鐚滄祴鐨勬暟瀛楋紝鍙湁鐚滈敊鏃舵墠鏄剧ず</small>
                   <h2>对方信息区</h2>
                 </div>
                 <span className={cn('team-badge', `team-badge-${teamTone(opponentTeam)}`)}>{displayTeamName(opponentTeam)}</span>
@@ -1293,10 +1579,11 @@ function App() {
                   </div>
                 )}
               </div>
-              <p className="muted">括号表示对方猜测的数字，只有猜错时才显示。</p>
-
               <section className="record-block">
-                <h3>对方轮次记录</h3>
+                <div className="record-block-header">
+                  <span>对方轮次记录</span>
+                  <small className="record-note">括号表示对方猜测的数字，只有猜错时才显示</small>
+                </div>
                 <div className="record-table">
                   <div className="record-row record-head">
                     <span>轮次</span>
@@ -1318,12 +1605,6 @@ function App() {
               </section>
             </article>
           </section>
-
-          {snapshot.room.phase === 'finished' ? (
-            <section className="winner-banner">
-              <strong>{snapshot.room.winner ? `${displayTeamName(snapshot.room.winner)} 获胜` : '平局'}</strong>
-            </section>
-          ) : null}
 
           {canTerminateCurrentGame ? (
             <section className="game-footer-actions">

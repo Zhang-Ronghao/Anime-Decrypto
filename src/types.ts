@@ -1,5 +1,5 @@
 export type Team = 'A' | 'B';
-export type Role = 'encoder' | 'decoder';
+export type Role = 'encoder' | 'decoder' | 'member';
 export type RoomStatus = 'lobby' | 'active' | 'finished';
 export type RoomPhase = 'lobby' | 'word_assignment' | 'encrypt' | 'decode' | 'intercept' | 'result' | 'finished';
 
@@ -11,6 +11,8 @@ export interface RoomRecord {
   phase: RoomPhase;
   round_number: number;
   max_rounds: number;
+  seat_count: number;
+  role_rotation_enabled: boolean;
   winner: Team | null;
   score_team_a_intercepts: number;
   score_team_b_intercepts: number;
@@ -29,6 +31,7 @@ export interface PlayerRecord {
   player_name: string;
   team: Team | null;
   role: Role | null;
+  team_seat: number | null;
   is_host: boolean;
   connected: boolean;
   joined_at: string;
