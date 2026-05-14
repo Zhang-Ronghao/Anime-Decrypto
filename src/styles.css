@@ -697,6 +697,20 @@ select:focus {
   font-weight: 800;
 }
 
+.identity-host-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0.25rem 0.72rem;
+  border: 1px solid rgba(179, 124, 0, 0.24);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #fff7d6 0%, #ffe8a3 100%);
+  color: #7a5400;
+  font-size: 0.86rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
 .action-hint {
   max-width: 24ch;
   margin: 0;
@@ -1178,6 +1192,19 @@ select:focus {
   align-items: center;
 }
 
+.roster-item-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.roster-kick-button {
+  min-height: 38px;
+  padding: 0.55rem 0.8rem;
+}
+
 .roster-item p,
 .intel-card span,
 .round-card dt,
@@ -1462,6 +1489,10 @@ select:focus {
   color: var(--bad) !important;
 }
 
+.result-skipped {
+  color: #121826 !important;
+}
+
 .result-pending {
   color: var(--muted) !important;
 }
@@ -1630,6 +1661,20 @@ code {
   .seat-action-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .roster-item,
+  .roster-item-side {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .roster-item-side {
+    width: 100%;
+  }
+
+  .roster-kick-button {
+    width: 100%;
   }
 
   .info-header {

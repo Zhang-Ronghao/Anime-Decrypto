@@ -115,6 +115,18 @@ export async function disbandRoom(roomId: string) {
   }
 }
 
+export async function kickPlayer(roomId: string, playerId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('kick_player', {
+    p_room_id: roomId,
+    p_player_id: playerId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function updateRoomLobbySettings(roomId: string, seatCount: number, roleRotationEnabled: boolean) {
   const client = assertSupabase();
   const { error } = await client.rpc('update_room_lobby_settings', {
@@ -211,6 +223,17 @@ export async function submitInterceptGuess(roomId: string, targetTeam: Team, gue
     p_room_id: roomId,
     p_target_team: targetTeam,
     p_guess: guess,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function skipFirstIntercept(roomId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('skip_first_intercept', {
+    p_room_id: roomId,
   });
 
   if (error) {

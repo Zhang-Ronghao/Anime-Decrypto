@@ -8,12 +8,14 @@ import {
   fetchRoomSnapshot,
   generateTeamWords,
   joinRoom,
+  kickPlayer,
   leaveRoom,
   restartRoom,
   saveTeamWords,
   startGame,
   submitClues,
   submitInterceptGuess,
+  skipFirstIntercept,
   submitOwnGuess,
   subscribeToRoom,
   terminateGame,
@@ -159,6 +161,8 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+const ROOM_MEMBERSHIP_LOST_MESSAGE = '你已不在当前房间中，房间可能已结束或你已被房主移出';
+
 function scoreFor(snapshot: RoomSnapshot, team: Team): TeamScore {
   const intercepts = team === 'A' ? snapshot.room.score_team_a_intercepts : snapshot.room.score_team_b_intercepts;
   const miscomms = team === 'A' ? snapshot.room.score_team_a_miscomms : snapshot.room.score_team_b_miscomms;
@@ -175,7 +179,7 @@ function teamTone(team: Team): 'red' | 'blue' {
 
 function formatGuessResult(guess: string | null, correct: boolean | null): string {
   if (!guess) {
-    return '待提交';
+    return correct === false ? '已跳过' : '待提交';
   }
 
   if (correct === null) {
@@ -185,7 +189,11 @@ function formatGuessResult(guess: string | null, correct: boolean | null): strin
   return `${guess} (${correct ? '✓' : '×'})`;
 }
 
-function resultClass(correct: boolean | null): string {
+function resultClass(guess: string | null, correct: boolean | null): string {
+  if (!guess && correct === false) {
+    return 'result-skipped';
+  }
+
   if (correct === true) {
     return 'result-good';
   }
@@ -198,7 +206,11 @@ function resultClass(correct: boolean | null): string {
 }
 
 function guessDigits(value: string): string[] {
-  const digits = normalizeGuess(value).split('-').filter(Boolean);
+  const digits = value
+    .split('-')
+    .slice(0, 3)
+    .map((digit) => (['1', '2', '3', '4'].includes(digit) ? digit : ''));
+
   return [digits[0] ?? '', digits[1] ?? '', digits[2] ?? ''];
 }
 
@@ -313,6 +325,21 @@ function isMissingRoomError(error: unknown): boolean {
   return record.code === 'PGRST116';
 }
 
+function isRoomMembershipLostError(error: unknown): boolean {
+  if (isMissingRoomError(error)) {
+    return true;
+  }
+
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const record = error as Record<string, unknown>;
+  return [record.message, record.details, record.hint].some(
+    (value) => typeof value === 'string' && value.includes('不在该房间中'),
+  );
+}
+
 function App() {
   const [booting, setBooting] = useState(true);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
@@ -327,6 +354,7 @@ function App() {
   const [teamWordSavedKey, setTeamWordSavedKey] = useState('');
   const [decodeGuess, setDecodeGuess] = useState('');
   const [interceptGuess, setInterceptGuess] = useState('');
+  const [kickSyncPollUntil, setKickSyncPollUntil] = useState<number | null>(null);
   const canEditWordsRef = useRef(false);
 
   useEffect(() => {
@@ -383,35 +411,65 @@ function App() {
       return;
     }
 
-    let cancelled = false;
     const channel = subscribeToRoom(roomId, () => {
-      void loadSnapshot(roomId);
+      void loadRoomSnapshot(roomId);
     });
 
-    void loadSnapshot(roomId);
-
-    async function loadSnapshot(nextRoomId: string) {
-      try {
-        const nextSnapshot = await fetchRoomSnapshot(nextRoomId);
-        if (!cancelled) {
-          setSnapshot(nextSnapshot);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          if (isMissingRoomError(error)) {
-            resetRoomState('房间已结束或不存在');
-          } else {
-            setActionError(getErrorMessage(error, '读取房间失败'));
-          }
-        }
-      }
-    }
+    void loadRoomSnapshot(roomId);
 
     return () => {
-      cancelled = true;
       void channel.unsubscribe();
     };
-  }, [roomId]);
+  }, [roomId, sessionUserId]);
+
+  async function loadRoomSnapshot(nextRoomId: string, options?: { silentError?: boolean }) {
+    try {
+      const nextSnapshot = await fetchRoomSnapshot(nextRoomId);
+      if (sessionUserId && !nextSnapshot.players.some((player) => player.auth_user_id === sessionUserId)) {
+        resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+        return;
+      }
+
+      setSnapshot(nextSnapshot);
+    } catch (error) {
+      if (isRoomMembershipLostError(error)) {
+        resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+      } else if (!options?.silentError) {
+        setActionError(getErrorMessage(error, '读取房间失败'));
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!roomId || !kickSyncPollUntil) {
+      return;
+    }
+
+    const remainingMs = kickSyncPollUntil - Date.now();
+    if (remainingMs <= 0) {
+      setKickSyncPollUntil(null);
+      return;
+    }
+
+    const poller = window.setInterval(() => {
+      if (Date.now() >= kickSyncPollUntil) {
+        window.clearInterval(poller);
+        setKickSyncPollUntil(null);
+        return;
+      }
+
+      void loadRoomSnapshot(roomId, { silentError: true });
+    }, 2500);
+
+    const stopper = window.setTimeout(() => {
+      setKickSyncPollUntil(null);
+    }, remainingMs);
+
+    return () => {
+      window.clearInterval(poller);
+      window.clearTimeout(stopper);
+    };
+  }, [kickSyncPollUntil, roomId, sessionUserId]);
 
   useEffect(() => {
     if (!supabase) {
@@ -490,6 +548,7 @@ function App() {
   const isCurrentEncryptPhase = isEncryptPhase(snapshot?.room.phase ?? 'lobby');
   const isDecodePhase = snapshot?.room.phase === 'decode';
   const isInterceptPhase = snapshot?.room.phase === 'intercept';
+  const isFirstRoundInterceptSkip = isInterceptPhase && snapshot?.room.round_number === 1;
   const canLeaveCurrentRoom = snapshot ? snapshot.room.status === 'lobby' || snapshot.room.status === 'finished' : false;
   const canTerminateCurrentGame = snapshot ? self?.is_host === true && snapshot.room.status === 'active' : false;
   const currentSeatCount = snapshot?.room.seat_count ?? 4;
@@ -518,7 +577,9 @@ function App() {
   );
   const canSubmitClues = isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
   const canSubmitDecode = isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
-  const canSubmitIntercept = isInterceptPhase && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
+  const canSubmitIntercept =
+    isInterceptPhase && !isFirstRoundInterceptSkip && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
+  const canSkipFirstIntercept = Boolean(isFirstRoundInterceptSkip && self?.is_host);
   const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
   const displayedInterceptDigits = opponentSubmission?.intercept_guess
     ? guessDigits(opponentSubmission.intercept_guess)
@@ -602,6 +663,12 @@ function App() {
               : snapshot?.room.phase === 'finished'
                 ? '对局已结束'
                 : '等待房间同步';
+  const effectiveActionHint = isFirstRoundInterceptSkip
+    ? canSkipFirstIntercept
+      ? '第一轮拦截阶段无需提交，改由房主点击跳过'
+      : '第一轮拦截阶段无需操作，等待房主跳过'
+    : actionHint;
+  const effectiveProgressText = isFirstRoundInterceptSkip ? '等待房主跳过第一轮拦截' : progressText;
   const lobbyStartHint = snapshot
     ? !allPlayersSeated
       ? '开始前，所有已加入房间的玩家都需要先入座'
@@ -686,7 +753,11 @@ function App() {
     try {
       return await action();
     } catch (error) {
-      setActionError(getErrorMessage(error, '操作失败'));
+      if (isRoomMembershipLostError(error)) {
+        resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+      } else {
+        setActionError(getErrorMessage(error, '操作失败'));
+      }
       return null;
     } finally {
       setBusyKey(null);
@@ -696,6 +767,7 @@ function App() {
   function resetRoomState(message?: string) {
     setRoomId(null);
     setSnapshot(null);
+    setKickSyncPollUntil(null);
     setJoinCode('');
     setClueForm(['', '', '']);
     setTeamWordForm(emptyWordForm());
@@ -709,7 +781,7 @@ function App() {
   function updateGuessDigit(kind: 'decode' | 'intercept', index: number, digit: string) {
     const current = kind === 'decode' ? decodeDigits : interceptDigits;
     const next = current.map((item, itemIndex) => (itemIndex === index ? digit : item));
-    const nextValue = next.every(Boolean) ? next.join('-') : next.filter(Boolean).join('-');
+    const nextValue = next.join('-');
 
     if (kind === 'decode') {
       setDecodeGuess(nextValue);
@@ -908,6 +980,14 @@ function App() {
     setInterceptGuess('');
   }
 
+  async function handleSkipFirstIntercept() {
+    if (!snapshot || !self?.is_host) {
+      return;
+    }
+
+    await withAction('skip-first-intercept', () => skipFirstIntercept(snapshot.room.id));
+  }
+
   async function handleAdvanceRound() {
     if (!snapshot) {
       return;
@@ -935,6 +1015,30 @@ function App() {
     const result = await withAction('disband-room', () => disbandRoom(snapshot.room.id));
     if (result !== null) {
       resetRoomState();
+    }
+  }
+
+  async function handleKickPlayer(player: PlayerRecord) {
+    if (!snapshot || !self?.is_host || player.id === self.id) {
+      return;
+    }
+
+    const confirmed = window.confirm(`确定要踢出玩家“${player.player_name}”吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    const result = await withAction(`kick-player-${player.id}`, () => kickPlayer(snapshot.room.id, player.id));
+    if (result !== null) {
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              players: current.players.filter((entry) => entry.id !== player.id),
+            }
+          : current,
+      );
+      setKickSyncPollUntil(Date.now() + 10_000);
     }
   }
 
@@ -1270,11 +1374,23 @@ function App() {
                     <strong>{player.player_name}</strong>
                     <p>{player.is_host ? '房主' : '成员'}</p>
                   </div>
-                  <div className="tag-row">
+                  <div className="roster-item-side">
+                    <div className="tag-row">
                     <span className="tag">{player.team ? displayTeamName(player.team) : '未入队'}</span>
                     <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
                       {player.role ? roleName(player.role) : '未选座位'}
                     </span>
+                    </div>
+                    {self.is_host && player.id !== self.id ? (
+                      <button
+                        className="danger-button roster-kick-button"
+                        disabled={busyKey !== null}
+                        onClick={() => void handleKickPlayer(player)}
+                        type="button"
+                      >
+                        踢出
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -1294,9 +1410,10 @@ function App() {
                 <div className="identity-banner">
                   <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
                   {self.role ? <span className="identity-role">{roleName(self.role)}</span> : null}
+                  {self.is_host ? <span className="identity-host-badge">房主</span> : null}
                 </div>
                 <h2>{actionTitle}</h2>
-                <p className="action-hint">{actionHint}</p>
+                <p className="action-hint">{effectiveActionHint}</p>
               </div>
 
               {canEditWordAssignment ? (
@@ -1310,6 +1427,10 @@ function App() {
               ) : canSubmitDecode ? (
                 <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleDecodeSubmit()} type="button">
                   提交解码
+                </button>
+              ) : canSkipFirstIntercept ? (
+                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleSkipFirstIntercept()} type="button">
+                  跳过第一轮拦截
                 </button>
               ) : canSubmitIntercept ? (
                 <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleInterceptSubmit()} type="button">
@@ -1368,7 +1489,7 @@ function App() {
                   </div>
                 ) : isWordAssignmentPhase ? (
                   <div className="wait-card">
-                    <strong>{progressText}</strong>
+                    <strong>{effectiveProgressText}</strong>
                     <p className="muted">
                       {myTeamConfirmed ? '本队词语已锁定，等待另一队加密者确认词语' : '等待本队加密者确认词语'}
                     </p>
@@ -1397,7 +1518,7 @@ function App() {
                       </label>
                     ))}
                   </div>
-                ) : isInterceptPhase && (opponentSubmission?.clues?.length ?? 0) > 0 ? (
+                ) : isInterceptPhase && !isFirstRoundInterceptSkip && (opponentSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
                     <div className="action-line-head action-line-head-balanced">
                       <span className="action-line-head-cell">对方线索</span>
@@ -1420,6 +1541,13 @@ function App() {
                         </select>
                       </label>
                     ))}
+                  </div>
+                ) : isFirstRoundInterceptSkip ? (
+                  <div className="wait-card">
+                    <strong>跳过第一轮拦截</strong>
+                    <p className="muted">
+                      {canSkipFirstIntercept ? '由房主点击上方按钮跳过第一轮拦截' : '等待房主跳过第一轮拦截'}
+                    </p>
                   </div>
                 ) : canSubmitClues ? (
                   <div className="action-lines">
@@ -1460,14 +1588,14 @@ function App() {
                   </div>
                 ) : (
                   <div className="wait-card">
-                    <strong>{progressText}</strong>
+                    <strong>{effectiveProgressText}</strong>
                   </div>
                 )}
               </div>
 
               <aside className="action-progress">
                 <span>进度</span>
-                <strong>{progressText}</strong>
+                <strong>{effectiveProgressText}</strong>
               </aside>
             </div>
           </section>
@@ -1542,8 +1670,8 @@ function App() {
                       <span>第 {entry.round_number} 轮</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
                       <span>{entry.revealed_code ?? '未公开'}</span>
-                      <span className={resultClass(entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
-                      <span className={resultClass(entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
+                      <span className={resultClass(entry.own_guess, entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
+                      <span className={resultClass(entry.intercept_guess, entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
                     </div>
                   ))}
                 </div>
@@ -1605,8 +1733,8 @@ function App() {
                       <span>第 {entry.round_number} 轮</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
                       <span>{entry.revealed_code ?? '未公开'}</span>
-                      <span className={resultClass(entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
-                      <span className={resultClass(entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
+                      <span className={resultClass(entry.own_guess, entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
+                      <span className={resultClass(entry.intercept_guess, entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
                     </div>
                   ))}
                 </div>

@@ -678,6 +678,59 @@ begin
 end;
 $$;
 
+create or replace function public.kick_player(p_room_id uuid, p_player_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_target public.room_players%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以踢出玩家。';
+  end if;
+
+  if v_room.status <> 'lobby' or v_room.phase <> 'lobby' then
+    raise exception '只有选座大厅阶段可以踢出玩家。';
+  end if;
+
+  select *
+  into v_target
+  from public.room_players
+  where id = p_player_id
+    and room_id = p_room_id;
+
+  if v_target.id is null then
+    raise exception '目标玩家不存在。';
+  end if;
+
+  if v_target.is_host then
+    raise exception '不能踢出房主。';
+  end if;
+
+  if v_target.auth_user_id = auth.uid() then
+    raise exception '不能踢出自己。';
+  end if;
+
+  delete from public.room_players
+  where id = v_target.id;
+end;
+$$;
+
 create or replace function public.disband_room(p_room_id uuid)
 returns void
 language plpgsql
@@ -1685,6 +1738,106 @@ begin
 end;
 $$;
 
+create or replace function public.skip_first_intercept(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_a_code text;
+  v_b_code text;
+  v_a_own_correct boolean;
+  v_b_own_correct boolean;
+  v_next_a_miscomms integer;
+  v_next_b_miscomms integer;
+  v_a_win_condition boolean;
+  v_b_win_condition boolean;
+  v_a_score integer;
+  v_b_score integer;
+  v_game_finished boolean := false;
+  v_winner text;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以跳过第一轮拦截。';
+  end if;
+
+  if v_room.phase <> 'intercept' then
+    raise exception '当前不是拦截阶段。';
+  end if;
+
+  if v_room.round_number <> 1 then
+    raise exception '只能跳过第一轮的拦截阶段。';
+  end if;
+
+  select code into v_a_code
+  from public.round_codes
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'A';
+
+  select code into v_b_code
+  from public.round_codes
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'B';
+
+  select own_guess = v_a_code
+  into v_a_own_correct
+  from public.round_submissions
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'A';
+
+  select own_guess = v_b_code
+  into v_b_own_correct
+  from public.round_submissions
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'B';
+
+  update public.round_submissions
+  set revealed_code = case when team = 'A' then v_a_code else v_b_code end,
+      intercept_correct = false,
+      own_correct = case when team = 'A' then v_a_own_correct else v_b_own_correct end,
+      resolved_at = timezone('utc', now())
+  where room_id = p_room_id
+    and round_number = v_room.round_number;
+
+  v_next_a_miscomms := v_room.score_team_a_miscomms + case when not v_a_own_correct then 1 else 0 end;
+  v_next_b_miscomms := v_room.score_team_b_miscomms + case when not v_b_own_correct then 1 else 0 end;
+
+  v_a_win_condition := v_room.score_team_a_intercepts >= 2 or v_next_b_miscomms >= 2;
+  v_b_win_condition := v_room.score_team_b_intercepts >= 2 or v_next_a_miscomms >= 2;
+  v_game_finished := v_a_win_condition or v_b_win_condition;
+
+  if v_a_win_condition and v_b_win_condition then
+    v_a_score := v_room.score_team_a_intercepts - v_next_a_miscomms;
+    v_b_score := v_room.score_team_b_intercepts - v_next_b_miscomms;
+
+    if v_a_score > v_b_score then
+      v_winner := 'A';
+    elsif v_b_score > v_a_score then
+      v_winner := 'B';
+    else
+      v_winner := null;
+    end if;
+  elsif v_a_win_condition then
+    v_winner := 'A';
+  elsif v_b_win_condition then
+    v_winner := 'B';
+  end if;
+
+  update public.rooms
+  set score_team_a_miscomms = v_next_a_miscomms,
+      score_team_b_miscomms = v_next_b_miscomms,
+      phase = case when v_game_finished then 'finished' else 'result' end,
+      status = case when v_game_finished then 'finished' else 'active' end,
+      winner = v_winner
+  where id = p_room_id;
+end;
+$$;
+
 create or replace function public.advance_round(p_room_id uuid)
 returns void
 language plpgsql
@@ -1856,6 +2009,7 @@ grant execute on function public.create_room(text, text) to authenticated;
 grant execute on function public.join_room(text, text) to authenticated;
 grant execute on function public.cleanup_expired_rooms() to authenticated;
 grant execute on function public.leave_room(uuid) to authenticated;
+grant execute on function public.kick_player(uuid, uuid) to authenticated;
 grant execute on function public.disband_room(uuid) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
@@ -1865,6 +2019,7 @@ grant execute on function public.save_team_words(uuid, text, text[]) to authenti
 grant execute on function public.confirm_team_words(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_clues(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_intercept_guess(uuid, text, text) to authenticated;
+grant execute on function public.skip_first_intercept(uuid) to authenticated;
 grant execute on function public.submit_own_guess(uuid, text, text) to authenticated;
 grant execute on function public.advance_round(uuid) to authenticated;
 grant execute on function public.restart_room(uuid) to authenticated;
