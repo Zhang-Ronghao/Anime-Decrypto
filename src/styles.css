@@ -1,0 +1,356 @@
+:root {
+  color-scheme: dark;
+  font-family: 'Space Grotesk', 'Noto Sans SC', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #f6f1e8;
+  background:
+    radial-gradient(circle at top, rgba(227, 98, 43, 0.24), transparent 42%),
+    linear-gradient(135deg, #0f1720 0%, #16212a 48%, #0d1219 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --panel: rgba(12, 18, 26, 0.78);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --accent: #ff8a3d;
+  --accent-2: #f6c26b;
+  --text-muted: rgba(246, 241, 232, 0.72);
+  --error: #ff7b7b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  padding: 0.9rem 1rem;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+input:focus {
+  outline: none;
+  border-color: rgba(255, 138, 61, 0.7);
+  transform: translateY(-1px);
+}
+
+.app-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 32px 20px 72px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 28px;
+  backdrop-filter: blur(22px);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28);
+}
+
+.hero-panel,
+.top-panel {
+  padding: 28px;
+}
+
+.hero-panel {
+  min-height: 520px;
+  display: grid;
+  align-content: center;
+  gap: 24px;
+}
+
+.hero-copy h1,
+.top-panel h1,
+.panel h2,
+.panel h3 {
+  margin: 0;
+}
+
+.hero-copy h1,
+.top-panel h1 {
+  font-size: clamp(2.4rem, 6vw, 4.4rem);
+  line-height: 0.96;
+  letter-spacing: -0.04em;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--accent-2);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.8rem;
+}
+
+.muted {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.form-grid,
+.button-row,
+.layout-grid,
+.seat-grid,
+.round-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.form-grid label,
+.form-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid span {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.button-row {
+  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+}
+
+.primary-button,
+.ghost-button,
+.seat-card {
+  border-radius: 18px;
+  padding: 0.95rem 1.2rem;
+  transition: transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, var(--accent), #ff5f45);
+  color: #130f0a;
+  font-weight: 700;
+  box-shadow: 0 16px 40px rgba(255, 106, 56, 0.32);
+}
+
+.ghost-button {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.primary-button:hover,
+.ghost-button:hover,
+.seat-card:hover {
+  transform: translateY(-2px);
+}
+
+.primary-button:disabled,
+.ghost-button:disabled,
+.seat-card:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.top-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+}
+
+.scoreboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.scoreboard article {
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  align-items: baseline;
+}
+
+.scoreboard strong {
+  font-size: 1.8rem;
+}
+
+.layout-grid {
+  margin-top: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+}
+
+.layout-grid > .panel {
+  padding: 24px;
+}
+
+.seat-grid {
+  margin-top: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.seat-card {
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  min-height: 110px;
+  display: grid;
+  align-content: space-between;
+}
+
+.seat-card-active {
+  outline: 2px solid rgba(255, 138, 61, 0.8);
+}
+
+.seat-card-title {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.wide-button {
+  margin-top: 20px;
+  width: 100%;
+}
+
+.roster-list,
+.info-stack,
+.tag-row,
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.roster-item,
+.intel-card,
+.round-card,
+.winner-banner,
+.history-row {
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 16px;
+}
+
+.roster-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.roster-item p,
+.intel-card span,
+.round-card dt,
+.history-row span {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.tag-row {
+  grid-auto-flow: column;
+  align-content: center;
+  justify-content: end;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+  font-size: 0.88rem;
+}
+
+.intel-card {
+  display: grid;
+  gap: 8px;
+}
+
+.intel-card strong {
+  font-size: 1.2rem;
+}
+
+.intel-card.accent {
+  background: linear-gradient(135deg, rgba(255, 138, 61, 0.2), rgba(255, 95, 69, 0.16));
+}
+
+.round-grid {
+  margin-top: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.round-card {
+  display: grid;
+  gap: 12px;
+}
+
+.round-card dl {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.round-card div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 90px;
+  gap: 12px;
+  align-items: center;
+}
+
+.error-text,
+.error-banner {
+  color: var(--error);
+}
+
+.error-banner {
+  margin: 16px 0 0;
+}
+
+.winner-banner {
+  margin-top: 16px;
+  background: linear-gradient(135deg, rgba(246, 194, 107, 0.18), rgba(255, 138, 61, 0.12));
+}
+
+code {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+@media (max-width: 900px) {
+  .top-panel,
+  .layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .history-row {
+    grid-template-columns: 1fr;
+  }
+}
