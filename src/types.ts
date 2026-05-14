@@ -1,7 +1,7 @@
 export type Team = 'A' | 'B';
 export type Role = 'encoder' | 'decoder';
 export type RoomStatus = 'lobby' | 'active' | 'finished';
-export type RoomPhase = 'lobby' | 'clue' | 'intercept' | 'decode' | 'result' | 'finished';
+export type RoomPhase = 'lobby' | 'clue' | 'encrypt' | 'decode' | 'intercept' | 'result' | 'finished';
 
 export interface RoomRecord {
   id: string;

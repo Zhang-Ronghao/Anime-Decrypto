@@ -138,6 +138,7 @@ input:focus {
 
 .primary-button,
 .ghost-button,
+.danger-button,
 .seat-card {
   border-radius: 18px;
   padding: 0.95rem 1.2rem;
@@ -156,14 +157,22 @@ input:focus {
   color: #fff;
 }
 
+.danger-button {
+  background: rgba(255, 82, 82, 0.14);
+  color: #ffd6d6;
+  border: 1px solid rgba(255, 82, 82, 0.28);
+}
+
 .primary-button:hover,
 .ghost-button:hover,
+.danger-button:hover,
 .seat-card:hover {
   transform: translateY(-2px);
 }
 
 .primary-button:disabled,
 .ghost-button:disabled,
+.danger-button:disabled,
 .seat-card:disabled {
   opacity: 0.52;
   cursor: not-allowed;
@@ -175,6 +184,12 @@ input:focus {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 20px;
   align-items: center;
+}
+
+.top-side {
+  display: grid;
+  gap: 12px;
+  justify-items: end;
 }
 
 .scoreboard {
@@ -195,6 +210,12 @@ input:focus {
 
 .scoreboard strong {
   font-size: 1.8rem;
+}
+
+.room-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .layout-grid {
@@ -348,6 +369,18 @@ code {
   .top-panel,
   .layout-grid {
     grid-template-columns: 1fr;
+  }
+
+  .top-side {
+    justify-items: stretch;
+  }
+
+  .room-actions {
+    justify-content: stretch;
+  }
+
+  .room-actions button {
+    width: 100%;
   }
 
   .history-row {

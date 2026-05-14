@@ -41,13 +41,14 @@ export function phaseLabel(phase: RoomPhase): string {
     case 'lobby':
       return '准备阶段';
     case 'clue':
-      return '阶段一：出题';
-    case 'intercept':
-      return '阶段二：破译对手';
+    case 'encrypt':
+      return '阶段一：加密';
     case 'decode':
-      return '阶段三：本队解码';
+      return '阶段二：解密';
+    case 'intercept':
+      return '阶段三：拦截';
     case 'result':
-      return '阶段四：回合结算';
+      return '回合结算';
     case 'finished':
       return '游戏结束';
     default:
@@ -55,10 +56,14 @@ export function phaseLabel(phase: RoomPhase): string {
   }
 }
 
+export function isEncryptPhase(phase: RoomPhase): boolean {
+  return phase === 'encrypt' || phase === 'clue';
+}
+
 export function teamName(team: Team): string {
   return `${team} 队`;
 }
 
 export function roleName(role: Role): string {
-  return role === 'encoder' ? '出题者' : '解码者';
+  return role === 'encoder' ? '加密者' : '解码者';
 }

@@ -84,6 +84,37 @@ export async function joinRoom(roomCode: string, playerName: string) {
   return normalizeRoomResult(data);
 }
 
+export async function cleanupExpiredRooms() {
+  const client = assertSupabase();
+  const { error } = await client.rpc('cleanup_expired_rooms');
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function leaveRoom(roomId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('leave_room', {
+    p_room_id: roomId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function disbandRoom(roomId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('disband_room', {
+    p_room_id: roomId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function updateSelfSeat(roomId: string, team: Team, role: 'encoder' | 'decoder') {
   const client = assertSupabase();
   const { error } = await client.rpc('update_self_seat', {
@@ -150,6 +181,17 @@ export async function submitOwnGuess(roomId: string, team: Team, guess: string) 
 export async function advanceRound(roomId: string) {
   const client = assertSupabase();
   const { error } = await client.rpc('advance_round', {
+    p_room_id: roomId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function restartRoom(roomId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('restart_room', {
     p_room_id: roomId,
   });
 

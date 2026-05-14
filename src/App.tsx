@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   advanceRound,
+  cleanupExpiredRooms,
   createRoom,
+  disbandRoom,
   fetchRoomSnapshot,
   joinRoom,
+  leaveRoom,
+  restartRoom,
   startGame,
   submitClues,
   submitInterceptGuess,
@@ -12,7 +16,7 @@ import {
   updateSelfSeat,
 } from './lib/game';
 import { ensureSession, isSupabaseConfigured, supabase } from './lib/supabase';
-import { cn, isSeatTaken, normalizeGuess, otherTeam, phaseLabel, roleName, roleOrder, teamName, teamOrder } from './lib/utils';
+import { cn, isEncryptPhase, isSeatTaken, normalizeGuess, otherTeam, phaseLabel, roleName, roleOrder, teamName, teamOrder } from './lib/utils';
 import type { PlayerRecord, RoomSnapshot, Role, Team } from './types';
 
 interface SeatCardProps {
@@ -54,6 +58,21 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function scoreFor(snapshot: RoomSnapshot, team: Team): { intercepts: number; miscomms: number; net: number } {
+  const intercepts = team === 'A' ? snapshot.room.score_team_a_intercepts : snapshot.room.score_team_b_intercepts;
+  const miscomms = team === 'A' ? snapshot.room.score_team_a_miscomms : snapshot.room.score_team_b_miscomms;
+  return { intercepts, miscomms, net: intercepts - miscomms };
+}
+
+function isMissingRoomError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const record = error as Record<string, unknown>;
+  return record.code === 'PGRST116';
+}
+
 function App() {
   const [booting, setBooting] = useState(true);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
@@ -64,8 +83,8 @@ function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [clueForm, setClueForm] = useState(['', '', '']);
-  const [interceptGuess, setInterceptGuess] = useState('');
   const [decodeGuess, setDecodeGuess] = useState('');
+  const [interceptGuess, setInterceptGuess] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +102,10 @@ function App() {
         }
 
         setSessionUserId(session?.user.id ?? null);
+        if (session?.user.id) {
+          await cleanupExpiredRooms().catch(() => undefined);
+        }
+
         const roomCodeFromUrl = new URLSearchParams(window.location.search).get('room');
         const savedName = localStorage.getItem('decrypto-name') ?? '';
 
@@ -95,7 +118,7 @@ function App() {
         }
       } catch (error) {
         if (!cancelled) {
-          setActionError(getErrorMessage(error, '匿名登录失败'));
+          setActionError(getErrorMessage(error, '恢复房间失败'));
         }
       } finally {
         if (!cancelled) {
@@ -119,20 +142,24 @@ function App() {
 
     let cancelled = false;
     const channel = subscribeToRoom(roomId, () => {
-      void loadSnapshot(roomId, cancelled);
+      void loadSnapshot(roomId);
     });
 
-    void loadSnapshot(roomId, cancelled);
+    void loadSnapshot(roomId);
 
-    async function loadSnapshot(nextRoomId: string, isCancelled: boolean) {
+    async function loadSnapshot(nextRoomId: string) {
       try {
         const nextSnapshot = await fetchRoomSnapshot(nextRoomId);
-        if (!isCancelled) {
+        if (!cancelled) {
           setSnapshot(nextSnapshot);
         }
       } catch (error) {
-        if (!isCancelled) {
-          setActionError(getErrorMessage(error, '读取房间失败'));
+        if (!cancelled) {
+          if (isMissingRoomError(error)) {
+            resetRoomState('房间已结束或不存在。');
+          } else {
+            setActionError(getErrorMessage(error, '读取房间失败'));
+          }
         }
       }
     }
@@ -202,6 +229,13 @@ function App() {
   const myTeamSubmission = self?.team ? currentRoundSubmissionByTeam[self.team] : undefined;
   const opponentSubmission = self?.team ? currentRoundSubmissionByTeam[otherTeam(self.team)] : undefined;
   const myVisibleCode = self?.team ? currentRoundCodeByTeam[self.team]?.code ?? null : null;
+  const isCurrentEncryptPhase = isEncryptPhase(snapshot?.room.phase ?? 'lobby');
+  const canLeaveCurrentRoom = snapshot ? snapshot.room.status === 'lobby' || snapshot.room.status === 'finished' : false;
+  const allSeatsFilled = snapshot
+    ? teamOrder.every((team) =>
+        roleOrder.every((role) => snapshot.players.some((player) => player.team === team && player.role === role)),
+      )
+    : false;
 
   async function withAction<T>(key: string, action: () => Promise<T>): Promise<T | null> {
     setActionError(null);
@@ -215,6 +249,17 @@ function App() {
     } finally {
       setBusyKey(null);
     }
+  }
+
+  function resetRoomState(message?: string) {
+    setRoomId(null);
+    setSnapshot(null);
+    setJoinCode('');
+    setClueForm(['', '', '']);
+    setDecodeGuess('');
+    setInterceptGuess('');
+    setActionError(message ?? null);
+    window.history.replaceState({}, '', window.location.pathname);
   }
 
   async function handleCreateRoom() {
@@ -270,8 +315,8 @@ function App() {
 
     await withAction('start-game', () => startGame(snapshot.room.id));
     setClueForm(['', '', '']);
-    setInterceptGuess('');
     setDecodeGuess('');
+    setInterceptGuess('');
   }
 
   async function handleClueSubmit() {
@@ -280,27 +325,12 @@ function App() {
     }
 
     if (clueForm.some((value) => !value.trim())) {
-      setActionError('需要填写 3 条线索。');
+      setActionError('需要填写 3 条加密结果。');
       return;
     }
 
     await withAction('submit-clues', () => submitClues(snapshot.room.id, self.team!, clueForm));
     setClueForm(['', '', '']);
-  }
-
-  async function handleInterceptSubmit() {
-    if (!snapshot || !self?.team) {
-      return;
-    }
-
-    const guess = normalizeGuess(interceptGuess);
-    if (guess.length !== 5) {
-      setActionError('破译密码格式应为 1-2-3。');
-      return;
-    }
-
-    await withAction('submit-intercept', () => submitInterceptGuess(snapshot.room.id, otherTeam(self.team!), guess));
-    setInterceptGuess('');
   }
 
   async function handleDecodeSubmit() {
@@ -310,12 +340,27 @@ function App() {
 
     const guess = normalizeGuess(decodeGuess);
     if (guess.length !== 5) {
-      setActionError('本队解码格式应为 1-2-3。');
+      setActionError('解密密码格式应为 1-2-3。');
       return;
     }
 
     await withAction('submit-decode', () => submitOwnGuess(snapshot.room.id, self.team!, guess));
     setDecodeGuess('');
+  }
+
+  async function handleInterceptSubmit() {
+    if (!snapshot || !self?.team) {
+      return;
+    }
+
+    const guess = normalizeGuess(interceptGuess);
+    if (guess.length !== 5) {
+      setActionError('拦截密码格式应为 1-2-3。');
+      return;
+    }
+
+    await withAction('submit-intercept', () => submitInterceptGuess(snapshot.room.id, otherTeam(self.team!), guess));
+    setInterceptGuess('');
   }
 
   async function handleAdvanceRound() {
@@ -326,11 +371,40 @@ function App() {
     await withAction('advance-round', () => advanceRound(snapshot.room.id));
   }
 
-  const allSeatsFilled = snapshot
-    ? teamOrder.every((team) =>
-        roleOrder.every((role) => snapshot.players.some((player) => player.team === team && player.role === role)),
-      )
-    : false;
+  async function handleLeaveRoom() {
+    if (!snapshot || self?.is_host) {
+      return;
+    }
+
+    const result = await withAction('leave-room', () => leaveRoom(snapshot.room.id));
+    if (result !== null) {
+      resetRoomState();
+    }
+  }
+
+  async function handleDisbandRoom() {
+    if (!snapshot || !self?.is_host) {
+      return;
+    }
+
+    const result = await withAction('disband-room', () => disbandRoom(snapshot.room.id));
+    if (result !== null) {
+      resetRoomState();
+    }
+  }
+
+  async function handleRestartRoom() {
+    if (!snapshot || !self?.is_host) {
+      return;
+    }
+
+    const result = await withAction('restart-room', () => restartRoom(snapshot.room.id));
+    if (result !== null) {
+      setClueForm(['', '', '']);
+      setDecodeGuess('');
+      setInterceptGuess('');
+    }
+  }
 
   if (booting) {
     return (
@@ -350,7 +424,7 @@ function App() {
           <p className="eyebrow">解码战</p>
           <h1>先接入 Supabase 再开始。</h1>
           <p className="muted">
-            需要在项目根目录创建 <code>.env.local</code>，填入 <code>VITE_SUPABASE_URL</code> 和{' '}
+            需要在项目根目录创建 <code>.env.local</code>，填写 <code>VITE_SUPABASE_URL</code> 和{' '}
             <code>VITE_SUPABASE_ANON_KEY</code>，并执行 <code>supabase/schema.sql</code>。
           </p>
         </section>
@@ -390,7 +464,7 @@ function App() {
             <p className="eyebrow">Decrypto / 解码战</p>
             <h1>四人联机密码战</h1>
             <p className="muted">
-              2v2 分队，一人出题，一人解码。阶段一提交线索，阶段二破译对手，阶段三验证本队密码。
+              2v2 分队，一人加密，一人解码。每轮依次进行加密、解密、拦截，再统一结算。
             </p>
           </div>
 
@@ -438,25 +512,42 @@ function App() {
           <p className="eyebrow">房间 {snapshot.room.room_code}</p>
           <h1>{phaseLabel(snapshot.room.phase)}</h1>
           <p className="muted">
-            第 {snapshot.room.round_number || 0} 回合 / 你是 {self.team ? `${teamName(self.team)} · ${self.role ? roleName(self.role) : '未入座'}` : '未入座'}
+            第 {snapshot.room.round_number || 0} 回合 / 你是{' '}
+            {self.team ? `${teamName(self.team)} · ${self.role ? roleName(self.role) : '未入座'}` : '未入座'}
           </p>
         </div>
 
-        <div className="scoreboard">
-          <article>
-            <span>{teamName('A')}</span>
-            <strong>{snapshot.room.score_team_a_intercepts}</strong>
-            <small>截获</small>
-            <strong>{snapshot.room.score_team_a_miscomms}</strong>
-            <small>误传</small>
-          </article>
-          <article>
-            <span>{teamName('B')}</span>
-            <strong>{snapshot.room.score_team_b_intercepts}</strong>
-            <small>截获</small>
-            <strong>{snapshot.room.score_team_b_miscomms}</strong>
-            <small>误传</small>
-          </article>
+        <div className="top-side">
+          <div className="scoreboard">
+            {teamOrder.map((team) => {
+              const score = scoreFor(snapshot, team);
+              return (
+                <article key={team}>
+                  <span>{teamName(team)}</span>
+                  <strong>{score.intercepts}</strong>
+                  <small>拦截</small>
+                  <strong>{score.miscomms}</strong>
+                  <small>误传</small>
+                  <strong>{score.net}</strong>
+                  <small>净分</small>
+                </article>
+              );
+            })}
+          </div>
+
+          {canLeaveCurrentRoom ? (
+            <div className="room-actions">
+              {self.is_host ? (
+                <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleDisbandRoom()} type="button">
+                  解散房间
+                </button>
+              ) : (
+                <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleLeaveRoom()} type="button">
+                  离开房间
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -466,7 +557,7 @@ function App() {
         <section className="layout-grid">
           <article className="panel">
             <h2>席位选择</h2>
-            <p className="muted">每队固定 1 名出题者和 1 名解码者。点击空位直接入座。</p>
+            <p className="muted">每队固定 1 名加密者和 1 名解码者。点击空位直接入座。</p>
 
             <div className="seat-grid">
               {teamOrder.map((team) =>
@@ -536,9 +627,9 @@ function App() {
               </div>
             </div>
 
-            {snapshot.room.phase === 'clue' && self.role === 'encoder' ? (
+            {isCurrentEncryptPhase && self.role === 'encoder' ? (
               <div className="form-stack">
-                <p className="muted">按密码顺序各写一条线索，公开读给所有人听。</p>
+                <p className="muted">按密码顺序各写一条加密结果，公开给所有人。</p>
                 {clueForm.map((value, index) => (
                   <input
                     key={index}
@@ -546,40 +637,20 @@ function App() {
                     onChange={(event) =>
                       setClueForm((current) => current.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
                     }
-                    placeholder={`线索 ${index + 1}`}
+                    placeholder={`加密结果 ${index + 1}`}
                     value={value}
                   />
                 ))}
                 <button className="primary-button" disabled={busyKey !== null || Boolean(myTeamSubmission?.clues)} onClick={() => void handleClueSubmit()} type="button">
-                  提交线索
-                </button>
-              </div>
-            ) : null}
-
-            {snapshot.room.phase === 'intercept' && self.role === 'decoder' && self.team ? (
-              <div className="form-stack">
-                <p className="muted">根据对手刚刚公开的线索，猜测他们的密码顺序。</p>
-                <strong>{opponentSubmission?.clues?.join(' / ') ?? '等待对手提交线索'}</strong>
-                <input
-                  onChange={(event) => setInterceptGuess(normalizeGuess(event.target.value))}
-                  placeholder="例如 2-4-1"
-                  value={interceptGuess}
-                />
-                <button
-                  className="primary-button"
-                  disabled={busyKey !== null || Boolean(opponentSubmission?.intercept_guess)}
-                  onClick={() => void handleInterceptSubmit()}
-                  type="button"
-                >
-                  提交破译
+                  提交加密结果
                 </button>
               </div>
             ) : null}
 
             {snapshot.room.phase === 'decode' && self.role === 'decoder' && self.team ? (
               <div className="form-stack">
-                <p className="muted">现在轮到你为本队确认密码。</p>
-                <strong>{myTeamSubmission?.clues?.join(' / ') ?? '等待本队线索'}</strong>
+                <p className="muted">根据本队加密者给出的信息，解出本队密码。正确答案会在拦截后统一公开。</p>
+                <strong>{myTeamSubmission?.clues?.join(' / ') ?? '等待本队加密结果'}</strong>
                 <input
                   onChange={(event) => setDecodeGuess(normalizeGuess(event.target.value))}
                   placeholder="例如 1-3-4"
@@ -591,37 +662,57 @@ function App() {
                   onClick={() => void handleDecodeSubmit()}
                   type="button"
                 >
-                  提交本队解码
+                  提交本队解密
+                </button>
+              </div>
+            ) : null}
+
+            {snapshot.room.phase === 'intercept' && self.role === 'encoder' && self.team ? (
+              <div className="form-stack">
+                <p className="muted">根据对方公开的加密结果，尝试拦截对方密码。</p>
+                <strong>{opponentSubmission?.clues?.join(' / ') ?? '等待对方加密结果'}</strong>
+                <input
+                  onChange={(event) => setInterceptGuess(normalizeGuess(event.target.value))}
+                  placeholder="例如 2-4-1"
+                  value={interceptGuess}
+                />
+                <button
+                  className="primary-button"
+                  disabled={busyKey !== null || Boolean(opponentSubmission?.intercept_guess)}
+                  onClick={() => void handleInterceptSubmit()}
+                  type="button"
+                >
+                  提交拦截
                 </button>
               </div>
             ) : null}
 
             {!(
-              (snapshot.room.phase === 'clue' && self.role === 'encoder') ||
-              (snapshot.room.phase === 'intercept' && self.role === 'decoder') ||
-              (snapshot.room.phase === 'decode' && self.role === 'decoder')
+              (isCurrentEncryptPhase && self.role === 'encoder') ||
+              (snapshot.room.phase === 'decode' && self.role === 'decoder') ||
+              (snapshot.room.phase === 'intercept' && self.role === 'encoder')
             ) ? (
               <p className="muted">当前阶段没有你的主动操作，等待其他玩家提交即可。</p>
             ) : null}
           </article>
 
           <article className="panel">
-            <h2>本轮情报板</h2>
+            <h2>本轮信息板</h2>
             <div className="round-grid">
               {teamOrder.map((team) => {
                 const entry = currentRoundSubmissionByTeam[team];
                 return (
                   <div className="round-card" key={team}>
                     <p className="eyebrow">{teamName(team)}</p>
-                    <strong>{entry?.clues?.join(' / ') ?? '尚未提交线索'}</strong>
+                    <strong>{entry?.clues?.join(' / ') ?? '尚未提交加密结果'}</strong>
                     <dl>
                       <div>
-                        <dt>对手破译</dt>
-                        <dd>{entry?.intercept_guess ?? '待提交'}</dd>
+                        <dt>本队解密</dt>
+                        <dd>{entry?.own_guess ?? '待提交'}</dd>
                       </div>
                       <div>
-                        <dt>本队解码</dt>
-                        <dd>{entry?.own_guess ?? '待提交'}</dd>
+                        <dt>对手拦截</dt>
+                        <dd>{entry?.intercept_guess ?? '待提交'}</dd>
                       </div>
                       <div>
                         <dt>公开答案</dt>
@@ -640,7 +731,7 @@ function App() {
                   <span>
                     R{entry.round_number} · {teamName(entry.team)}
                   </span>
-                  <strong>{entry.clues?.join(' / ') ?? '未出题'}</strong>
+                  <strong>{entry.clues?.join(' / ') ?? '未加密'}</strong>
                   <span>{entry.revealed_code ?? '未公开'}</span>
                 </div>
               ))}
@@ -654,6 +745,11 @@ function App() {
             {snapshot.room.phase === 'finished' ? (
               <div className="winner-banner">
                 <strong>{snapshot.room.winner ? `${teamName(snapshot.room.winner)} 获胜` : '平局'}</strong>
+                {self.is_host ? (
+                  <button className="primary-button wide-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
+                    重新开始
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </article>

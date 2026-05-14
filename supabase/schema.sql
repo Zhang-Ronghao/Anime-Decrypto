@@ -5,7 +5,7 @@ create table if not exists public.rooms (
   room_code text not null unique,
   host_user_id uuid not null,
   status text not null default 'lobby' check (status in ('lobby', 'active', 'finished')),
-  phase text not null default 'lobby' check (phase in ('lobby', 'clue', 'intercept', 'decode', 'result', 'finished')),
+  phase text not null default 'lobby',
   round_number integer not null default 0,
   max_rounds integer not null default 8,
   winner text null check (winner in ('A', 'B')),
@@ -16,6 +16,14 @@ create table if not exists public.rooms (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.rooms drop constraint if exists rooms_phase_check;
+update public.rooms
+set phase = 'encrypt'
+where phase = 'clue';
+alter table public.rooms
+add constraint rooms_phase_check
+check (phase in ('lobby', 'encrypt', 'decode', 'intercept', 'result', 'finished'));
 
 create table if not exists public.room_players (
   id uuid primary key default gen_random_uuid(),
@@ -221,15 +229,14 @@ language sql
 security definer
 set search_path = public
 as $$
+  with shuffled_numbers as (
+    select number, random() as sort_key
+    from unnest(array[1, 2, 3, 4]) as digits(number)
+    order by sort_key
+    limit 3
+  )
   select string_agg(number::text, '-' order by sort_key)
-  from (
-    select number, row_number() over () as sort_key
-    from (
-      select unnest(array[1, 2, 3, 4]) as number
-      order by random()
-      limit 3
-    ) shuffled
-  ) ordered_numbers;
+  from shuffled_numbers;
 $$;
 
 create or replace function public.assert_authenticated()
@@ -308,6 +315,7 @@ as $$
 declare
   v_room public.rooms%rowtype;
   v_existing_player_count integer;
+  v_is_existing_member boolean;
   v_lookup_code text;
 begin
   perform public.assert_authenticated();
@@ -326,6 +334,18 @@ begin
 
   if coalesce(length(trim(p_player_name)), 0) = 0 then
     raise exception '昵称不能为空。';
+  end if;
+
+  select exists (
+    select 1
+    from public.room_players as rp
+    where rp.room_id = v_room.id
+      and rp.auth_user_id = auth.uid()
+  )
+  into v_is_existing_member;
+
+  if v_room.status <> 'lobby' and not v_is_existing_member then
+    raise exception '游戏开始后不能加入新玩家。';
   end if;
 
   select count(*)
@@ -352,6 +372,107 @@ begin
 
   return query
   select v_room.id, v_room.room_code;
+end;
+$$;
+
+create or replace function public.cleanup_expired_rooms()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_deleted_count integer;
+begin
+  perform public.assert_authenticated();
+
+  with deleted_rooms as (
+    delete from public.rooms
+    where updated_at < timezone('utc', now()) - interval '24 hours'
+    returning id
+  )
+  select count(*)
+  into v_deleted_count
+  from deleted_rooms;
+
+  return v_deleted_count;
+end;
+$$;
+
+create or replace function public.leave_room(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_self public.room_players%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  select *
+  into v_self
+  from public.room_players
+  where room_id = p_room_id
+    and auth_user_id = auth.uid();
+
+  if v_self.id is null then
+    raise exception '你不在该房间中。';
+  end if;
+
+  if v_self.is_host then
+    raise exception '房主需要解散房间。';
+  end if;
+
+  if v_room.status not in ('lobby', 'finished') then
+    raise exception '游戏进行中不能离开房间。';
+  end if;
+
+  delete from public.room_players
+  where id = v_self.id;
+end;
+$$;
+
+create or replace function public.disband_room(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以解散房间。';
+  end if;
+
+  if v_room.status not in ('lobby', 'finished') then
+    raise exception '游戏进行中不能解散房间。';
+  end if;
+
+  delete from public.rooms
+  where id = p_room_id;
 end;
 $$;
 
@@ -486,7 +607,7 @@ begin
 
   update public.rooms
   set status = 'active',
-      phase = 'clue',
+      phase = 'encrypt',
       round_number = v_round,
       winner = null,
       score_team_a_intercepts = 0,
@@ -513,7 +634,7 @@ begin
   from public.rooms
   where id = p_room_id;
 
-  if v_room.phase <> 'clue' then
+  if v_room.phase <> 'encrypt' then
     raise exception '当前不是出题阶段。';
   end if;
 
@@ -552,12 +673,12 @@ begin
   end if;
 
   update public.rooms
-  set phase = 'intercept'
+  set phase = 'decode'
   where id = p_room_id;
 end;
 $$;
 
-create or replace function public.submit_intercept_guess(p_room_id uuid, p_target_team text, p_guess text)
+create or replace function public._legacy_submit_intercept_guess(p_room_id uuid, p_target_team text, p_guess text)
 returns void
 language plpgsql
 security definer
@@ -618,7 +739,7 @@ begin
 end;
 $$;
 
-create or replace function public.submit_own_guess(p_room_id uuid, p_team text, p_guess text)
+create or replace function public._legacy_submit_own_guess(p_room_id uuid, p_team text, p_guess text)
 returns void
 language plpgsql
 security definer
@@ -725,7 +846,7 @@ begin
 end;
 $$;
 
-create or replace function public.advance_round(p_room_id uuid)
+create or replace function public._legacy_advance_round(p_room_id uuid)
 returns void
 language plpgsql
 security definer
@@ -793,16 +914,325 @@ begin
 end;
 $$;
 
+create or replace function public.submit_own_guess(p_room_id uuid, p_team text, p_guess text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.phase <> 'decode' then
+    raise exception '当前不是解密阶段。';
+  end if;
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  if p_guess !~ '^[1-4]-[1-4]-[1-4]$' then
+    raise exception '解密密码格式应为 1-2-3。';
+  end if;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = p_team
+      and role = 'decoder'
+  ) then
+    raise exception '只有本队解码者可以提交解密答案。';
+  end if;
+
+  update public.round_submissions
+  set own_guess = p_guess
+  where room_id = p_room_id
+    and round_number = v_room.round_number
+    and team = p_team;
+
+  if exists (
+    select 1
+    from public.round_submissions
+    where room_id = p_room_id
+      and round_number = v_room.round_number
+      and own_guess is null
+  ) then
+    return;
+  end if;
+
+  update public.rooms
+  set phase = 'intercept'
+  where id = p_room_id;
+end;
+$$;
+
+create or replace function public.submit_intercept_guess(p_room_id uuid, p_target_team text, p_guess text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_attacker_team text;
+  v_a_code text;
+  v_b_code text;
+  v_a_intercept_correct boolean;
+  v_b_intercept_correct boolean;
+  v_a_own_correct boolean;
+  v_b_own_correct boolean;
+  v_next_a_intercepts integer;
+  v_next_b_intercepts integer;
+  v_next_a_miscomms integer;
+  v_next_b_miscomms integer;
+  v_a_win_condition boolean;
+  v_b_win_condition boolean;
+  v_a_score integer;
+  v_b_score integer;
+  v_game_finished boolean := false;
+  v_winner text;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.phase <> 'intercept' then
+    raise exception '当前不是拦截阶段。';
+  end if;
+
+  if p_target_team not in ('A', 'B') then
+    raise exception '目标队伍无效。';
+  end if;
+
+  if p_guess !~ '^[1-4]-[1-4]-[1-4]$' then
+    raise exception '拦截密码格式应为 1-2-3。';
+  end if;
+
+  v_attacker_team := case when p_target_team = 'A' then 'B' else 'A' end;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = v_attacker_team
+      and role = 'encoder'
+  ) then
+    raise exception '只有本队加密者可以提交拦截。';
+  end if;
+
+  update public.round_submissions
+  set intercept_guess = p_guess
+  where room_id = p_room_id
+    and round_number = v_room.round_number
+    and team = p_target_team;
+
+  if exists (
+    select 1
+    from public.round_submissions
+    where room_id = p_room_id
+      and round_number = v_room.round_number
+      and intercept_guess is null
+  ) then
+    return;
+  end if;
+
+  select code into v_a_code
+  from public.round_codes
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'A';
+
+  select code into v_b_code
+  from public.round_codes
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'B';
+
+  select intercept_guess = v_a_code, own_guess = v_a_code
+  into v_a_intercept_correct, v_a_own_correct
+  from public.round_submissions
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'A';
+
+  select intercept_guess = v_b_code, own_guess = v_b_code
+  into v_b_intercept_correct, v_b_own_correct
+  from public.round_submissions
+  where room_id = p_room_id and round_number = v_room.round_number and team = 'B';
+
+  update public.round_submissions
+  set revealed_code = case when team = 'A' then v_a_code else v_b_code end,
+      intercept_correct = case when team = 'A' then v_a_intercept_correct else v_b_intercept_correct end,
+      own_correct = case when team = 'A' then v_a_own_correct else v_b_own_correct end,
+      resolved_at = timezone('utc', now())
+  where room_id = p_room_id
+    and round_number = v_room.round_number;
+
+  v_next_a_intercepts := v_room.score_team_a_intercepts + case when v_b_intercept_correct then 1 else 0 end;
+  v_next_b_intercepts := v_room.score_team_b_intercepts + case when v_a_intercept_correct then 1 else 0 end;
+  v_next_a_miscomms := v_room.score_team_a_miscomms + case when not v_a_own_correct then 1 else 0 end;
+  v_next_b_miscomms := v_room.score_team_b_miscomms + case when not v_b_own_correct then 1 else 0 end;
+
+  v_a_win_condition := v_next_a_intercepts >= 2 or v_next_b_miscomms >= 2;
+  v_b_win_condition := v_next_b_intercepts >= 2 or v_next_a_miscomms >= 2;
+  v_game_finished := v_a_win_condition or v_b_win_condition;
+
+  if v_a_win_condition and v_b_win_condition then
+    v_a_score := v_next_a_intercepts - v_next_a_miscomms;
+    v_b_score := v_next_b_intercepts - v_next_b_miscomms;
+
+    if v_a_score > v_b_score then
+      v_winner := 'A';
+    elsif v_b_score > v_a_score then
+      v_winner := 'B';
+    else
+      v_winner := null;
+    end if;
+  elsif v_a_win_condition then
+    v_winner := 'A';
+  elsif v_b_win_condition then
+    v_winner := 'B';
+  end if;
+
+  update public.rooms
+  set score_team_a_intercepts = v_next_a_intercepts,
+      score_team_b_intercepts = v_next_b_intercepts,
+      score_team_a_miscomms = v_next_a_miscomms,
+      score_team_b_miscomms = v_next_b_miscomms,
+      phase = case when v_game_finished then 'finished' else 'result' end,
+      status = case when v_game_finished then 'finished' else 'active' end,
+      winner = v_winner
+  where id = p_room_id;
+end;
+$$;
+
+create or replace function public.advance_round(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_next_round integer;
+  v_a_encoder uuid;
+  v_b_encoder uuid;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以推进回合。';
+  end if;
+
+  if v_room.phase <> 'result' then
+    raise exception '当前不是结算阶段。';
+  end if;
+
+  v_next_round := v_room.round_number + 1;
+
+  select id into v_a_encoder
+  from public.room_players
+  where room_id = p_room_id and team = 'A' and role = 'encoder';
+
+  select id into v_b_encoder
+  from public.room_players
+  where room_id = p_room_id and team = 'B' and role = 'encoder';
+
+  insert into public.round_codes (room_id, team, round_number, encoder_player_id, code)
+  values
+    (p_room_id, 'A', v_next_round, v_a_encoder, public.generate_code_text()),
+    (p_room_id, 'B', v_next_round, v_b_encoder, public.generate_code_text());
+
+  insert into public.round_submissions (room_id, team, round_number)
+  values
+    (p_room_id, 'A', v_next_round),
+    (p_room_id, 'B', v_next_round);
+
+  update public.rooms
+  set phase = 'encrypt',
+      status = 'active',
+      round_number = v_next_round
+  where id = p_room_id;
+end;
+$$;
+
+create or replace function public.restart_room(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以重新开始。';
+  end if;
+
+  if v_room.status <> 'finished' or v_room.phase <> 'finished' then
+    raise exception '只有游戏结束后可以重新开始。';
+  end if;
+
+  delete from public.round_submissions where room_id = p_room_id;
+  delete from public.round_codes where room_id = p_room_id;
+  delete from public.team_words where room_id = p_room_id;
+
+  update public.room_players
+  set team = null,
+      role = null,
+      connected = true
+  where room_id = p_room_id;
+
+  update public.rooms
+  set status = 'lobby',
+      phase = 'lobby',
+      round_number = 0,
+      winner = null,
+      score_team_a_intercepts = 0,
+      score_team_b_intercepts = 0,
+      score_team_a_miscomms = 0,
+      score_team_b_miscomms = 0
+  where id = p_room_id;
+end;
+$$;
+
 grant usage on schema public to authenticated;
 grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
 grant execute on function public.join_room(text, text) to authenticated;
+grant execute on function public.cleanup_expired_rooms() to authenticated;
+grant execute on function public.leave_room(uuid) to authenticated;
+grant execute on function public.disband_room(uuid) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, text) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;
 grant execute on function public.submit_clues(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_intercept_guess(uuid, text, text) to authenticated;
 grant execute on function public.submit_own_guess(uuid, text, text) to authenticated;
 grant execute on function public.advance_round(uuid) to authenticated;
+grant execute on function public.restart_room(uuid) to authenticated;
 
 do $$
 begin
