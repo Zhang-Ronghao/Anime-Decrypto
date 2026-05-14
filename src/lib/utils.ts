@@ -40,7 +40,8 @@ export function phaseLabel(phase: RoomPhase): string {
   switch (phase) {
     case 'lobby':
       return '准备阶段';
-    case 'clue':
+    case 'word_assignment':
+      return '词语分配';
     case 'encrypt':
       return '阶段一：加密';
     case 'decode':
@@ -57,7 +58,7 @@ export function phaseLabel(phase: RoomPhase): string {
 }
 
 export function isEncryptPhase(phase: RoomPhase): boolean {
-  return phase === 'encrypt' || phase === 'clue';
+  return phase === 'encrypt';
 }
 
 export function teamName(team: Team): string {

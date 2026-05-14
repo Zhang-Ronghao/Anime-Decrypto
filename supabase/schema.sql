@@ -13,9 +13,17 @@ create table if not exists public.rooms (
   score_team_b_intercepts integer not null default 0,
   score_team_a_miscomms integer not null default 0,
   score_team_b_miscomms integer not null default 0,
+  team_a_words_confirmed boolean not null default false,
+  team_b_words_confirmed boolean not null default false,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.rooms
+add column if not exists team_a_words_confirmed boolean not null default false;
+
+alter table public.rooms
+add column if not exists team_b_words_confirmed boolean not null default false;
 
 alter table public.rooms drop constraint if exists rooms_phase_check;
 update public.rooms
@@ -23,7 +31,7 @@ set phase = 'encrypt'
 where phase = 'clue';
 alter table public.rooms
 add constraint rooms_phase_check
-check (phase in ('lobby', 'encrypt', 'decode', 'intercept', 'result', 'finished'));
+check (phase in ('lobby', 'word_assignment', 'encrypt', 'decode', 'intercept', 'result', 'finished'));
 
 create table if not exists public.room_players (
   id uuid primary key default gen_random_uuid(),
@@ -44,9 +52,33 @@ create table if not exists public.team_words (
   room_id uuid not null references public.rooms(id) on delete cascade,
   team text not null check (team in ('A', 'B')),
   words text[] not null check (array_length(words, 1) = 4),
+  confirmed boolean not null default false,
   created_at timestamptz not null default timezone('utc', now()),
   unique (room_id, team)
 );
+
+alter table public.team_words
+add column if not exists confirmed boolean not null default false;
+
+update public.team_words
+set confirmed = true
+where not confirmed;
+
+update public.rooms
+set team_a_words_confirmed = exists (
+      select 1
+      from public.team_words
+      where public.team_words.room_id = public.rooms.id
+        and public.team_words.team = 'A'
+        and public.team_words.confirmed
+    ),
+    team_b_words_confirmed = exists (
+      select 1
+      from public.team_words
+      where public.team_words.room_id = public.rooms.id
+        and public.team_words.team = 'B'
+        and public.team_words.confirmed
+    );
 
 create table if not exists public.round_codes (
   id uuid primary key default gen_random_uuid(),
@@ -155,6 +187,20 @@ to authenticated
 using (
   public.is_room_member(room_id)
   and team = public.current_player_team(room_id)
+  and (
+    confirmed
+    or exists (
+      select 1
+      from public.rooms
+      join public.room_players
+        on public.room_players.room_id = public.team_words.room_id
+      where public.rooms.id = public.team_words.room_id
+        and public.rooms.phase = 'word_assignment'
+        and public.room_players.auth_user_id = auth.uid()
+        and public.room_players.team = public.team_words.team
+        and public.room_players.role = 'encoder'
+    )
+  )
 );
 
 drop policy if exists "round_codes_select_encoder_only" on public.round_codes;
@@ -237,6 +283,48 @@ as $$
   )
   select string_agg(number::text, '-' order by sort_key)
   from shuffled_numbers;
+$$;
+
+create or replace function public.normalize_team_words(p_words text[], p_require_complete boolean default false)
+returns text[]
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_words text[];
+begin
+  if array_length(p_words, 1) <> 4 then
+    raise exception '必须提供 4 个词语。';
+  end if;
+
+  select array_agg(trim(coalesce(value, '')) order by ordinality)
+  into v_words
+  from unnest(p_words) with ordinality as items(value, ordinality);
+
+  if p_require_complete and exists (
+    select 1
+    from unnest(v_words) as value
+    where value = ''
+  ) then
+    raise exception '确认前需要填写 4 个词语。';
+  end if;
+
+  if exists (
+    select 1
+    from (
+      select value
+      from unnest(v_words) as value
+      where value <> ''
+      group by value
+      having count(*) > 1
+    ) duplicates
+  ) then
+    raise exception '同队词语不能重复。';
+  end if;
+
+  return v_words;
+end;
 $$;
 
 create or replace function public.assert_authenticated()
@@ -488,7 +576,11 @@ declare
 begin
   perform public.assert_authenticated();
 
-  if p_team not in ('A', 'B') or p_role not in ('encoder', 'decoder') then
+  if (p_team is null) <> (p_role is null) then
+    raise exception '席位信息不完整。';
+  end if;
+
+  if p_team is not null and (p_team not in ('A', 'B') or p_role not in ('encoder', 'decoder')) then
     raise exception '无效席位。';
   end if;
 
@@ -511,15 +603,17 @@ begin
     raise exception '你不在该房间中。';
   end if;
 
-  if exists (
-    select 1
-    from public.room_players
-    where room_id = p_room_id
-      and team = p_team
-      and role = p_role
-      and id <> v_self_id
-  ) then
-    raise exception '该席位已被占用。';
+  if p_team is not null then
+    if exists (
+      select 1
+      from public.room_players
+      where room_id = p_room_id
+        and team = p_team
+        and role = p_role
+        and id <> v_self_id
+    ) then
+      raise exception '该席位已被占用。';
+    end if;
   end if;
 
   update public.room_players
@@ -538,8 +632,6 @@ as $$
 declare
   v_room public.rooms%rowtype;
   v_player_count integer;
-  v_a_encoder uuid;
-  v_b_encoder uuid;
   v_round integer := 1;
 begin
   perform public.assert_authenticated();
@@ -547,7 +639,8 @@ begin
   select *
   into v_room
   from public.rooms
-  where id = p_room_id;
+  where id = p_room_id
+  for update;
 
   if v_room.host_user_id <> auth.uid() then
     raise exception '只有房主可以开始游戏。';
@@ -577,12 +670,217 @@ begin
     raise exception '队伍或角色分配不完整。';
   end if;
 
-  insert into public.team_words (room_id, team, words)
+  delete from public.round_submissions where room_id = p_room_id;
+  delete from public.round_codes where room_id = p_room_id;
+  delete from public.team_words where room_id = p_room_id;
+
+  insert into public.team_words (room_id, team, words, confirmed)
   values
-    (p_room_id, 'A', public.draw_words(4)),
-    (p_room_id, 'B', public.draw_words(4))
-  on conflict (room_id, team)
-  do update set words = excluded.words;
+    (p_room_id, 'A', array['', '', '', ''], false),
+    (p_room_id, 'B', array['', '', '', ''], false);
+
+  update public.rooms
+  set status = 'active',
+      phase = 'word_assignment',
+      round_number = v_round,
+      winner = null,
+      score_team_a_intercepts = 0,
+      score_team_b_intercepts = 0,
+      score_team_a_miscomms = 0,
+      score_team_b_miscomms = 0,
+      team_a_words_confirmed = false,
+      team_b_words_confirmed = false
+  where id = p_room_id;
+end;
+$$;
+
+create or replace function public.generate_team_words(p_room_id uuid, p_team text)
+returns text[]
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_words text[];
+begin
+  perform public.assert_authenticated();
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception '当前不是词语分配阶段。';
+  end if;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = p_team
+      and role = 'encoder'
+  ) then
+    raise exception '只有本队加密者可以生成词语。';
+  end if;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and team = p_team
+      and confirmed
+  ) then
+    raise exception '本队词语已确认，不能再修改。';
+  end if;
+
+  v_words := public.draw_words(4);
+
+  update public.team_words
+  set words = v_words
+  where room_id = p_room_id
+    and team = p_team;
+
+  return v_words;
+end;
+$$;
+
+create or replace function public.save_team_words(p_room_id uuid, p_team text, p_words text[])
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_words text[];
+begin
+  perform public.assert_authenticated();
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  v_words := public.normalize_team_words(p_words, false);
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception '当前不是词语分配阶段。';
+  end if;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = p_team
+      and role = 'encoder'
+  ) then
+    raise exception '只有本队加密者可以编辑词语。';
+  end if;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and team = p_team
+      and confirmed
+  ) then
+    raise exception '本队词语已确认，不能再修改。';
+  end if;
+
+  update public.team_words
+  set words = v_words
+  where room_id = p_room_id
+    and team = p_team;
+end;
+$$;
+
+create or replace function public.confirm_team_words(p_room_id uuid, p_team text, p_words text[])
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_words text[];
+  v_round integer;
+  v_a_encoder uuid;
+  v_b_encoder uuid;
+begin
+  perform public.assert_authenticated();
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  v_words := public.normalize_team_words(p_words, true);
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception '当前不是词语分配阶段。';
+  end if;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = p_team
+      and role = 'encoder'
+  ) then
+    raise exception '只有本队加密者可以确认词语。';
+  end if;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and team = p_team
+      and confirmed
+  ) then
+    raise exception '本队词语已确认，不能再修改。';
+  end if;
+
+  update public.team_words
+  set words = v_words,
+      confirmed = true
+  where room_id = p_room_id
+    and team = p_team;
+
+  update public.rooms
+  set team_a_words_confirmed = case when p_team = 'A' then true else team_a_words_confirmed end,
+      team_b_words_confirmed = case when p_team = 'B' then true else team_b_words_confirmed end
+  where id = p_room_id;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and not confirmed
+  ) then
+    return;
+  end if;
+
+  v_round := greatest(v_room.round_number, 1);
 
   select id into v_a_encoder
   from public.room_players
@@ -592,8 +890,8 @@ begin
   from public.room_players
   where room_id = p_room_id and team = 'B' and role = 'encoder';
 
-  delete from public.round_codes where room_id = p_room_id;
   delete from public.round_submissions where room_id = p_room_id;
+  delete from public.round_codes where room_id = p_room_id;
 
   insert into public.round_codes (room_id, team, round_number, encoder_player_id, code)
   values
@@ -606,14 +904,8 @@ begin
     (p_room_id, 'B', v_round);
 
   update public.rooms
-  set status = 'active',
-      phase = 'encrypt',
-      round_number = v_round,
-      winner = null,
-      score_team_a_intercepts = 0,
-      score_team_b_intercepts = 0,
-      score_team_a_miscomms = 0,
-      score_team_b_miscomms = 0
+  set phase = 'encrypt',
+      round_number = v_round
   where id = p_room_id;
 end;
 $$;
@@ -907,7 +1199,7 @@ begin
     (p_room_id, 'B', v_next_round);
 
   update public.rooms
-  set phase = 'clue',
+  set phase = 'encrypt',
       status = 'active',
       round_number = v_next_round
   where id = p_room_id;
@@ -1214,7 +1506,62 @@ begin
       score_team_a_intercepts = 0,
       score_team_b_intercepts = 0,
       score_team_a_miscomms = 0,
-      score_team_b_miscomms = 0
+      score_team_b_miscomms = 0,
+      team_a_words_confirmed = false,
+      team_b_words_confirmed = false
+  where id = p_room_id;
+end;
+$$;
+
+create or replace function public.terminate_game(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.id is null then
+    raise exception 'Room not found.';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception 'Only the host can terminate the game.';
+  end if;
+
+  if v_room.status <> 'active' or v_room.phase = 'lobby' then
+    raise exception 'Only an active game can be terminated.';
+  end if;
+
+  delete from public.round_submissions where room_id = p_room_id;
+  delete from public.round_codes where room_id = p_room_id;
+  delete from public.team_words where room_id = p_room_id;
+
+  update public.room_players
+  set team = null,
+      role = null,
+      connected = true
+  where room_id = p_room_id;
+
+  update public.rooms
+  set status = 'lobby',
+      phase = 'lobby',
+      round_number = 0,
+      winner = null,
+      score_team_a_intercepts = 0,
+      score_team_b_intercepts = 0,
+      score_team_a_miscomms = 0,
+      score_team_b_miscomms = 0,
+      team_a_words_confirmed = false,
+      team_b_words_confirmed = false
   where id = p_room_id;
 end;
 $$;
@@ -1228,11 +1575,15 @@ grant execute on function public.leave_room(uuid) to authenticated;
 grant execute on function public.disband_room(uuid) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, text) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;
+grant execute on function public.generate_team_words(uuid, text) to authenticated;
+grant execute on function public.save_team_words(uuid, text, text[]) to authenticated;
+grant execute on function public.confirm_team_words(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_clues(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_intercept_guess(uuid, text, text) to authenticated;
 grant execute on function public.submit_own_guess(uuid, text, text) to authenticated;
 grant execute on function public.advance_round(uuid) to authenticated;
 grant execute on function public.restart_room(uuid) to authenticated;
+grant execute on function public.terminate_game(uuid) to authenticated;
 
 do $$
 begin

@@ -1,7 +1,7 @@
 export type Team = 'A' | 'B';
 export type Role = 'encoder' | 'decoder';
 export type RoomStatus = 'lobby' | 'active' | 'finished';
-export type RoomPhase = 'lobby' | 'clue' | 'encrypt' | 'decode' | 'intercept' | 'result' | 'finished';
+export type RoomPhase = 'lobby' | 'word_assignment' | 'encrypt' | 'decode' | 'intercept' | 'result' | 'finished';
 
 export interface RoomRecord {
   id: string;
@@ -16,6 +16,8 @@ export interface RoomRecord {
   score_team_b_intercepts: number;
   score_team_a_miscomms: number;
   score_team_b_miscomms: number;
+  team_a_words_confirmed: boolean;
+  team_b_words_confirmed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +39,7 @@ export interface TeamWordsRecord {
   room_id: string;
   team: Team;
   words: string[];
+  confirmed: boolean;
   created_at: string;
 }
 

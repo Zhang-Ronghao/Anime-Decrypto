@@ -558,6 +558,13 @@ select:focus {
   cursor: default;
 }
 
+.assignment-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .action-progress {
   min-height: 100%;
   display: grid;
@@ -598,6 +605,10 @@ select:focus {
   font-size: 1.2rem;
 }
 
+.wait-card p {
+  margin: 8px 0 0;
+}
+
 .layout-grid,
 .seat-grid,
 .round-grid,
@@ -618,6 +629,12 @@ select:focus {
 .seat-grid {
   margin-top: 18px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.seat-action-row {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .seat-card {
@@ -902,6 +919,12 @@ select:focus {
   font-size: 1.35rem;
 }
 
+.game-footer-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .form-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
@@ -996,6 +1019,11 @@ code {
   .action-line select {
     max-width: none;
     justify-self: stretch;
+  }
+
+  .assignment-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .status-pills,

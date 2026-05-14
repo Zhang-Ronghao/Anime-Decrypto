@@ -115,7 +115,7 @@ export async function disbandRoom(roomId: string) {
   }
 }
 
-export async function updateSelfSeat(roomId: string, team: Team, role: 'encoder' | 'decoder') {
+export async function updateSelfSeat(roomId: string, team: Team | null, role: 'encoder' | 'decoder' | null) {
   const client = assertSupabase();
   const { error } = await client.rpc('update_self_seat', {
     p_room_id: roomId,
@@ -132,6 +132,46 @@ export async function startGame(roomId: string) {
   const client = assertSupabase();
   const { error } = await client.rpc('start_game', {
     p_room_id: roomId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function generateTeamWords(roomId: string, team: Team) {
+  const client = assertSupabase();
+  const { data, error } = await client.rpc('generate_team_words', {
+    p_room_id: roomId,
+    p_team: team,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []) as string[];
+}
+
+export async function saveTeamWords(roomId: string, team: Team, words: string[]) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('save_team_words', {
+    p_room_id: roomId,
+    p_team: team,
+    p_words: words,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function confirmTeamWords(roomId: string, team: Team, words: string[]) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('confirm_team_words', {
+    p_room_id: roomId,
+    p_team: team,
+    p_words: words,
   });
 
   if (error) {
@@ -192,6 +232,17 @@ export async function advanceRound(roomId: string) {
 export async function restartRoom(roomId: string) {
   const client = assertSupabase();
   const { error } = await client.rpc('restart_room', {
+    p_room_id: roomId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function terminateGame(roomId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('terminate_game', {
     p_room_id: roomId,
   });
 
