@@ -17,13 +17,25 @@ import {
 } from './lib/game';
 import { ensureSession, isSupabaseConfigured, supabase } from './lib/supabase';
 import { cn, isEncryptPhase, isSeatTaken, normalizeGuess, otherTeam, phaseLabel, roleName, roleOrder, teamName, teamOrder } from './lib/utils';
-import type { PlayerRecord, RoomSnapshot, Role, Team } from './types';
+import type { PlayerRecord, RoomSnapshot, Role, RoundSubmissionRecord, Team } from './types';
 
 interface SeatCardProps {
   title: string;
   occupant?: PlayerRecord;
   active?: boolean;
   onClick?: () => void;
+}
+
+interface TeamScore {
+  intercepts: number;
+  miscomms: number;
+  net: number;
+}
+
+interface ScoreTrackProps {
+  count: number;
+  kind: 'intercept' | 'miscomm';
+  tone: 'red' | 'blue';
 }
 
 function SeatCard({ title, occupant, active, onClick }: SeatCardProps) {
@@ -58,10 +70,118 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function scoreFor(snapshot: RoomSnapshot, team: Team): { intercepts: number; miscomms: number; net: number } {
+function scoreFor(snapshot: RoomSnapshot, team: Team): TeamScore {
   const intercepts = team === 'A' ? snapshot.room.score_team_a_intercepts : snapshot.room.score_team_b_intercepts;
   const miscomms = team === 'A' ? snapshot.room.score_team_a_miscomms : snapshot.room.score_team_b_miscomms;
   return { intercepts, miscomms, net: intercepts - miscomms };
+}
+
+function ScoreTrack({ count, kind, tone }: ScoreTrackProps) {
+  const filledCount = Math.min(Math.max(count, 0), 2);
+  const label = kind === 'intercept' ? `拦截 ${filledCount}/2` : `失误 ${filledCount}/2`;
+  const text = kind === 'intercept' ? '拦截' : '失误';
+
+  return (
+    <div className={cn('score-track', `score-track-${kind}`, filledCount >= 2 && 'score-track-full')} aria-label={label}>
+      <span className="score-track-label" aria-hidden="true">
+        {text}
+      </span>
+
+      <span className="score-track-cells" aria-hidden="true">
+        {Array.from({ length: 2 }, (_, index) => (
+          <span
+            className={cn(
+              'score-track-cell',
+              `score-track-cell-${tone}`,
+              index < filledCount && 'score-track-cell-filled',
+            )}
+            key={`${kind}-${index}`}
+          />
+        ))}
+      </span>
+    </div>
+  );
+}
+
+function displayTeamName(team: Team): string {
+  return team === 'A' ? '红队' : '蓝队';
+}
+
+function teamTone(team: Team): 'red' | 'blue' {
+  return team === 'A' ? 'red' : 'blue';
+}
+
+function formatGuessResult(guess: string | null, correct: boolean | null): string {
+  if (!guess) {
+    return '待提交';
+  }
+
+  if (correct === null) {
+    return `${guess} (-)`;
+  }
+
+  return `${guess} (${correct ? '✓' : '×'})`;
+}
+
+function resultClass(correct: boolean | null): string {
+  if (correct === true) {
+    return 'result-good';
+  }
+
+  if (correct === false) {
+    return 'result-bad';
+  }
+
+  return 'result-pending';
+}
+
+function guessDigits(value: string): string[] {
+  const digits = normalizeGuess(value).split('-').filter(Boolean);
+  return [digits[0] ?? '', digits[1] ?? '', digits[2] ?? ''];
+}
+
+function getTeamWords(snapshot: RoomSnapshot, team: Team): string[] {
+  return snapshot.teamWords.find((entry) => entry.team === team)?.words ?? [];
+}
+
+function getTeamSubmissions(snapshot: RoomSnapshot, team: Team): RoundSubmissionRecord[] {
+  return snapshot.submissions
+    .filter((entry) => entry.team === team)
+    .slice()
+    .sort((a, b) => a.round_number - b.round_number);
+}
+
+function buildClueMatrixRows(
+  submissions: RoundSubmissionRecord[],
+  options: { showGuessNumbers?: boolean } = {},
+): Array<{ id: string; roundNumber: number; cells: string[] }> {
+  return submissions
+    .filter((entry) => entry.clues?.length === 3 && entry.revealed_code)
+    .map((entry) => {
+      const cells = ['', '', '', ''];
+      const codeDigits = entry.revealed_code!.split('-');
+      const ownGuessDigits = entry.own_guess?.split('-') ?? [];
+
+      entry.clues!.forEach((clue, clueIndex) => {
+        const columnIndex = Number(codeDigits[clueIndex]) - 1;
+        if (columnIndex < 0 || columnIndex > 3) {
+          return;
+        }
+
+        const guessedDigit = ownGuessDigits[clueIndex];
+        const actualDigit = codeDigits[clueIndex];
+        const shouldShowGuessNumber =
+          options.showGuessNumbers && Boolean(guessedDigit) && guessedDigit !== actualDigit;
+        const suffix = shouldShowGuessNumber ? `（${guessedDigit}）` : '';
+        cells[columnIndex] = `${clue}${suffix}`;
+      });
+
+      return {
+        id: entry.id,
+        roundNumber: entry.round_number,
+        cells,
+      };
+    });
 }
 
 function isMissingRoomError(error: unknown): boolean {
@@ -218,14 +338,6 @@ function App() {
     ) as Partial<Record<Team, (typeof snapshot.roundCodes)[number]>>;
   }, [snapshot]);
 
-  const teamWords = useMemo(() => {
-    if (!snapshot || !self?.team) {
-      return [];
-    }
-
-    return snapshot.teamWords.find((entry) => entry.team === self.team)?.words ?? [];
-  }, [self?.team, snapshot]);
-
   const myTeamSubmission = self?.team ? currentRoundSubmissionByTeam[self.team] : undefined;
   const opponentSubmission = self?.team ? currentRoundSubmissionByTeam[otherTeam(self.team)] : undefined;
   const myVisibleCode = self?.team ? currentRoundCodeByTeam[self.team]?.code ?? null : null;
@@ -236,6 +348,65 @@ function App() {
         roleOrder.every((role) => snapshot.players.some((player) => player.team === team && player.role === role)),
       )
     : false;
+  const myTeam = self?.team ?? 'A';
+  const opponentTeam = otherTeam(myTeam);
+  const myScore = snapshot ? scoreFor(snapshot, myTeam) : { intercepts: 0, miscomms: 0, net: 0 };
+  const opponentScore = snapshot ? scoreFor(snapshot, opponentTeam) : { intercepts: 0, miscomms: 0, net: 0 };
+  const myTeamWords = snapshot ? getTeamWords(snapshot, myTeam) : [];
+  const mySubmissions = snapshot ? getTeamSubmissions(snapshot, myTeam) : [];
+  const opponentSubmissions = snapshot ? getTeamSubmissions(snapshot, opponentTeam) : [];
+  const myClueRows = buildClueMatrixRows(mySubmissions);
+  const opponentClueRows = buildClueMatrixRows(opponentSubmissions, { showGuessNumbers: true });
+  const decodeDigits = guessDigits(decodeGuess);
+  const interceptDigits = guessDigits(interceptGuess);
+  const canSubmitClues = isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
+  const canSubmitDecode = snapshot?.room.phase === 'decode' && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
+  const canSubmitIntercept = snapshot?.room.phase === 'intercept' && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
+  const isDecodePhase = snapshot?.room.phase === 'decode';
+  const isInterceptPhase = snapshot?.room.phase === 'intercept';
+  const clueSubmitCount = currentRoundSubmissions.filter((entry) => entry.clues?.length === 3).length;
+  const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
+  const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
+  const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
+  const displayedInterceptDigits = opponentSubmission?.intercept_guess ? guessDigits(opponentSubmission.intercept_guess) : interceptDigits;
+  const encryptCodeDigits = myVisibleCode?.split('-') ?? [];
+  const encryptRows = [0, 1, 2].map((index) => {
+    const digit = encryptCodeDigits[index] ?? '';
+    const wordIndex = Number(digit) - 1;
+
+    return {
+      digit,
+      word: wordIndex >= 0 ? myTeamWords[wordIndex] ?? '等待发牌' : '等待发牌',
+    };
+  });
+  const actionTitle = canSubmitClues
+    ? '填写本轮线索'
+    : canSubmitDecode
+      ? '解出我方密码'
+      : canSubmitIntercept
+        ? '截获对方密码'
+        : isDecodePhase
+          ? '讨论我方解密'
+          : isInterceptPhase
+            ? '讨论对方截码'
+            : snapshot?.room.phase === 'result'
+              ? '查看本轮结果'
+              : snapshot?.room.phase === 'finished'
+                ? '游戏已结束'
+                : '等待其他玩家';
+  const actionMeta = self?.team ? `${displayTeamName(myTeam)} · ${self.role ? roleName(self.role) : '未入座'}` : '未入座';
+  const progressText =
+    snapshot?.room.phase === 'encrypt'
+      ? `加密进度 ${clueSubmitCount}/2`
+      : snapshot?.room.phase === 'decode'
+        ? `解密进度 ${decodeSubmitCount}/2`
+        : snapshot?.room.phase === 'intercept'
+          ? `拦截进度 ${interceptSubmitCount}/2`
+          : snapshot?.room.phase === 'result'
+            ? '本轮已经结算'
+            : snapshot?.room.phase === 'finished'
+              ? '可以重新开始或解散房间'
+              : '等待房间同步';
 
   async function withAction<T>(key: string, action: () => Promise<T>): Promise<T | null> {
     setActionError(null);
@@ -260,6 +431,18 @@ function App() {
     setInterceptGuess('');
     setActionError(message ?? null);
     window.history.replaceState({}, '', window.location.pathname);
+  }
+
+  function updateGuessDigit(kind: 'decode' | 'intercept', index: number, digit: string) {
+    const current = kind === 'decode' ? decodeDigits : interceptDigits;
+    const next = current.map((item, itemIndex) => (itemIndex === index ? digit : item));
+    const nextValue = next.every(Boolean) ? next.join('-') : next.filter(Boolean).join('-');
+
+    if (kind === 'decode') {
+      setDecodeGuess(nextValue);
+    } else {
+      setInterceptGuess(nextValue);
+    }
   }
 
   async function handleCreateRoom() {
@@ -507,34 +690,51 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="panel top-panel">
-        <div>
-          <p className="eyebrow">房间 {snapshot.room.room_code}</p>
-          <h1>{phaseLabel(snapshot.room.phase)}</h1>
-          <p className="muted">
-            第 {snapshot.room.round_number || 0} 回合 / 你是{' '}
-            {self.team ? `${teamName(self.team)} · ${self.role ? roleName(self.role) : '未入座'}` : '未入座'}
-          </p>
+      <section className="top-bar">
+        <div className="brand-block">
+          <div className="logo-mark" aria-hidden="true">
+            <span />
+          </div>
+          <div>
+            <p className="app-title">动漫高手——截码战</p>
+            <p className="app-subtitle">房间号 {snapshot.room.room_code}</p>
+          </div>
         </div>
 
-        <div className="top-side">
-          <div className="scoreboard">
-            {teamOrder.map((team) => {
-              const score = scoreFor(snapshot, team);
-              return (
-                <article key={team}>
-                  <span>{teamName(team)}</span>
-                  <strong>{score.intercepts}</strong>
-                  <small>拦截</small>
-                  <strong>{score.miscomms}</strong>
-                  <small>误传</small>
-                  <strong>{score.net}</strong>
-                  <small>净分</small>
-                </article>
-              );
-            })}
-          </div>
+        <div className="status-pills">
+          <span className="status-pill status-pill-round">第 {snapshot.room.round_number || 0} 轮</span>
+          <span className="status-pill status-pill-phase">{phaseLabel(snapshot.room.phase)}</span>
+        </div>
 
+        <div className="top-actions">
+          <article className={cn('team-score', `team-score-${teamTone(myTeam)}`)}>
+            <div className="team-score-display">
+              <strong>{displayTeamName(myTeam)}</strong>
+              <div className="team-score-tracks">
+                <ScoreTrack count={myScore.intercepts} kind="intercept" tone={teamTone(myTeam)} />
+                <ScoreTrack count={myScore.miscomms} kind="miscomm" tone={teamTone(myTeam)} />
+              </div>
+            </div>
+            <div>
+              <strong>{displayTeamName(myTeam)}</strong>
+              <small>拦截 {myScore.intercepts} ｜ 失误 {myScore.miscomms}</small>
+            </div>
+            <b>{myScore.net}</b>
+          </article>
+          <article className={cn('team-score', `team-score-${teamTone(opponentTeam)}`)}>
+            <div className="team-score-display">
+              <strong>{displayTeamName(opponentTeam)}</strong>
+              <div className="team-score-tracks">
+                <ScoreTrack count={opponentScore.intercepts} kind="intercept" tone={teamTone(opponentTeam)} />
+                <ScoreTrack count={opponentScore.miscomms} kind="miscomm" tone={teamTone(opponentTeam)} />
+              </div>
+            </div>
+            <div>
+              <strong>{displayTeamName(opponentTeam)}</strong>
+              <small>拦截 {opponentScore.intercepts} ｜ 失误 {opponentScore.miscomms}</small>
+            </div>
+            <b>{opponentScore.net}</b>
+          </article>
           {canLeaveCurrentRoom ? (
             <div className="room-actions">
               {self.is_host ? (
@@ -613,147 +813,243 @@ function App() {
           </article>
         </section>
       ) : (
-        <section className="layout-grid">
-          <article className="panel">
-            <h2>你的情报</h2>
-            <div className="info-stack">
-              <div className="intel-card">
-                <span>本队关键词</span>
-                {teamWords.length ? <strong>{teamWords.join(' / ')}</strong> : <strong>等待发牌</strong>}
+        <>
+          <section className="action-panel">
+            <div className="action-header">
+              <div>
+                <p className="section-label">当前操作</p>
+                <h2>{actionTitle}</h2>
+                <span>{actionMeta}</span>
               </div>
-              <div className="intel-card accent">
-                <span>当前密码</span>
-                <strong>{myVisibleCode ?? '你当前不可见'}</strong>
-              </div>
+              {canSubmitClues ? (
+                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleClueSubmit()} type="button">
+                  提交线索
+                </button>
+              ) : canSubmitDecode ? (
+                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleDecodeSubmit()} type="button">
+                  提交解码
+                </button>
+              ) : canSubmitIntercept ? (
+                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleInterceptSubmit()} type="button">
+                  提交截码
+                </button>
+              ) : snapshot.room.phase === 'result' && self.is_host ? (
+                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleAdvanceRound()} type="button">
+                  下一回合
+                </button>
+              ) : snapshot.room.phase === 'finished' && self.is_host ? (
+                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
+                  重新开始
+                </button>
+              ) : (
+                <button className="primary-button" disabled type="button">
+                  等待中
+                </button>
+              )}
             </div>
 
-            {isCurrentEncryptPhase && self.role === 'encoder' ? (
-              <div className="form-stack">
-                <p className="muted">按密码顺序各写一条加密结果，公开给所有人。</p>
-                {clueForm.map((value, index) => (
-                  <input
-                    key={index}
-                    maxLength={24}
-                    onChange={(event) =>
-                      setClueForm((current) => current.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
-                    }
-                    placeholder={`加密结果 ${index + 1}`}
-                    value={value}
-                  />
-                ))}
-                <button className="primary-button" disabled={busyKey !== null || Boolean(myTeamSubmission?.clues)} onClick={() => void handleClueSubmit()} type="button">
-                  提交加密结果
-                </button>
-              </div>
-            ) : null}
-
-            {snapshot.room.phase === 'decode' && self.role === 'decoder' && self.team ? (
-              <div className="form-stack">
-                <p className="muted">根据本队加密者给出的信息，解出本队密码。正确答案会在拦截后统一公开。</p>
-                <strong>{myTeamSubmission?.clues?.join(' / ') ?? '等待本队加密结果'}</strong>
-                <input
-                  onChange={(event) => setDecodeGuess(normalizeGuess(event.target.value))}
-                  placeholder="例如 1-3-4"
-                  value={decodeGuess}
-                />
-                <button
-                  className="primary-button"
-                  disabled={busyKey !== null || Boolean(myTeamSubmission?.own_guess)}
-                  onClick={() => void handleDecodeSubmit()}
-                  type="button"
-                >
-                  提交本队解密
-                </button>
-              </div>
-            ) : null}
-
-            {snapshot.room.phase === 'intercept' && self.role === 'encoder' && self.team ? (
-              <div className="form-stack">
-                <p className="muted">根据对方公开的加密结果，尝试拦截对方密码。</p>
-                <strong>{opponentSubmission?.clues?.join(' / ') ?? '等待对方加密结果'}</strong>
-                <input
-                  onChange={(event) => setInterceptGuess(normalizeGuess(event.target.value))}
-                  placeholder="例如 2-4-1"
-                  value={interceptGuess}
-                />
-                <button
-                  className="primary-button"
-                  disabled={busyKey !== null || Boolean(opponentSubmission?.intercept_guess)}
-                  onClick={() => void handleInterceptSubmit()}
-                  type="button"
-                >
-                  提交拦截
-                </button>
-              </div>
-            ) : null}
-
-            {!(
-              (isCurrentEncryptPhase && self.role === 'encoder') ||
-              (snapshot.room.phase === 'decode' && self.role === 'decoder') ||
-              (snapshot.room.phase === 'intercept' && self.role === 'encoder')
-            ) ? (
-              <p className="muted">当前阶段没有你的主动操作，等待其他玩家提交即可。</p>
-            ) : null}
-          </article>
-
-          <article className="panel">
-            <h2>本轮信息板</h2>
-            <div className="round-grid">
-              {teamOrder.map((team) => {
-                const entry = currentRoundSubmissionByTeam[team];
-                return (
-                  <div className="round-card" key={team}>
-                    <p className="eyebrow">{teamName(team)}</p>
-                    <strong>{entry?.clues?.join(' / ') ?? '尚未提交加密结果'}</strong>
-                    <dl>
-                      <div>
-                        <dt>本队解密</dt>
-                        <dd>{entry?.own_guess ?? '待提交'}</dd>
-                      </div>
-                      <div>
-                        <dt>对手拦截</dt>
-                        <dd>{entry?.intercept_guess ?? '待提交'}</dd>
-                      </div>
-                      <div>
-                        <dt>公开答案</dt>
-                        <dd>{entry?.revealed_code ?? '本轮未公开'}</dd>
-                      </div>
-                    </dl>
+            <div className="action-body">
+              <div className="action-body-main">
+                {canSubmitClues ? (
+                  <div className="action-lines">
+                    {encryptRows.map((row, index) => (
+                      <label className="action-line" key={index}>
+                        <span className={cn('code-word', `code-word-${teamTone(myTeam)}`)}>
+                          <b>{row.digit || '-'}</b>
+                          <span>{row.word}</span>
+                        </span>
+                        <input
+                          maxLength={24}
+                          onChange={(event) =>
+                            setClueForm((current) => current.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
+                          }
+                          placeholder={`线索 ${index + 1}`}
+                          value={clueForm[index]}
+                        />
+                      </label>
+                    ))}
                   </div>
-                );
-              })}
-            </div>
-
-            <h3>历史记录</h3>
-            <div className="history-list">
-              {snapshot.submissions.map((entry) => (
-                <div className="history-row" key={entry.id}>
-                  <span>
-                    R{entry.round_number} · {teamName(entry.team)}
-                  </span>
-                  <strong>{entry.clues?.join(' / ') ?? '未加密'}</strong>
-                  <span>{entry.revealed_code ?? '未公开'}</span>
-                </div>
-              ))}
-            </div>
-
-            {snapshot.room.phase === 'result' && self.is_host ? (
-              <button className="primary-button wide-button" disabled={busyKey !== null} onClick={() => void handleAdvanceRound()} type="button">
-                下一回合
-              </button>
-            ) : null}
-            {snapshot.room.phase === 'finished' ? (
-              <div className="winner-banner">
-                <strong>{snapshot.room.winner ? `${teamName(snapshot.room.winner)} 获胜` : '平局'}</strong>
-                {self.is_host ? (
-                  <button className="primary-button wide-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
-                    重新开始
-                  </button>
-                ) : null}
+                ) : isDecodePhase && (myTeamSubmission?.clues?.length ?? 0) > 0 ? (
+                  <div className="action-lines">
+                    <div className="action-line-head">
+                      <span>本轮线索</span>
+                      <span>选择解码</span>
+                    </div>
+                    {(myTeamSubmission?.clues ?? []).map((clue, index) => (
+                      <label className="action-line" key={`${clue}-${index}`}>
+                        <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
+                        <select
+                          disabled={!canSubmitDecode}
+                          onChange={(event) => updateGuessDigit('decode', index, event.target.value)}
+                          value={displayedDecodeDigits[index] ?? ''}
+                        >
+                          <option value="">-</option>
+                          {[1, 2, 3, 4].map((option) => (
+                            <option key={option} value={String(option)}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                ) : isInterceptPhase && (opponentSubmission?.clues?.length ?? 0) > 0 ? (
+                  <div className="action-lines">
+                    <div className="action-line-head">
+                      <span>对方线索</span>
+                      <span>选择截码</span>
+                    </div>
+                    {(opponentSubmission?.clues ?? []).map((clue, index) => (
+                      <label className="action-line" key={`${clue}-${index}`}>
+                        <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
+                        <select
+                          disabled={!canSubmitIntercept}
+                          onChange={(event) => updateGuessDigit('intercept', index, event.target.value)}
+                          value={displayedInterceptDigits[index] ?? ''}
+                        >
+                          <option value="">-</option>
+                          {[1, 2, 3, 4].map((option) => (
+                            <option key={option} value={String(option)}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="wait-card">
+                    <strong>{progressText}</strong>
+                  </div>
+                )}
               </div>
-            ) : null}
-          </article>
-        </section>
+
+              <aside className="action-progress">
+                <span>进度</span>
+                <strong>{progressText}</strong>
+              </aside>
+            </div>
+          </section>
+
+          <section className="main-info-grid">
+            <article className={cn('info-panel', `info-panel-${teamTone(myTeam)}`)}>
+              <header className="info-header">
+                <div>
+                  <h2>己方信息区</h2>
+                </div>
+                <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
+                <div className="mini-stats">
+                  <span>拦截 <strong>{myScore.intercepts}</strong></span>
+                  <span>失误 <strong>{myScore.miscomms}</strong></span>
+                </div>
+              </header>
+
+              <div className="clue-matrix">
+                <div className="matrix-row matrix-head">
+                  {[0, 1, 2, 3].map((index) => (
+                    <div key={index}>
+                      {index + 1} {myTeamWords[index] ?? '等待发牌'}
+                    </div>
+                  ))}
+                </div>
+                {myClueRows.length > 0 ? (
+                  myClueRows.map((row) => (
+                    <div className="matrix-row" key={row.id}>
+                      {row.cells.map((cell, index) => (
+                        <div key={index}>{cell}</div>
+                      ))}
+                    </div>
+                  ))
+                ) : (
+                  <div className="matrix-empty">结算后会按轮次对齐显示我方线索</div>
+                )}
+              </div>
+
+              <section className="record-block" id="round-records">
+                <h3>我方轮次记录</h3>
+                <div className="record-table">
+                  <div className="record-row record-head">
+                    <span>轮次</span>
+                    <span>线索</span>
+                    <span>正确密码</span>
+                    <span>我方解密</span>
+                    <span>对方拦截</span>
+                  </div>
+                  {mySubmissions.map((entry) => (
+                    <div className="record-row" key={entry.id}>
+                      <span>第 {entry.round_number} 轮</span>
+                      <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
+                      <span>{entry.revealed_code ?? '未公开'}</span>
+                      <span className={resultClass(entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
+                      <span className={resultClass(entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </article>
+
+            <article className={cn('info-panel', `info-panel-${teamTone(opponentTeam)}`)}>
+              <header className="info-header">
+                <div>
+                  <h2>对方信息区</h2>
+                </div>
+                <span className={cn('team-badge', `team-badge-${teamTone(opponentTeam)}`)}>{displayTeamName(opponentTeam)}</span>
+                <div className="mini-stats">
+                  <span>拦截 <strong>{opponentScore.intercepts}</strong></span>
+                  <span>失误 <strong>{opponentScore.miscomms}</strong></span>
+                </div>
+              </header>
+
+              <div className="clue-matrix">
+                <div className="matrix-row matrix-head">
+                  {[1, 2, 3, 4].map((number) => (
+                    <div key={number}>{number} ??</div>
+                  ))}
+                </div>
+                {opponentClueRows.length > 0 ? (
+                  opponentClueRows.map((row) => (
+                    <div className="matrix-row" key={row.id}>
+                      {row.cells.map((cell, index) => (
+                        <div key={index}>{cell}</div>
+                      ))}
+                    </div>
+                  ))
+                ) : (
+                  <div className="matrix-empty">结算后会按轮次对齐显示对方线索</div>
+                )}
+              </div>
+              <p className="muted">括号表示对方猜测的数字，只有猜错才显示。</p>
+
+              <section className="record-block">
+                <h3>对方轮次记录</h3>
+                <div className="record-table">
+                  <div className="record-row record-head">
+                    <span>轮次</span>
+                    <span>线索</span>
+                    <span>正确密码</span>
+                    <span>对方解密</span>
+                    <span>我方拦截</span>
+                  </div>
+                  {opponentSubmissions.map((entry) => (
+                    <div className="record-row" key={entry.id}>
+                      <span>第 {entry.round_number} 轮</span>
+                      <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
+                      <span>{entry.revealed_code ?? '未公开'}</span>
+                      <span className={resultClass(entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
+                      <span className={resultClass(entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </article>
+          </section>
+
+          {snapshot.room.phase === 'finished' ? (
+            <section className="winner-banner">
+              <strong>{snapshot.room.winner ? `${displayTeamName(snapshot.room.winner)} 获胜` : '平局'}</strong>
+            </section>
+          ) : null}
+        </>
       )}
     </main>
   );
