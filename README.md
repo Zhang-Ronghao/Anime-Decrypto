@@ -11,7 +11,7 @@
 附上之前的[动漫高手 3.0：一眼顶针（方块猜图）](https://github.com/Davy-Chendy/anime-master-game)。
 ## TODO
 
-- 游戏教程/规则 （同截码战规则，这游戏规则好像有点难讲清楚
+- [游戏教程/规则](./docs/game-rules.md)
 
 - 游玩视频（会有吗？
 
