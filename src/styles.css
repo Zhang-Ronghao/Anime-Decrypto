@@ -1654,7 +1654,15 @@ select:focus {
 .game-footer-actions {
   margin-top: 18px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.game-footer-note {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .form-grid {

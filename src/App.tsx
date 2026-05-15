@@ -2211,7 +2211,7 @@ function App() {
                   <div className="wait-card">
                     <strong>跳过第一轮拦截</strong>
                     <p className="muted">
-                      {canSkipFirstIntercept ? '由房主点击上方按钮跳过第一轮拦截' : '等待房主跳过第一轮拦截'}
+                      {canSkipFirstIntercept ? '由于第一轮没有对方信息，房主点击左方按钮跳过第一轮拦截' : '等待房主跳过第一轮拦截'}
                     </p>
                   </div>
                 ) : canSubmitClues ? (
@@ -2437,13 +2437,14 @@ function App() {
             </article>
           </section>
 
-          {canTerminateCurrentGame ? (
-            <section className="game-footer-actions">
+          <section className="game-footer-actions">
+            <small className="game-footer-note">页面切换刷新偶尔会失败，请尝试按F5手动刷新</small>
+            {canTerminateCurrentGame ? (
               <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleTerminateGame()} type="button">
                 终止游戏
               </button>
-            </section>
-          ) : null}
+            ) : null}
+          </section>
         </>
       )}
 
