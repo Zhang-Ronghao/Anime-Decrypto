@@ -391,7 +391,7 @@ function isBangumiCatalogInputValid(value: string): boolean {
       return false;
     }
 
-    return /^\/anime\/list\/[^/]+(?:\/[^/]+)?\/?$/.test(url.pathname);
+    return /^\/(?:anime\/list|user)\/[^/]+(?:\/[^/]+)?\/?$/.test(url.pathname);
   } catch {
     return false;
   }
@@ -1331,7 +1331,7 @@ function App() {
 
     const invalidValue = normalizedInputs.find((value) => !isBangumiCatalogInputValid(value));
     if (invalidValue) {
-      setActionError('仅支持纯数字 ID，或 bangumi.tv / bgm.tv / chii.in 的收藏夹页面链接。');
+      setActionError('仅支持纯数字 ID，或 bangumi.tv / bgm.tv / chii.in 的用户主页、收藏夹页面链接。');
       return;
     }
 
@@ -1790,7 +1790,7 @@ function App() {
                   <div className="lobby-settings-head">
                     <div>
                       <strong>Bangumi 动画词库</strong>
-                      <p className="muted">支持填写用户 ID 或收藏夹页面链接，保存后房间内持续复用。</p>
+                      <p className="muted">支持填写用户 ID（推荐）或收藏夹页面链接，保存后房间内持续复用。</p>
                     </div>
                     <div className="catalog-action-row">
                       <button
@@ -2461,7 +2461,7 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>载入 Bangumi 动画词库</h2>
-                <p className="muted">填写用户 ID 或收藏夹页面链接，再勾选要搜索的分类。</p>
+                <p className="muted">填写用户 ID（推荐）或收藏夹页面链接，再勾选要搜索的分类。</p>
               </div>
               <button
                 className="ghost-button"
@@ -2499,7 +2499,7 @@ function App() {
                   <input
                     disabled={busyKey === 'load-bangumi-catalog'}
                     onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
-                    placeholder="例如：790691 或 https://bangumi.tv/anime/list/790691"
+                    placeholder="填写用户 ID（推荐）或收藏夹页面链接，再勾选要搜索的分类"
                     value={value}
                   />
                   <button

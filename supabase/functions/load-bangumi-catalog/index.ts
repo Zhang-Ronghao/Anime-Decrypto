@@ -72,9 +72,9 @@ function normalizeInput(value: string): string | null {
     throw new Error(`不支持的 Bangumi 链接：${trimmed}`);
   }
 
-  const match = url.pathname.match(/^\/anime\/list\/([^/]+)(?:\/[^/]+)?\/?$/);
+  const match = url.pathname.match(/^\/(?:anime\/list|user)\/([^/]+)(?:\/[^/]+)?\/?$/);
   if (!match) {
-    throw new Error(`只支持 Bangumi 动画收藏夹页面链接：${trimmed}`);
+    throw new Error(`只支持 Bangumi 用户主页或动画收藏夹页面链接：${trimmed}`);
   }
 
   const userId = decodeURIComponent(match[1] ?? '').trim();

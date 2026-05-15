@@ -22,8 +22,9 @@
 
 支持两种输入：
 
-- Bangumi 用户 ID，例如 `790691`
-- 收藏夹页面链接，例如 `https://bangumi.tv/anime/list/790691`
+- Bangumi 用户 ID，例如 `123456`
+- 用户主页链接，例如 `https://bangumi.tv/user/123456`
+- 收藏夹页面链接，例如 `https://bangumi.tv/anime/list/123456`
 
 支持域名：
 
