@@ -36,8 +36,6 @@
 
 ![image-20260515225800830](https://davychen-imgsubmit.oss-cn-shenzhen.aliyuncs.com/img/image-20260515225800830.png)
 
-![image-20260515214042487](https://davychen-imgsubmit.oss-cn-shenzhen.aliyuncs.com/img/image-20260515214042487.png)
-
 游戏开始后，会进入词语分配阶段。
 
 每队需要确认 4 个本队词语。词语会按顺序编号为 1、2、3、4。
