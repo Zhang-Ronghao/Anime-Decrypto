@@ -1671,10 +1671,7 @@ function App() {
     <main className="app-shell">
       <section className="top-bar">
         <div className="brand-block">
-          <div className="logo-mark" aria-hidden="true">
-            <span />
-          </div>
-          <div>
+          <div className="brand-copy">
             <p className="app-title">动漫高手——截码战</p>
             <p className="app-subtitle">房间号 {snapshot.room.room_code}</p>
           </div>
