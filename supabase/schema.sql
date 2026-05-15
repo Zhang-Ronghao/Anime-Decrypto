@@ -37,6 +37,12 @@ alter table public.rooms
 add column if not exists bangumi_catalog_inputs text[] not null default '{}';
 
 alter table public.rooms
+add column if not exists bangumi_catalog_types integer[] not null default '{2}';
+
+alter table public.rooms
+add column if not exists bangumi_catalog_entries jsonb not null default '[]'::jsonb;
+
+alter table public.rooms
 add column if not exists bangumi_catalog_words text[] not null default '{}';
 
 alter table public.rooms
@@ -110,6 +116,9 @@ create table if not exists public.team_words (
 
 alter table public.team_words
 add column if not exists confirmed boolean not null default false;
+
+alter table public.team_words
+add column if not exists word_slots jsonb not null default '[]'::jsonb;
 
 update public.team_words
 set confirmed = true
@@ -2055,6 +2064,548 @@ begin
 end;
 $$;
 
+create or replace function public.empty_team_word_slots()
+returns jsonb
+language sql
+immutable
+as $$
+  select jsonb_build_array(
+    jsonb_build_object('text', '', 'subjectId', null, 'sourceTitle', null, 'showSourceTitle', false, 'characterOptions', jsonb_build_array()),
+    jsonb_build_object('text', '', 'subjectId', null, 'sourceTitle', null, 'showSourceTitle', false, 'characterOptions', jsonb_build_array()),
+    jsonb_build_object('text', '', 'subjectId', null, 'sourceTitle', null, 'showSourceTitle', false, 'characterOptions', jsonb_build_array()),
+    jsonb_build_object('text', '', 'subjectId', null, 'sourceTitle', null, 'showSourceTitle', false, 'characterOptions', jsonb_build_array())
+  );
+$$;
+
+create or replace function public.team_word_slots_to_words(p_slots jsonb)
+returns text[]
+language sql
+immutable
+as $$
+  select coalesce(
+    array_agg(trim(coalesce(value->>'text', '')) order by ordinality),
+    array[]::text[]
+  )
+  from jsonb_array_elements(coalesce(p_slots, '[]'::jsonb)) with ordinality as items(value, ordinality);
+$$;
+
+create or replace function public.coerce_team_word_slots_from_words(p_words text[])
+returns jsonb
+language plpgsql
+immutable
+as $$
+declare
+  v_slots jsonb := '[]'::jsonb;
+  v_index integer;
+begin
+  if array_length(p_words, 1) <> 4 then
+    raise exception '必须提供 4 个词语。';
+  end if;
+
+  for v_index in 1..4
+  loop
+    v_slots := v_slots || jsonb_build_array(
+      jsonb_build_object(
+        'text', trim(coalesce(p_words[v_index], '')),
+        'subjectId', null,
+        'sourceTitle', null,
+        'showSourceTitle', false,
+        'characterOptions', jsonb_build_array()
+      )
+    );
+  end loop;
+
+  return v_slots;
+end;
+$$;
+
+create or replace function public.normalize_team_word_slots(p_slots jsonb, p_require_complete boolean default false)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_item jsonb;
+  v_slots jsonb := '[]'::jsonb;
+  v_text text;
+  v_source_title text;
+  v_show_source_title boolean;
+  v_subject_id integer;
+  v_character_options jsonb;
+  v_seen text[] := array[]::text[];
+begin
+  if jsonb_typeof(coalesce(p_slots, 'null'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_slots, '[]'::jsonb)) <> 4 then
+    raise exception '必须提供 4 个词槽。';
+  end if;
+
+  for v_item in
+    select value
+    from jsonb_array_elements(p_slots) as items(value)
+  loop
+    v_text := trim(coalesce(v_item->>'text', ''));
+    v_source_title := nullif(trim(coalesce(v_item->>'sourceTitle', '')), '');
+    v_show_source_title := coalesce((v_item->>'showSourceTitle')::boolean, false);
+    v_subject_id := case
+      when jsonb_typeof(v_item->'subjectId') = 'number' then (v_item->>'subjectId')::integer
+      else null
+    end;
+
+    if v_source_title is null then
+      v_show_source_title := false;
+    end if;
+
+    select coalesce(jsonb_agg(to_jsonb(option_value) order by first_ord), '[]'::jsonb)
+    into v_character_options
+    from (
+      select option_value, min(ord) as first_ord
+      from (
+        select trim(option #>> '{}') as option_value, ordinality as ord
+        from jsonb_array_elements(
+          case
+            when jsonb_typeof(v_item->'characterOptions') = 'array' then v_item->'characterOptions'
+            else '[]'::jsonb
+          end
+        ) with ordinality as options(option, ordinality)
+      ) normalized_options
+      where option_value <> ''
+      group by option_value
+    ) deduped_options;
+
+    if p_require_complete and v_text = '' then
+      raise exception '确认前需要填写 4 个词语。';
+    end if;
+
+    if v_text <> '' and v_text = any(v_seen) then
+      raise exception '同队词语不能重复。';
+    end if;
+
+    if v_text <> '' then
+      v_seen := array_append(v_seen, v_text);
+    end if;
+
+    v_slots := v_slots || jsonb_build_array(
+      jsonb_build_object(
+        'text', v_text,
+        'subjectId', v_subject_id,
+        'sourceTitle', v_source_title,
+        'showSourceTitle', v_show_source_title,
+        'characterOptions', v_character_options
+      )
+    );
+  end loop;
+
+  return v_slots;
+end;
+$$;
+
+update public.team_words
+set word_slots = public.coerce_team_word_slots_from_words(words)
+where jsonb_typeof(coalesce(word_slots, 'null'::jsonb)) <> 'array'
+   or jsonb_array_length(coalesce(word_slots, '[]'::jsonb)) <> 4;
+
+drop function if exists public.generate_team_words(uuid, text);
+
+create function public.generate_team_words(p_room_id uuid, p_team text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_other_team text;
+  v_other_team_words text[];
+  v_slots jsonb := '[]'::jsonb;
+  v_words text[];
+begin
+  perform public.assert_authenticated();
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception '当前不是词语分配阶段。';
+  end if;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = p_team
+      and role = 'encoder'
+  ) then
+    raise exception '只有本队加密/拦截者可以生成词语。';
+  end if;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and team = p_team
+      and confirmed
+  ) then
+    raise exception '本队词语已确认，不能再修改。';
+  end if;
+
+  v_other_team := case when p_team = 'A' then 'B' else 'A' end;
+
+  select words
+  into v_other_team_words
+  from public.team_words
+  where room_id = p_room_id
+    and team = v_other_team;
+
+  if jsonb_array_length(coalesce(v_room.bangumi_catalog_entries, '[]'::jsonb)) = 0 then
+    raise exception '当前词库缺少动画元信息，请先回大厅重新载入 Bangumi 词库。';
+  end if;
+
+  select coalesce(jsonb_agg(candidate order by sort_key), '[]'::jsonb)
+  into v_slots
+  from (
+    select randomized.candidate, randomized.sort_key
+    from (
+      select
+        jsonb_build_object(
+          'text', entries.title,
+          'subjectId', entries.subject_id,
+          'sourceTitle', entries.title,
+          'showSourceTitle', false,
+          'characterOptions', '[]'::jsonb
+        ) as candidate,
+        random() as sort_key
+      from (
+        select min(subject_id) as subject_id, title
+        from (
+          select
+            case
+              when jsonb_typeof(entry->'subjectId') = 'number' then (entry->>'subjectId')::integer
+              else null
+            end as subject_id,
+            trim(coalesce(entry->>'title', '')) as title
+          from jsonb_array_elements(coalesce(v_room.bangumi_catalog_entries, '[]'::jsonb)) as items(entry)
+        ) catalog_items
+        where title <> ''
+          and not (title = any(coalesce(v_other_team_words, array[]::text[])))
+        group by title
+      ) entries
+    ) randomized
+    order by randomized.sort_key
+    limit 4
+  ) picked;
+
+  if jsonb_array_length(coalesce(v_slots, '[]'::jsonb)) <> 4 then
+    raise exception '当前房间词库不足以为两队提供 8 个不重复词语，请重新载入 Bangumi 词库。';
+  end if;
+
+  v_slots := public.normalize_team_word_slots(v_slots, true);
+  v_words := public.team_word_slots_to_words(v_slots);
+
+  update public.team_words
+  set words = v_words,
+      word_slots = v_slots
+  where room_id = p_room_id
+    and team = p_team;
+
+  return v_slots;
+end;
+$$;
+
+create or replace function public.replace_team_word_slot(p_room_id uuid, p_team text, p_index integer)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_team_words public.team_words%rowtype;
+  v_other_team text;
+  v_other_team_words text[];
+  v_current_slots jsonb;
+  v_current_words text[];
+  v_current_word text;
+  v_replacement jsonb;
+begin
+  perform public.assert_authenticated();
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  if p_index < 0 or p_index > 3 then
+    raise exception '词位无效。';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception '当前不是词语分配阶段。';
+  end if;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = p_team
+      and role = 'encoder'
+  ) then
+    raise exception '只有本队加密/拦截者可以更换词语。';
+  end if;
+
+  select *
+  into v_team_words
+  from public.team_words
+  where room_id = p_room_id
+    and team = p_team
+  for update;
+
+  if v_team_words.confirmed then
+    raise exception '本队词语已确认，不能再修改。';
+  end if;
+
+  v_current_slots := case
+    when jsonb_typeof(coalesce(v_team_words.word_slots, 'null'::jsonb)) = 'array' and jsonb_array_length(coalesce(v_team_words.word_slots, '[]'::jsonb)) = 4
+      then public.normalize_team_word_slots(v_team_words.word_slots, false)
+    else public.coerce_team_word_slots_from_words(v_team_words.words)
+  end;
+
+  v_current_words := public.team_word_slots_to_words(v_current_slots);
+  v_current_word := coalesce(v_current_words[p_index + 1], '');
+  v_other_team := case when p_team = 'A' then 'B' else 'A' end;
+
+  select words
+  into v_other_team_words
+  from public.team_words
+  where room_id = p_room_id
+    and team = v_other_team;
+
+  if jsonb_array_length(coalesce(v_room.bangumi_catalog_entries, '[]'::jsonb)) = 0 then
+    raise exception '当前词库缺少动画元信息，请先回大厅重新载入 Bangumi 词库。';
+  end if;
+
+  select candidate
+  into v_replacement
+  from (
+    select
+      jsonb_build_object(
+        'text', entries.title,
+        'subjectId', entries.subject_id,
+        'sourceTitle', entries.title,
+        'showSourceTitle', false,
+        'characterOptions', '[]'::jsonb
+      ) as candidate,
+      random() as sort_key
+    from (
+      select min(subject_id) as subject_id, title
+      from (
+        select
+          case
+            when jsonb_typeof(entry->'subjectId') = 'number' then (entry->>'subjectId')::integer
+            else null
+          end as subject_id,
+          trim(coalesce(entry->>'title', '')) as title
+        from jsonb_array_elements(coalesce(v_room.bangumi_catalog_entries, '[]'::jsonb)) as items(entry)
+      ) catalog_items
+      where title <> ''
+        and not (title = any(coalesce(v_other_team_words, array[]::text[])))
+        and title <> v_current_word
+        and not (
+          title = any(
+            array_remove(v_current_words, v_current_word)
+          )
+        )
+      group by title
+    ) entries
+    order by sort_key
+    limit 1
+  ) picked;
+
+  if v_replacement is null then
+    raise exception '没有可替换的新词了，请重新载入 Bangumi 词库。';
+  end if;
+
+  v_current_slots := jsonb_set(v_current_slots, array[p_index::text], v_replacement, false);
+  v_current_slots := public.normalize_team_word_slots(v_current_slots, false);
+  v_current_words := public.team_word_slots_to_words(v_current_slots);
+
+  update public.team_words
+  set words = v_current_words,
+      word_slots = v_current_slots
+  where room_id = p_room_id
+    and team = p_team;
+
+  return v_current_slots;
+end;
+$$;
+
+create or replace function public.confirm_team_words(p_room_id uuid, p_team text, p_words text[], p_slots jsonb default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_words text[];
+  v_round integer;
+  v_a_encoder uuid;
+  v_b_encoder uuid;
+  v_existing_slots jsonb;
+  v_slots jsonb;
+  v_index integer;
+  v_item jsonb;
+begin
+  perform public.assert_authenticated();
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  v_words := public.normalize_team_words(p_words, true);
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception '当前不是词语分配阶段。';
+  end if;
+
+  if not exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and team = p_team
+      and role = 'encoder'
+  ) then
+    raise exception '只有本队加密/拦截者可以确认词语。';
+  end if;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and team = p_team
+      and confirmed
+  ) then
+    raise exception '本队词语已确认，不能再修改。';
+  end if;
+
+  select word_slots
+  into v_existing_slots
+  from public.team_words
+  where room_id = p_room_id
+    and team = p_team;
+
+  v_existing_slots := case
+    when jsonb_typeof(coalesce(p_slots, 'null'::jsonb)) = 'array' and jsonb_array_length(coalesce(p_slots, '[]'::jsonb)) = 4
+      then public.normalize_team_word_slots(p_slots, false)
+    else v_existing_slots
+  end;
+
+  v_slots := '[]'::jsonb;
+
+  for v_index in 1..4
+  loop
+    v_item := case
+      when jsonb_typeof(coalesce(v_existing_slots, 'null'::jsonb)) = 'array' and jsonb_array_length(coalesce(v_existing_slots, '[]'::jsonb)) >= v_index
+        then v_existing_slots->(v_index - 1)
+      else jsonb_build_object('subjectId', null, 'sourceTitle', null, 'showSourceTitle', false, 'characterOptions', '[]'::jsonb)
+    end;
+
+    v_slots := v_slots || jsonb_build_array(
+      jsonb_build_object(
+        'text', v_words[v_index],
+        'subjectId', case when jsonb_typeof(v_item->'subjectId') = 'number' then (v_item->>'subjectId')::integer else null end,
+        'sourceTitle', nullif(trim(coalesce(v_item->>'sourceTitle', '')), ''),
+        'showSourceTitle', case when nullif(trim(coalesce(v_item->>'sourceTitle', '')), '') is not null then coalesce((v_item->>'showSourceTitle')::boolean, false) else false end,
+        'characterOptions', case when jsonb_typeof(v_item->'characterOptions') = 'array' then v_item->'characterOptions' else '[]'::jsonb end
+      )
+    );
+  end loop;
+
+  v_slots := public.normalize_team_word_slots(v_slots, true);
+
+  update public.team_words
+  set words = v_words,
+      word_slots = v_slots,
+      confirmed = true
+  where room_id = p_room_id
+    and team = p_team;
+
+  update public.rooms
+  set team_a_words_confirmed = exists (
+        select 1
+        from public.team_words
+        where public.team_words.room_id = public.rooms.id
+          and public.team_words.team = 'A'
+          and public.team_words.confirmed
+      ),
+      team_b_words_confirmed = exists (
+        select 1
+        from public.team_words
+        where public.team_words.room_id = public.rooms.id
+          and public.team_words.team = 'B'
+          and public.team_words.confirmed
+      )
+  where id = p_room_id;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and not confirmed
+  ) then
+    return;
+  end if;
+
+  v_round := greatest(v_room.round_number, 1);
+
+  select id into v_a_encoder
+  from public.room_players
+  where room_id = p_room_id and team = 'A' and role = 'encoder';
+
+  select id into v_b_encoder
+  from public.room_players
+  where room_id = p_room_id and team = 'B' and role = 'encoder';
+
+  delete from public.round_submissions where room_id = p_room_id;
+  delete from public.round_codes where room_id = p_room_id;
+
+  insert into public.round_codes (room_id, team, round_number, encoder_player_id, code)
+  values
+    (p_room_id, 'A', v_round, v_a_encoder, public.generate_code_text()),
+    (p_room_id, 'B', v_round, v_b_encoder, public.generate_code_text());
+
+  insert into public.round_submissions (room_id, team, round_number)
+  values
+    (p_room_id, 'A', v_round),
+    (p_room_id, 'B', v_round);
+
+  update public.rooms
+  set phase = 'encrypt',
+      round_number = v_round
+  where id = p_room_id;
+end;
+$$;
+
 grant usage on schema public to authenticated;
 grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
@@ -2067,6 +2618,7 @@ grant execute on function public.update_room_lobby_settings(uuid, integer, boole
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;
 grant execute on function public.generate_team_words(uuid, text) to authenticated;
+grant execute on function public.replace_team_word_slot(uuid, text, integer) to authenticated;
 grant execute on function public.save_team_words(uuid, text, text[]) to authenticated;
 grant execute on function public.confirm_team_words(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_clues(uuid, text, text[]) to authenticated;

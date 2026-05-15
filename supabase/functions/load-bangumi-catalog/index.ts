@@ -8,10 +8,12 @@ const corsHeaders = {
 const USER_AGENT = 'Zhang-Ronghao/Anime-Decrypto (https://github.com/Zhang-Ronghao/Anime-Decrypto)';
 const BANGUMI_API_BASE = 'https://api.bgm.tv/v0';
 const PAGE_SIZE = 50;
+const ALLOWED_COLLECTION_TYPES = [1, 2, 3, 4, 5] as const;
 
 interface RequestBody {
   roomId?: string;
   inputs?: string[];
+  collectionTypes?: number[];
 }
 
 interface BangumiSubject {
@@ -23,6 +25,11 @@ interface BangumiSubject {
 interface BangumiCollectionItem {
   subject_id?: number;
   subject?: BangumiSubject | null;
+}
+
+interface BangumiCatalogEntry {
+  subjectId: number;
+  title: string;
 }
 
 function errorResponse(message: string, status = 400) {
@@ -65,9 +72,9 @@ function normalizeInput(value: string): string | null {
     throw new Error(`不支持的 Bangumi 链接：${trimmed}`);
   }
 
-  const match = url.pathname.match(/^\/anime\/list\/([^/]+)\/collect\/?$/);
+  const match = url.pathname.match(/^\/anime\/list\/([^/]+)(?:\/[^/]+)?\/?$/);
   if (!match) {
-    throw new Error(`只支持 Bangumi 动画“看过”页面链接：${trimmed}`);
+    throw new Error(`只支持 Bangumi 动画收藏夹页面链接：${trimmed}`);
   }
 
   const userId = decodeURIComponent(match[1] ?? '').trim();
@@ -76,6 +83,18 @@ function normalizeInput(value: string): string | null {
   }
 
   return userId;
+}
+
+function normalizeCollectionTypes(values: number[] | undefined): number[] {
+  const normalized = Array.from(
+    new Set(
+      (values ?? [])
+        .filter((value): value is number => typeof value === 'number' && Number.isInteger(value))
+        .filter((value) => ALLOWED_COLLECTION_TYPES.includes(value as (typeof ALLOWED_COLLECTION_TYPES)[number])),
+    ),
+  ).sort((left, right) => left - right);
+
+  return normalized.length > 0 ? normalized : [2];
 }
 
 function normalizeInputs(values: string[]): string[] {
@@ -88,13 +107,13 @@ function normalizeInputs(values: string[]): string[] {
   return unique;
 }
 
-async function fetchCollectionsForUser(userId: string): Promise<BangumiCollectionItem[]> {
+async function fetchCollectionsForUserAndType(userId: string, collectionType: number): Promise<BangumiCollectionItem[]> {
   const items: BangumiCollectionItem[] = [];
 
   for (let offset = 0; ; offset += PAGE_SIZE) {
     const url = new URL(`${BANGUMI_API_BASE}/users/${encodeURIComponent(userId)}/collections`);
     url.searchParams.set('subject_type', '2');
-    url.searchParams.set('type', '2');
+    url.searchParams.set('type', String(collectionType));
     url.searchParams.set('limit', String(PAGE_SIZE));
     url.searchParams.set('offset', String(offset));
 
@@ -130,44 +149,52 @@ async function fetchCollectionsForUser(userId: string): Promise<BangumiCollectio
   return items;
 }
 
-function toCatalogEntry(item: BangumiCollectionItem): { subjectId: number; word: string } | null {
+async function fetchCollectionsForUser(userId: string, collectionTypes: number[]): Promise<BangumiCollectionItem[]> {
+  const itemsByType = await Promise.all(
+    collectionTypes.map((collectionType) => fetchCollectionsForUserAndType(userId, collectionType)),
+  );
+
+  return itemsByType.flat();
+}
+
+function toCatalogEntry(item: BangumiCollectionItem): BangumiCatalogEntry | null {
   const subjectId = typeof item.subject_id === 'number' ? item.subject_id : item.subject?.id;
   if (typeof subjectId !== 'number' || !Number.isFinite(subjectId)) {
     return null;
   }
 
-  const rawWord = item.subject?.name_cn?.trim() || item.subject?.name?.trim() || '';
-  if (!rawWord) {
+  const title = item.subject?.name_cn?.trim() || item.subject?.name?.trim() || '';
+  if (!title) {
     return null;
   }
 
-  return { subjectId, word: rawWord };
+  return { subjectId, title };
 }
 
-function intersectCatalogs(collectionsByUser: Array<Map<number, string>>): string[] {
+function intersectCatalogs(collectionsByUser: Array<Map<number, BangumiCatalogEntry>>): BangumiCatalogEntry[] {
   if (collectionsByUser.length === 0) {
     return [];
   }
 
   const [first, ...rest] = collectionsByUser;
-  const dedupedWords = new Set<string>();
-  const words: string[] = [];
+  const dedupedTitles = new Set<string>();
+  const entries: BangumiCatalogEntry[] = [];
 
-  for (const [subjectId, word] of first.entries()) {
+  for (const [subjectId, entry] of first.entries()) {
     if (!rest.every((collection) => collection.has(subjectId))) {
       continue;
     }
 
-    if (dedupedWords.has(word)) {
+    if (dedupedTitles.has(entry.title)) {
       continue;
     }
 
-    dedupedWords.add(word);
-    words.push(word);
+    dedupedTitles.add(entry.title);
+    entries.push(entry);
   }
 
-  words.sort((left, right) => left.localeCompare(right, 'zh-CN'));
-  return words;
+  entries.sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'));
+  return entries;
 }
 
 Deno.serve(async (request) => {
@@ -203,6 +230,7 @@ Deno.serve(async (request) => {
 
   try {
     const normalizedInputs = normalizeInputs(body.inputs);
+    const normalizedCollectionTypes = normalizeCollectionTypes(body.collectionTypes);
     if (normalizedInputs.length === 0) {
       return errorResponse('至少需要 1 个有效的 Bangumi 用户。');
     }
@@ -237,10 +265,10 @@ Deno.serve(async (request) => {
       return errorResponse('只有大厅阶段可以载入 Bangumi 词库。', 409);
     }
 
-    const collectionsByUser: Array<Map<number, string>> = [];
+    const collectionsByUser: Array<Map<number, BangumiCatalogEntry>> = [];
     for (const userId of normalizedInputs) {
-      const items = await fetchCollectionsForUser(userId);
-      const subjects = new Map<number, string>();
+      const items = await fetchCollectionsForUser(userId, normalizedCollectionTypes);
+      const subjects = new Map<number, BangumiCatalogEntry>();
 
       for (const item of items) {
         const entry = toCatalogEntry(item);
@@ -248,14 +276,14 @@ Deno.serve(async (request) => {
           continue;
         }
 
-        subjects.set(entry.subjectId, entry.word);
+        subjects.set(entry.subjectId, entry);
       }
 
       collectionsByUser.push(subjects);
     }
 
-    const words = intersectCatalogs(collectionsByUser);
-    if (words.length < 8) {
+    const entries = intersectCatalogs(collectionsByUser);
+    if (entries.length < 8) {
       return errorResponse('交集动画词条少于 8 个，无法用于本局游戏。');
     }
 
@@ -264,7 +292,9 @@ Deno.serve(async (request) => {
       .from('rooms')
       .update({
         bangumi_catalog_inputs: normalizedInputs,
-        bangumi_catalog_words: words,
+        bangumi_catalog_types: normalizedCollectionTypes,
+        bangumi_catalog_entries: entries,
+        bangumi_catalog_words: entries.map((entry) => entry.title),
         bangumi_catalog_updated_at: updatedAt,
       })
       .eq('id', body.roomId);
@@ -276,7 +306,8 @@ Deno.serve(async (request) => {
     return new Response(
       JSON.stringify({
         inputs: normalizedInputs,
-        wordCount: words.length,
+        collectionTypes: normalizedCollectionTypes,
+        wordCount: entries.length,
         updatedAt,
       }),
       {

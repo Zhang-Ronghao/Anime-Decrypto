@@ -3,6 +3,19 @@ export type Role = 'encoder' | 'decoder' | 'member';
 export type RoomStatus = 'lobby' | 'active' | 'finished';
 export type RoomPhase = 'lobby' | 'word_assignment' | 'encrypt' | 'decode' | 'intercept' | 'result' | 'finished';
 
+export interface BangumiCatalogEntry {
+  subjectId: number;
+  title: string;
+}
+
+export interface TeamWordSlot {
+  text: string;
+  subjectId: number | null;
+  sourceTitle: string | null;
+  showSourceTitle: boolean;
+  characterOptions: string[];
+}
+
 export interface RoomRecord {
   id: string;
   room_code: string;
@@ -21,6 +34,8 @@ export interface RoomRecord {
   team_a_words_confirmed: boolean;
   team_b_words_confirmed: boolean;
   bangumi_catalog_inputs: string[];
+  bangumi_catalog_types: number[];
+  bangumi_catalog_entries: BangumiCatalogEntry[];
   bangumi_catalog_words: string[];
   bangumi_catalog_updated_at: string | null;
   created_at: string;
@@ -45,6 +60,7 @@ export interface TeamWordsRecord {
   room_id: string;
   team: Team;
   words: string[];
+  word_slots: TeamWordSlot[];
   confirmed: boolean;
   created_at: string;
 }

@@ -1,12 +1,14 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type {
+  BangumiCatalogEntry,
   RoomRecord,
   PlayerRecord,
   RoomSnapshot,
   RoundCodeRecord,
   RoundSubmissionRecord,
   Team,
+  TeamWordSlot,
   TeamWordsRecord,
 } from '../types';
 
@@ -55,6 +57,39 @@ function normalizeRoomResult(data: unknown): { room_id: string; room_code: strin
   }
 
   return { room_id: roomId, room_code: roomCode };
+}
+
+function isTeamWordSlot(value: unknown): value is TeamWordSlot {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.text === 'string' &&
+    (typeof record.subjectId === 'number' || record.subjectId === null) &&
+    (typeof record.sourceTitle === 'string' || record.sourceTitle === null) &&
+    (typeof record.showSourceTitle === 'boolean' || typeof record.showSourceTitle === 'undefined') &&
+    Array.isArray(record.characterOptions) &&
+    record.characterOptions.every((item) => typeof item === 'string')
+  );
+}
+
+function isBangumiCatalogEntry(value: unknown): value is BangumiCatalogEntry {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.subjectId === 'number' && typeof record.title === 'string';
+}
+
+function parseTeamWordSlots(data: unknown): TeamWordSlot[] {
+  if (!Array.isArray(data) || !data.every(isTeamWordSlot)) {
+    throw new Error('队伍词槽数据格式不正确。');
+  }
+
+  return data;
 }
 
 export async function createRoom(playerName: string, desiredRoomCode?: string) {
@@ -176,15 +211,31 @@ export async function generateTeamWords(roomId: string, team: Team) {
     throw error;
   }
 
-  return (data ?? []) as string[];
+  return parseTeamWordSlots(data);
 }
 
-export async function loadBangumiCatalog(roomId: string, inputs: string[]) {
+export async function replaceTeamWordSlot(roomId: string, team: Team, index: number) {
+  const client = assertSupabase();
+  const { data, error } = await client.rpc('replace_team_word_slot', {
+    p_room_id: roomId,
+    p_team: team,
+    p_index: index,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return parseTeamWordSlots(data);
+}
+
+export async function loadBangumiCatalog(roomId: string, inputs: string[], collectionTypes: number[]) {
   const client = assertSupabase();
   const { data, error } = await client.functions.invoke('load-bangumi-catalog', {
     body: {
       roomId,
       inputs,
+      collectionTypes,
     },
   });
 
@@ -207,17 +258,25 @@ export async function loadBangumiCatalog(roomId: string, inputs: string[]) {
   const value = data as
     | {
         inputs?: string[];
+        collectionTypes?: number[];
         wordCount?: number;
         updatedAt?: string;
       }
     | null;
 
-  if (!value || !Array.isArray(value.inputs) || typeof value.wordCount !== 'number' || typeof value.updatedAt !== 'string') {
+  if (
+    !value ||
+    !Array.isArray(value.inputs) ||
+    !Array.isArray(value.collectionTypes) ||
+    typeof value.wordCount !== 'number' ||
+    typeof value.updatedAt !== 'string'
+  ) {
     throw new Error('Bangumi 词库加载结果格式不正确。');
   }
 
   return {
     inputs: value.inputs,
+    collectionTypes: value.collectionTypes,
     wordCount: value.wordCount,
     updatedAt: value.updatedAt,
   };
@@ -236,17 +295,62 @@ export async function saveTeamWords(roomId: string, team: Team, words: string[])
   }
 }
 
-export async function confirmTeamWords(roomId: string, team: Team, words: string[]) {
+export async function confirmTeamWords(roomId: string, team: Team, words: string[], slots: TeamWordSlot[]) {
   const client = assertSupabase();
   const { error } = await client.rpc('confirm_team_words', {
     p_room_id: roomId,
     p_team: team,
     p_words: words,
+    p_slots: slots,
   });
 
   if (error) {
     throw error;
   }
+}
+
+export async function extractBangumiCharacters(roomId: string, team: Team) {
+  const client = assertSupabase();
+  const { data, error } = await client.functions.invoke('extract-bangumi-characters', {
+    body: {
+      roomId,
+      team,
+    },
+  });
+
+  if (error) {
+    const context = (error as { context?: Response }).context;
+    if (context instanceof Response) {
+      try {
+        const payload = (await context.json()) as { error?: unknown } | null;
+        if (payload && typeof payload.error === 'string' && payload.error.trim()) {
+          throw new Error(payload.error);
+        }
+      } catch {
+        // Ignore JSON parsing errors and fall back to the function error below.
+      }
+    }
+
+    throw error;
+  }
+
+  const value = data as
+    | {
+        slots?: unknown;
+        failedTitles?: unknown;
+      }
+    | null;
+
+  if (!value) {
+    throw new Error('角色提取结果格式不正确。');
+  }
+
+  const slots = parseTeamWordSlots(value.slots);
+  const failedTitles = Array.isArray(value.failedTitles)
+    ? value.failedTitles.filter((item): item is string => typeof item === 'string')
+    : [];
+
+  return { slots, failedTitles };
 }
 
 export async function submitClues(roomId: string, team: Team, clues: string[]) {
@@ -374,9 +478,17 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
   if (submissionsResult.error) throw submissionsResult.error;
 
   return {
-    room: roomResult.data as RoomRecord,
+    room: {
+      ...(roomResult.data as RoomRecord),
+      bangumi_catalog_entries: Array.isArray((roomResult.data as RoomRecord).bangumi_catalog_entries)
+        ? ((roomResult.data as RoomRecord).bangumi_catalog_entries.filter(isBangumiCatalogEntry) as BangumiCatalogEntry[])
+        : [],
+    },
     players: (playersResult.data ?? []) as PlayerRecord[],
-    teamWords: (wordsResult.data ?? []) as TeamWordsRecord[],
+    teamWords: ((wordsResult.data ?? []) as TeamWordsRecord[]).map((entry) => ({
+      ...entry,
+      word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
+    })),
     roundCodes: (codesResult.data ?? []) as RoundCodeRecord[],
     submissions: (submissionsResult.data ?? []) as RoundSubmissionRecord[],
   };

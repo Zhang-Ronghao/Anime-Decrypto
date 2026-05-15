@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import {
   advanceRound,
   cleanupExpiredRooms,
   confirmTeamWords,
   createRoom,
   disbandRoom,
+  extractBangumiCharacters,
   fetchRoomSnapshot,
   generateTeamWords,
   joinRoom,
   kickPlayer,
   leaveRoom,
   loadBangumiCatalog,
+  replaceTeamWordSlot,
   restartRoom,
   startGame,
   submitClues,
@@ -36,7 +38,7 @@ import {
   teamCapacity,
   teamOrder,
 } from './lib/utils';
-import type { PlayerRecord, Role, RoomSnapshot, RoundSubmissionRecord, Team } from './types';
+import type { PlayerRecord, Role, RoomSnapshot, RoundSubmissionRecord, Team, TeamWordSlot, TeamWordsRecord } from './types';
 
 interface SeatCardProps {
   team: Team;
@@ -70,6 +72,23 @@ interface BangumiCatalogSummary {
   userCount: number;
   wordCount: number;
 }
+
+type TeamWordDraftMode = 'manual' | 'generated' | 'characters';
+
+type BangumiCollectionType = 1 | 2 | 3 | 4 | 5;
+
+interface BangumiCollectionTypeOption {
+  value: BangumiCollectionType;
+  label: string;
+}
+
+const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
+  { value: 1, label: '想看' },
+  { value: 2, label: '看过' },
+  { value: 3, label: '在看' },
+  { value: 4, label: '搁置' },
+  { value: 5, label: '抛弃' },
+];
 
 function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: SeatCardProps) {
   return (
@@ -224,12 +243,135 @@ function emptyWordForm(): string[] {
   return ['', '', '', ''];
 }
 
+function emptyTeamWordSlot(): TeamWordSlot {
+  return {
+    text: '',
+    subjectId: null,
+    sourceTitle: null,
+    showSourceTitle: false,
+    characterOptions: [],
+  };
+}
+
+function emptyTeamWordSlots(): TeamWordSlot[] {
+  return Array.from({ length: 4 }, () => emptyTeamWordSlot());
+}
+
+function normalizeTeamWordSlot(slot: Partial<TeamWordSlot> | null | undefined): TeamWordSlot {
+  return {
+    text: (slot?.text ?? '').trim(),
+    subjectId: typeof slot?.subjectId === 'number' && Number.isFinite(slot.subjectId) ? slot.subjectId : null,
+    sourceTitle: typeof slot?.sourceTitle === 'string' && slot.sourceTitle.trim() ? slot.sourceTitle.trim() : null,
+    showSourceTitle:
+      slot?.showSourceTitle === true && typeof slot?.sourceTitle === 'string' && slot.sourceTitle.trim().length > 0,
+    characterOptions: Array.isArray(slot?.characterOptions)
+      ? Array.from(new Set(slot.characterOptions.map((value) => value.trim()).filter((value) => value.length > 0)))
+      : [],
+  };
+}
+
+function teamWordSlotsToWords(slots: TeamWordSlot[]): string[] {
+  return slots.map((slot) => slot.text.trim());
+}
+
+function teamWordSlotsFromRecord(record?: TeamWordsRecord | null): TeamWordSlot[] {
+  if (record?.word_slots.length === 4) {
+    return record.word_slots.map((slot) => normalizeTeamWordSlot(slot));
+  }
+
+  if (record?.words.length === 4) {
+    return record.words.map((word) => ({
+      text: word.trim(),
+      subjectId: null,
+      sourceTitle: null,
+      showSourceTitle: false,
+      characterOptions: [],
+    }));
+  }
+
+  return emptyTeamWordSlots();
+}
+
+function clearTeamWordSlotAutomation(slots: TeamWordSlot[]): TeamWordSlot[] {
+  return slots.map((slot) => ({
+    text: slot.text.trim(),
+    subjectId: null,
+    sourceTitle: slot.showSourceTitle ? (slot.sourceTitle?.trim() || null) : null,
+    showSourceTitle: slot.showSourceTitle && Boolean(slot.sourceTitle?.trim()),
+    characterOptions: [],
+  }));
+}
+
+function slotShowsSourceTitle(slot: TeamWordSlot): boolean {
+  return slot.showSourceTitle && Boolean(slot.sourceTitle);
+}
+
+function renderTeamWordDisplay(slot: TeamWordSlot, fallback: string, prefix?: string) {
+  if (slotShowsSourceTitle(slot)) {
+    return (
+      <div className="team-word-display team-word-display-dual">
+        <span className="team-word-display-line" title={slot.sourceTitle ?? undefined}>
+          {prefix ? `${prefix} ${slot.sourceTitle}` : slot.sourceTitle}
+        </span>
+        <span className="team-word-display-line" title={slot.text}>
+          {slot.text || fallback}
+        </span>
+      </div>
+    );
+  }
+
+  const value = slot.text || fallback;
+  return (
+    <span className="team-word-display-line" title={value}>
+      {prefix ? `${prefix} ${value}` : value}
+    </span>
+  );
+}
+
+function renderOpponentWordDisplay(number: number, value: string, forceDual: boolean) {
+  if (forceDual) {
+    return (
+      <div className="team-word-display team-word-display-dual">
+        <span className="team-word-display-line" title={String(number)}>
+          {number}
+        </span>
+        <span className="team-word-display-line" title={value}>
+          {value}
+        </span>
+      </div>
+    );
+  }
+
+  const text = `${number} ${value}`;
+  return (
+    <span className="team-word-display-line" title={text}>
+      {text}
+    </span>
+  );
+}
+
+function inferTeamWordDraftMode(slots: TeamWordSlot[]): TeamWordDraftMode {
+  if (slots.some((slot) => slot.characterOptions.length > 0)) {
+    return 'characters';
+  }
+
+  if (slots.some((slot) => slot.subjectId !== null || Boolean(slot.sourceTitle))) {
+    return 'generated';
+  }
+
+  return 'manual';
+}
+
 function serializeWords(words: string[]): string {
   return words.join('\u0001');
 }
 
 function emptyBangumiCatalogInputRow(): string[] {
   return [''];
+}
+
+function defaultBangumiCatalogTypes(): BangumiCollectionType[] {
+  return [2];
 }
 
 function normalizeBangumiCatalogDraft(inputs: string[]): string[] {
@@ -247,7 +389,7 @@ function isBangumiCatalogInputValid(value: string): boolean {
       return false;
     }
 
-    return /^\/anime\/list\/[^/]+\/collect\/?$/.test(url.pathname);
+    return /^\/anime\/list\/[^/]+(?:\/[^/]+)?\/?$/.test(url.pathname);
   } catch {
     return false;
   }
@@ -379,16 +521,23 @@ function App() {
   const [displayName, setDisplayName] = useState(() => localStorage.getItem('decrypto-name') ?? '');
   const [joinCode, setJoinCode] = useState(() => new URLSearchParams(window.location.search).get('room') ?? '');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [wordAssignmentNotice, setWordAssignmentNotice] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [clueForm, setClueForm] = useState(['', '', '']);
-  const [teamWordForm, setTeamWordForm] = useState<string[]>(() => emptyWordForm());
+  const [teamWordSlotsDraft, setTeamWordSlotsDraft] = useState<TeamWordSlot[]>(() => emptyTeamWordSlots());
+  const [teamWordDraftMode, setTeamWordDraftMode] = useState<TeamWordDraftMode>('manual');
   const [teamWordFormDirty, setTeamWordFormDirty] = useState(false);
+  const [teamWordManualModePinned, setTeamWordManualModePinned] = useState(false);
+  const [pendingConfirmedTeamWordSlots, setPendingConfirmedTeamWordSlots] = useState<TeamWordSlot[] | null>(null);
   const [decodeGuess, setDecodeGuess] = useState('');
   const [interceptGuess, setInterceptGuess] = useState('');
   const [kickSyncPollUntil, setKickSyncPollUntil] = useState<number | null>(null);
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
   const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
+  const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
+    defaultBangumiCatalogTypes(),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -528,6 +677,13 @@ function App() {
         ? [...snapshot.room.bangumi_catalog_inputs]
         : emptyBangumiCatalogInputRow(),
     );
+    setBangumiCatalogTypesDraft(
+      snapshot.room.bangumi_catalog_types.length > 0
+        ? (snapshot.room.bangumi_catalog_types.filter((value): value is BangumiCollectionType =>
+            BANGUMI_COLLECTION_TYPE_OPTIONS.some((option) => option.value === value),
+          ) as BangumiCollectionType[])
+        : defaultBangumiCatalogTypes(),
+    );
   }, [bangumiCatalogModalOpen, snapshot]);
 
   const self = useMemo(() => {
@@ -629,10 +785,23 @@ function App() {
   const clueSubmitCount = currentRoundSubmissions.filter((entry) => entry.clues?.length === 3).length;
   const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
   const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
-  const teamWordServerWords = myTeamWordRecord?.words ?? emptyWordForm();
+  const teamWordServerSlots = teamWordSlotsFromRecord(myTeamWordRecord);
+  const displayedMyTeamWordSlots =
+    isWordAssignmentPhase && pendingConfirmedTeamWordSlots && !myTeamConfirmed
+      ? pendingConfirmedTeamWordSlots
+      : teamWordServerSlots;
+  const hasCharacterDerivedWords = teamWordSlotsDraft.some((slot) => slot.characterOptions.length > 0);
+  const canOmitSourceTitles = teamWordSlotsDraft.some((slot) => slotShowsSourceTitle(slot));
+  const canRestoreSourceTitles =
+    hasCharacterDerivedWords && teamWordSlotsDraft.some((slot) => !slot.showSourceTitle && Boolean(slot.sourceTitle));
+  const canToggleSourceTitles = canOmitSourceTitles || canRestoreSourceTitles;
+  const showsDualWordColumns = teamWordSlotsDraft.some((slot) => slotShowsSourceTitle(slot));
   const canEditWordAssignment = Boolean(
     isWordAssignmentPhase && self?.team && self.role === 'encoder' && myTeamWordRecord && !myTeamWordRecord.confirmed,
   );
+  const canExtractTeamWordCharacters = teamWordDraftMode === 'generated';
+  const shouldConfirmBeforeManualEdit = teamWordDraftMode === 'generated';
+  const canReplaceGeneratedWords = teamWordDraftMode === 'generated';
   const canSubmitClues = isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
   const canSubmitDecode = isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
@@ -738,14 +907,22 @@ function App() {
 
   useEffect(() => {
     if (!isWordAssignmentPhase) {
-      setTeamWordForm(emptyWordForm());
+      setTeamWordSlotsDraft(emptyTeamWordSlots());
+      setTeamWordDraftMode('manual');
       setTeamWordFormDirty(false);
+      setTeamWordManualModePinned(false);
+      setPendingConfirmedTeamWordSlots(null);
+      setWordAssignmentNotice(null);
       return;
     }
 
     if (self?.role !== 'encoder' || !self.team) {
-      setTeamWordForm(emptyWordForm());
+      setTeamWordSlotsDraft(emptyTeamWordSlots());
+      setTeamWordDraftMode('manual');
       setTeamWordFormDirty(false);
+      setTeamWordManualModePinned(false);
+      setPendingConfirmedTeamWordSlots(null);
+      setWordAssignmentNotice(null);
       return;
     }
   }, [isWordAssignmentPhase, self?.role, self?.team]);
@@ -755,11 +932,27 @@ function App() {
       return;
     }
 
-    if (myTeamWordRecord.confirmed || !teamWordFormDirty) {
-      setTeamWordForm([...teamWordServerWords]);
-      setTeamWordFormDirty(false);
+    if (teamWordManualModePinned && !myTeamWordRecord.confirmed) {
+      return;
     }
-  }, [isWordAssignmentPhase, myTeamWordRecord, self?.role, self?.team, teamWordFormDirty, teamWordServerWords]);
+
+    if (myTeamWordRecord.confirmed || !teamWordFormDirty) {
+      setTeamWordSlotsDraft(teamWordServerSlots);
+      setTeamWordDraftMode(inferTeamWordDraftMode(teamWordServerSlots));
+      setTeamWordFormDirty(false);
+      if (myTeamWordRecord.confirmed) {
+        setPendingConfirmedTeamWordSlots(null);
+      }
+    }
+  }, [
+    isWordAssignmentPhase,
+    myTeamWordRecord,
+    self?.role,
+    self?.team,
+    teamWordFormDirty,
+    teamWordManualModePinned,
+    teamWordServerSlots,
+  ]);
 
   async function withAction<T>(key: string, action: () => Promise<T>): Promise<T | null> {
     setActionError(null);
@@ -785,13 +978,18 @@ function App() {
     setKickSyncPollUntil(null);
     setJoinCode('');
     setClueForm(['', '', '']);
-    setTeamWordForm(emptyWordForm());
+    setTeamWordSlotsDraft(emptyTeamWordSlots());
+    setTeamWordDraftMode('manual');
     setTeamWordFormDirty(false);
+    setTeamWordManualModePinned(false);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
     setDecodeGuess('');
     setInterceptGuess('');
     setBangumiCatalogModalOpen(false);
     setBangumiCatalogBrowserOpen(false);
     setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
+    setBangumiCatalogTypesDraft(defaultBangumiCatalogTypes());
     setActionError(message ?? null);
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -810,7 +1008,35 @@ function App() {
 
   function updateTeamWord(index: number, value: string) {
     setTeamWordFormDirty(true);
-    setTeamWordForm((current) => current.map((item, itemIndex) => (itemIndex === index ? value : item)));
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
+    setTeamWordSlotsDraft((current) =>
+      current.map((slot, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...slot,
+              text: value,
+            }
+          : slot,
+      ),
+    );
+  }
+
+  function updateTeamWordTitle(index: number, value: string) {
+    setTeamWordFormDirty(true);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
+    setTeamWordSlotsDraft((current) =>
+      current.map((slot, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...slot,
+              sourceTitle: value,
+              showSourceTitle: true,
+            }
+          : slot,
+      ),
+    );
   }
 
   function openBangumiCatalogModal() {
@@ -822,6 +1048,13 @@ function App() {
       snapshot.room.bangumi_catalog_inputs.length > 0
         ? [...snapshot.room.bangumi_catalog_inputs]
         : emptyBangumiCatalogInputRow(),
+    );
+    setBangumiCatalogTypesDraft(
+      snapshot.room.bangumi_catalog_types.length > 0
+        ? (snapshot.room.bangumi_catalog_types.filter((value): value is BangumiCollectionType =>
+            BANGUMI_COLLECTION_TYPE_OPTIONS.some((option) => option.value === value),
+          ) as BangumiCollectionType[])
+        : defaultBangumiCatalogTypes(),
     );
     setBangumiCatalogModalOpen(true);
   }
@@ -848,6 +1081,12 @@ function App() {
 
   function addBangumiCatalogInput() {
     setBangumiCatalogInputsDraft((current) => [...current, '']);
+  }
+
+  function toggleBangumiCatalogType(value: BangumiCollectionType) {
+    setBangumiCatalogTypesDraft((current) =>
+      current.includes(value) ? current.filter((item) => item !== value) : [...current, value].sort((left, right) => left - right),
+    );
   }
 
   function removeBangumiCatalogInput(index: number) {
@@ -941,8 +1180,12 @@ function App() {
     }
 
     setClueForm(['', '', '']);
-    setTeamWordForm(emptyWordForm());
+    setTeamWordSlotsDraft(emptyTeamWordSlots());
+    setTeamWordDraftMode('manual');
     setTeamWordFormDirty(false);
+    setTeamWordManualModePinned(false);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
     setDecodeGuess('');
     setInterceptGuess('');
   }
@@ -958,8 +1201,96 @@ function App() {
       return;
     }
 
-    setTeamWordForm(result);
+    setTeamWordSlotsDraft(result.map((slot) => normalizeTeamWordSlot(slot)));
+    setTeamWordDraftMode('generated');
     setTeamWordFormDirty(true);
+    setTeamWordManualModePinned(false);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
+  }
+
+  async function handleReplaceTeamWord(index: number) {
+    if (!snapshot || !self?.team) {
+      return;
+    }
+
+    const team = self.team;
+    const result = await withAction('replace-team-word-slot', () => replaceTeamWordSlot(snapshot.room.id, team, index));
+    if (!result || result.length !== 4) {
+      return;
+    }
+
+    setTeamWordSlotsDraft(result.map((slot) => normalizeTeamWordSlot(slot)));
+    setTeamWordDraftMode('generated');
+    setTeamWordFormDirty(true);
+    setTeamWordManualModePinned(false);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
+  }
+
+  async function handleExtractCharacters() {
+    if (!snapshot || !self?.team) {
+      return;
+    }
+
+    const team = self.team;
+    const result = await withAction('extract-bangumi-characters', () => extractBangumiCharacters(snapshot.room.id, team));
+    if (!result || result.slots.length !== 4) {
+      return;
+    }
+
+    setTeamWordSlotsDraft(result.slots.map((slot) => normalizeTeamWordSlot(slot)));
+    setTeamWordDraftMode('characters');
+    setTeamWordFormDirty(true);
+    setTeamWordManualModePinned(false);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(
+      result.failedTitles.length > 0 ? `${result.failedTitles.length} 个词未提取到角色，已保留原标题。` : null,
+    );
+  }
+
+  function updateTeamWordCharacter(index: number, value: string) {
+    setTeamWordFormDirty(true);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
+    setTeamWordSlotsDraft((current) =>
+      current.map((slot, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...slot,
+              text: value,
+            }
+          : slot,
+      ),
+    );
+  }
+
+  function handleToggleSourceTitles() {
+    setTeamWordFormDirty(true);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
+    setTeamWordSlotsDraft((current) =>
+      current.map((slot) => ({
+        ...slot,
+        showSourceTitle: canOmitSourceTitles ? false : Boolean(slot.sourceTitle),
+      })),
+    );
+  }
+
+  function handleManualEdit() {
+    if (shouldConfirmBeforeManualEdit) {
+      const confirmed = window.confirm('打开手动编辑后，将不能再自动提取角色名。是否继续？');
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setTeamWordSlotsDraft((current) => clearTeamWordSlotAutomation(current));
+    setTeamWordDraftMode('manual');
+    setTeamWordFormDirty(true);
+    setTeamWordManualModePinned(true);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice(null);
   }
 
   async function handleLoadBangumiCatalog() {
@@ -969,22 +1300,36 @@ function App() {
 
     const normalizedInputs = normalizeBangumiCatalogDraft(bangumiCatalogInputsDraft);
     if (normalizedInputs.length === 0) {
-      setActionError('至少填写 1 个 Bangumi 用户 ID 或看过页面链接。');
+      setActionError('至少填写 1 个 Bangumi 用户 ID 或收藏夹页面链接。');
       return;
     }
 
     const invalidValue = normalizedInputs.find((value) => !isBangumiCatalogInputValid(value));
     if (invalidValue) {
-      setActionError('仅支持纯数字 ID，或 bangumi.tv / bgm.tv / chii.in 的看过页链接。');
+      setActionError('仅支持纯数字 ID，或 bangumi.tv / bgm.tv / chii.in 的收藏夹页面链接。');
       return;
     }
 
-    const result = await withAction('load-bangumi-catalog', () => loadBangumiCatalog(snapshot.room.id, normalizedInputs));
+    if (bangumiCatalogTypesDraft.length === 0) {
+      setActionError('至少勾选 1 个分类。');
+      return;
+    }
+
+    const result = await withAction('load-bangumi-catalog', () =>
+      loadBangumiCatalog(snapshot.room.id, normalizedInputs, bangumiCatalogTypesDraft),
+    );
     if (result === null) {
       return;
     }
 
     setBangumiCatalogInputsDraft(result.inputs.length > 0 ? [...result.inputs] : emptyBangumiCatalogInputRow());
+    setBangumiCatalogTypesDraft(
+      result.collectionTypes.length > 0
+        ? (result.collectionTypes.filter((value): value is BangumiCollectionType =>
+            BANGUMI_COLLECTION_TYPE_OPTIONS.some((option) => option.value === value),
+          ) as BangumiCollectionType[])
+        : defaultBangumiCatalogTypes(),
+    );
     setBangumiCatalogModalOpen(false);
     await loadRoomSnapshot(snapshot.room.id, { silentError: true });
   }
@@ -996,7 +1341,7 @@ function App() {
 
     const team = self.team;
 
-    const normalizedWords = teamWordForm.map((word) => word.trim());
+    const normalizedWords = teamWordSlotsToWords(teamWordSlotsDraft);
     if (normalizedWords.some((word) => !word)) {
       setActionError('需要填写 4 个词语');
       return;
@@ -1008,15 +1353,25 @@ function App() {
       return;
     }
 
+    const normalizedSlots = teamWordSlotsDraft.map((slot, index) =>
+      normalizeTeamWordSlot({
+        ...slot,
+        text: normalizedWords[index] ?? '',
+      }),
+    );
     const result = await withAction('confirm-team-words', () =>
-      confirmTeamWords(snapshot.room.id, team, normalizedWords),
+      confirmTeamWords(snapshot.room.id, team, normalizedWords, normalizedSlots),
     );
     if (result === null) {
       return;
     }
 
-    setTeamWordForm(normalizedWords);
+    setTeamWordSlotsDraft(normalizedSlots);
+    setPendingConfirmedTeamWordSlots(normalizedSlots);
+    setTeamWordDraftMode(inferTeamWordDraftMode(normalizedSlots));
     setTeamWordFormDirty(false);
+    setTeamWordManualModePinned(false);
+    setWordAssignmentNotice(null);
   }
 
   async function handleClueSubmit() {
@@ -1139,8 +1494,12 @@ function App() {
     const result = await withAction('restart-room', () => restartRoom(snapshot.room.id));
     if (result !== null) {
       setClueForm(['', '', '']);
-      setTeamWordForm(emptyWordForm());
+      setTeamWordSlotsDraft(emptyTeamWordSlots());
+      setTeamWordDraftMode('manual');
       setTeamWordFormDirty(false);
+      setTeamWordManualModePinned(false);
+      setPendingConfirmedTeamWordSlots(null);
+      setWordAssignmentNotice(null);
       setDecodeGuess('');
       setInterceptGuess('');
     }
@@ -1159,8 +1518,12 @@ function App() {
     const result = await withAction('terminate-game', () => terminateGame(snapshot.room.id));
     if (result !== null) {
       setClueForm(['', '', '']);
-      setTeamWordForm(emptyWordForm());
+      setTeamWordSlotsDraft(emptyTeamWordSlots());
+      setTeamWordDraftMode('manual');
       setTeamWordFormDirty(false);
+      setTeamWordManualModePinned(false);
+      setPendingConfirmedTeamWordSlots(null);
+      setWordAssignmentNotice(null);
       setDecodeGuess('');
       setInterceptGuess('');
     }
@@ -1390,8 +1753,8 @@ function App() {
                 <div className="lobby-settings-block lobby-settings-catalog">
                   <div className="lobby-settings-head">
                     <div>
-                      <strong>Bangumi 看过动画词库</strong>
-                      <p className="muted">支持填写用户 ID 或“看过”页面链接，保存后房间内持续复用。</p>
+                      <strong>Bangumi 动画词库</strong>
+                      <p className="muted">支持填写用户 ID 或收藏夹页面链接，保存后房间内持续复用。</p>
                     </div>
                     <div className="catalog-action-row">
                       <button
@@ -1400,7 +1763,7 @@ function App() {
                         onClick={openBangumiCatalogModal}
                         type="button"
                       >
-                        {isLoadingBangumiCatalog ? '载入中...' : '载入 Bangumi 看过动画词库'}
+                        {isLoadingBangumiCatalog ? '载入中...' : '载入 Bangumi 动画词库'}
                       </button>
                     </div>
                   </div>
@@ -1602,24 +1965,118 @@ function App() {
               <div className="action-body-main">
                 {canEditWordAssignment ? (
                   <div className="action-lines">
-                    <div className="action-line-head action-line-head-balanced">
-                      <span>本队词位</span>
-                      <span>填写词语</span>
+                    <div className="action-line-head">
+                      <div className="action-line-head-cell">本队词位</div>
+                      {showsDualWordColumns ? (
+                        <div className="action-line-head-word-pair">
+                          <div className="action-line-head-cell">动画名</div>
+                          <div className="action-line-head-cell">角色名</div>
+                        </div>
+                      ) : (
+                        <div className="action-line-head-cell">填写词语</div>
+                      )}
                     </div>
 
-                    {teamWordForm.map((word, index) => (
-                      <label className="action-line" key={`team-word-${index}`}>
+                    {teamWordSlotsDraft.map((slot, index) => (
+                      <div className="action-line" key={`team-word-${index}`}>
                         <span className={cn('code-word', `code-word-${teamTone(myTeam)}`)}>
                           <b>{index + 1}</b>
                           <span>{`位置 ${index + 1}`}</span>
                         </span>
-                        <input
-                          maxLength={24}
-                          onChange={(event) => updateTeamWord(index, event.target.value)}
-                          placeholder={`填写第 ${index + 1} 个词语`}
-                          value={word}
-                        />
-                      </label>
+                        <div
+                          className={cn('team-word-control', canReplaceGeneratedWords && 'team-word-control-with-replace')}
+                          key={`team-word-control-${teamWordDraftMode}-${index}`}
+                        >
+                          {teamWordDraftMode === 'characters' && slotShowsSourceTitle(slot) ? (
+                            <div className="team-word-pair">
+                              <input
+                                key={`team-word-title-${teamWordDraftMode}-${index}`}
+                                disabled={teamWordDraftMode === 'characters'}
+                                maxLength={48}
+                                onChange={(event) => updateTeamWordTitle(index, event.target.value)}
+                                placeholder={`动画名 ${index + 1}`}
+                                title={slot.sourceTitle ?? ''}
+                                value={slot.sourceTitle ?? ''}
+                              />
+                              {teamWordDraftMode === 'characters' ? (
+                                <select
+                                  key={`team-word-select-${index}`}
+                                  onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
+                                  title={slot.text}
+                                  value={slot.text}
+                                >
+                                  {slot.characterOptions.map((option) => (
+                                    <option key={option} value={option}>
+                                      {option}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
+                                  maxLength={24}
+                                  onChange={(event) => updateTeamWord(index, event.target.value)}
+                                  placeholder={`角色名 ${index + 1}`}
+                                  title={slot.text}
+                                  value={slot.text}
+                                />
+                              )}
+                            </div>
+                          ) : teamWordDraftMode === 'characters' && slot.characterOptions.length > 0 ? (
+                            <select
+                              key={`team-word-select-single-${index}`}
+                              onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
+                              title={slot.text}
+                              value={slot.text}
+                            >
+                              {slot.characterOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          ) : slotShowsSourceTitle(slot) ? (
+                            <div className="team-word-pair">
+                              <input
+                                key={`team-word-title-${teamWordDraftMode}-${index}`}
+                                maxLength={48}
+                                onChange={(event) => updateTeamWordTitle(index, event.target.value)}
+                                placeholder={`动画名 ${index + 1}`}
+                                title={slot.sourceTitle ?? ''}
+                                value={slot.sourceTitle ?? ''}
+                              />
+                              <input
+                                key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
+                                maxLength={24}
+                                onChange={(event) => updateTeamWord(index, event.target.value)}
+                                placeholder={`角色名 ${index + 1}`}
+                                title={slot.text}
+                                value={slot.text}
+                              />
+                            </div>
+                          ) : (
+                            <input
+                              key={`team-word-input-${teamWordDraftMode}-${index}`}
+                              maxLength={24}
+                              disabled={teamWordDraftMode === 'generated' || teamWordDraftMode === 'characters'}
+                              onChange={(event) => updateTeamWord(index, event.target.value)}
+                              placeholder={`填写第 ${index + 1} 个词语`}
+                              title={slot.text}
+                              value={slot.text}
+                            />
+                          )}
+                          {canReplaceGeneratedWords ? (
+                            <button
+                              className="ghost-button team-word-replace-button"
+                              disabled={busyKey !== null}
+                              onClick={() => void handleReplaceTeamWord(index)}
+                              type="button"
+                            >
+                              更换
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
                     ))}
 
                     <div className="assignment-toolbar">
@@ -1629,10 +2086,35 @@ function App() {
                         onClick={() => void handleGenerateWords()}
                         type="button"
                       >
-                        随机生成
+                        随机生成动画标题
                       </button>
-                      <span className="muted">随机后仍可继续修改，双方确认后自动进入第一轮加密</span>
+                      <button
+                        className="ghost-button"
+                        disabled={busyKey !== null || !canExtractTeamWordCharacters}
+                        onClick={() => void handleExtractCharacters()}
+                        type="button"
+                      >
+                        提取动画主要角色
+                      </button>
+                      <button
+                        className="ghost-button"
+                        disabled={busyKey !== null || !canToggleSourceTitles}
+                        onClick={handleToggleSourceTitles}
+                        type="button"
+                      >
+                        {canOmitSourceTitles ? '删去动画名' : '补充动画名'}
+                      </button>
+                      <button
+                        className="ghost-button"
+                        disabled={busyKey !== null}
+                        onClick={handleManualEdit}
+                        type="button"
+                      >
+                        手动编辑
+                      </button>
+                      <span className="assignment-tip">若词语过长可能显示不全，建议手动编辑</span>
                     </div>
+                    {wordAssignmentNotice ? <p className="muted assignment-note">{wordAssignmentNotice}</p> : null}
                   </div>
                 ) : isWordAssignmentPhase ? (
                   <div className="wait-card">
@@ -1777,7 +2259,13 @@ function App() {
                 <div className="matrix-row matrix-head">
                   {[0, 1, 2, 3].map((index) => (
                     <div key={index}>
-                      {isWordAssignmentPhase ? index + 1 : `${index + 1} ${myTeamWords[index]?.trim() || myWordPlaceholder}`}
+                      {isWordAssignmentPhase && !myTeamConfirmed && !pendingConfirmedTeamWordSlots
+                        ? index + 1
+                        : renderTeamWordDisplay(
+                            displayedMyTeamWordSlots[index] ?? emptyTeamWordSlot(),
+                            myWordPlaceholder,
+                            String(index + 1),
+                          )}
                     </div>
                   ))}
                 </div>
@@ -1846,7 +2334,11 @@ function App() {
                 <div className="matrix-row matrix-head">
                   {[1, 2, 3, 4].map((number) => (
                     <div key={number}>
-                      {number} {isFinishedPhase ? opponentTeamWords[number - 1]?.trim() || '待公开' : '??'}
+                      {renderOpponentWordDisplay(
+                        number,
+                        isFinishedPhase ? opponentTeamWords[number - 1]?.trim() || '待公开' : '??',
+                        displayedMyTeamWordSlots.some((slot) => slotShowsSourceTitle(slot)),
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1914,8 +2406,8 @@ function App() {
           <section aria-modal="true" className="modal-card" role="dialog">
             <div className="modal-card-head">
               <div>
-                <h2>载入 Bangumi 看过动画词库</h2>
-                <p className="muted">支持填写 Bangumi 用户 ID，或“看过”页面链接。</p>
+                <h2>载入 Bangumi 动画词库</h2>
+                <p className="muted">填写用户 ID 或收藏夹页面链接，再勾选要搜索的分类。</p>
               </div>
               <button
                 className="ghost-button"
@@ -1934,12 +2426,26 @@ function App() {
                 </div>
               ) : null}
 
+              <div className="catalog-type-group">
+                {BANGUMI_COLLECTION_TYPE_OPTIONS.map((option) => (
+                  <label className="catalog-type-option" key={option.value}>
+                    <input
+                      checked={bangumiCatalogTypesDraft.includes(option.value)}
+                      disabled={busyKey === 'load-bangumi-catalog'}
+                      onChange={() => toggleBangumiCatalogType(option.value)}
+                      type="checkbox"
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+
               {bangumiCatalogInputsDraft.map((value, index) => (
                 <div className="modal-input-row" key={`bangumi-input-${index}`}>
                   <input
                     disabled={busyKey === 'load-bangumi-catalog'}
                     onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
-                    placeholder="例如：123456 或 https://bgm.tv/anime/list/用户名/collect"
+                    placeholder="例如：790691 或 https://bangumi.tv/anime/list/790691"
                     value={value}
                   />
                   <button
