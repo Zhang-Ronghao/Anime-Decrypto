@@ -759,6 +759,7 @@ function App() {
   const opponentSubmission = self?.team ? currentRoundSubmissionByTeam[otherTeam(self.team)] : undefined;
   const myVisibleCode = self?.team ? currentRoundCodeByTeam[self.team]?.code ?? null : null;
   const myTeamWordRecord = snapshot?.teamWords.find((entry) => entry.team === myTeam);
+  const opponentTeamWordRecord = snapshot?.teamWords.find((entry) => entry.team === opponentTeam);
   const opponentTeamWords = snapshot ? getTeamWords(snapshot, opponentTeam) : [];
   const myScore = snapshot ? scoreFor(snapshot, myTeam) : { intercepts: 0, miscomms: 0, net: 0 };
   const opponentScore = snapshot ? scoreFor(snapshot, opponentTeam) : { intercepts: 0, miscomms: 0, net: 0 };
@@ -811,6 +812,7 @@ function App() {
   const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
   const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
   const teamWordServerSlots = teamWordSlotsFromRecord(myTeamWordRecord);
+  const opponentTeamWordSlots = teamWordSlotsFromRecord(opponentTeamWordRecord);
   const displayedMyTeamWordSlots =
     isWordAssignmentPhase && pendingConfirmedTeamWordSlots && !myTeamConfirmed
       ? pendingConfirmedTeamWordSlots
@@ -2379,11 +2381,13 @@ function App() {
                 <div className="matrix-row matrix-head">
                   {[1, 2, 3, 4].map((number) => (
                     <div key={number}>
-                      {renderOpponentWordDisplay(
-                        number,
-                        isFinishedPhase ? opponentTeamWords[number - 1]?.trim() || '待公开' : '??',
-                        displayedMyTeamWordSlots.some((slot) => slotShowsSourceTitle(slot)),
-                      )}
+                      {isFinishedPhase
+                        ? renderTeamWordDisplay(
+                            opponentTeamWordSlots[number - 1] ?? emptyTeamWordSlot(),
+                            opponentTeamWords[number - 1]?.trim() || '待公开',
+                            String(number),
+                          )
+                        : renderOpponentWordDisplay(number, '??', false)}
                     </div>
                   ))}
                 </div>
@@ -2404,7 +2408,7 @@ function App() {
               <section className="record-block">
                 <div className="record-block-header">
                   <div className="record-block-header-main">
-                    <span>对方轮次记录</span>
+                    <h3>对方轮次记录</h3>
                     <button
                       className="ghost-button record-toggle-button"
                       onClick={() => setShowAllRoundRecords((current) => !current)}
