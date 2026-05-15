@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   advanceRound,
   cleanupExpiredRooms,
@@ -11,7 +11,6 @@ import {
   kickPlayer,
   leaveRoom,
   restartRoom,
-  saveTeamWords,
   startGame,
   submitClues,
   submitInterceptGuess,
@@ -351,11 +350,10 @@ function App() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [clueForm, setClueForm] = useState(['', '', '']);
   const [teamWordForm, setTeamWordForm] = useState<string[]>(() => emptyWordForm());
-  const [teamWordSavedKey, setTeamWordSavedKey] = useState('');
+  const [teamWordFormDirty, setTeamWordFormDirty] = useState(false);
   const [decodeGuess, setDecodeGuess] = useState('');
   const [interceptGuess, setInterceptGuess] = useState('');
   const [kickSyncPollUntil, setKickSyncPollUntil] = useState<number | null>(null);
-  const canEditWordsRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -571,9 +569,7 @@ function App() {
   const clueSubmitCount = currentRoundSubmissions.filter((entry) => entry.clues?.length === 3).length;
   const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
   const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
-  const teamWordFormKey = serializeWords(teamWordForm);
   const teamWordServerWords = myTeamWordRecord?.words ?? emptyWordForm();
-  const teamWordServerKey = serializeWords(teamWordServerWords);
   const canEditWordAssignment = Boolean(
     isWordAssignmentPhase && self?.team && self.role === 'encoder' && myTeamWordRecord && !myTeamWordRecord.confirmed,
   );
@@ -602,7 +598,6 @@ function App() {
       word: wordIndex >= 0 ? myTeamWords[wordIndex] ?? '等待发牌' : '等待发牌',
     };
   });
-  const displayedOwnWords = isWordAssignmentPhase && canEditWordAssignment ? teamWordForm : myTeamWords;
   const actionTitle = isWordAssignmentPhase
     ? '设置本队词语'
     : snapshot?.room.phase === 'encrypt'
@@ -682,71 +677,29 @@ function App() {
     : '';
 
   useEffect(() => {
-    canEditWordsRef.current = canEditWordAssignment;
-  }, [canEditWordAssignment]);
-
-  useEffect(() => {
     if (!isWordAssignmentPhase) {
       setTeamWordForm(emptyWordForm());
-      setTeamWordSavedKey('');
+      setTeamWordFormDirty(false);
       return;
     }
 
-    if (self?.role !== 'encoder' || !self.team || !myTeamWordRecord) {
+    if (self?.role !== 'encoder' || !self.team) {
+      setTeamWordForm(emptyWordForm());
+      setTeamWordFormDirty(false);
       return;
     }
-
-    if (!myTeamWordRecord.confirmed && teamWordFormKey !== teamWordSavedKey) {
-      return;
-    }
-
-    if (teamWordFormKey !== teamWordServerKey) {
-      setTeamWordForm([...teamWordServerWords]);
-    }
-
-    if (teamWordSavedKey !== teamWordServerKey) {
-      setTeamWordSavedKey(teamWordServerKey);
-    }
-  }, [
-    isWordAssignmentPhase,
-    myTeamWordRecord,
-    self?.role,
-    self?.team,
-    teamWordFormKey,
-    teamWordSavedKey,
-    teamWordServerKey,
-    teamWordServerWords,
-  ]);
+  }, [isWordAssignmentPhase, self?.role, self?.team]);
 
   useEffect(() => {
-    if (!snapshot || !self?.team || !canEditWordAssignment) {
+    if (!isWordAssignmentPhase || self?.role !== 'encoder' || !self.team || !myTeamWordRecord) {
       return;
     }
 
-    const team = self.team;
-
-    if (teamWordFormKey === teamWordSavedKey) {
-      return;
+    if (myTeamWordRecord.confirmed || !teamWordFormDirty) {
+      setTeamWordForm([...teamWordServerWords]);
+      setTeamWordFormDirty(false);
     }
-
-    const timer = window.setTimeout(() => {
-      const nextWords = [...teamWordForm];
-
-      void saveTeamWords(snapshot.room.id, team, nextWords)
-        .then(() => {
-          setTeamWordSavedKey(serializeWords(nextWords));
-        })
-        .catch((error) => {
-          if (canEditWordsRef.current) {
-            setActionError(getErrorMessage(error, '保存词语草稿失败'));
-          }
-        });
-    }, 450);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [canEditWordAssignment, self?.team, snapshot, teamWordForm, teamWordFormKey, teamWordSavedKey]);
+  }, [isWordAssignmentPhase, myTeamWordRecord, self?.role, self?.team, teamWordFormDirty, teamWordServerWords]);
 
   async function withAction<T>(key: string, action: () => Promise<T>): Promise<T | null> {
     setActionError(null);
@@ -773,7 +726,7 @@ function App() {
     setJoinCode('');
     setClueForm(['', '', '']);
     setTeamWordForm(emptyWordForm());
-    setTeamWordSavedKey('');
+    setTeamWordFormDirty(false);
     setDecodeGuess('');
     setInterceptGuess('');
     setActionError(message ?? null);
@@ -793,6 +746,7 @@ function App() {
   }
 
   function updateTeamWord(index: number, value: string) {
+    setTeamWordFormDirty(true);
     setTeamWordForm((current) => current.map((item, itemIndex) => (itemIndex === index ? value : item)));
   }
 
@@ -882,7 +836,7 @@ function App() {
 
     setClueForm(['', '', '']);
     setTeamWordForm(emptyWordForm());
-    setTeamWordSavedKey('');
+    setTeamWordFormDirty(false);
     setDecodeGuess('');
     setInterceptGuess('');
   }
@@ -899,7 +853,7 @@ function App() {
     }
 
     setTeamWordForm(result);
-    setTeamWordSavedKey(serializeWords(result));
+    setTeamWordFormDirty(true);
   }
 
   async function handleConfirmWords() {
@@ -929,7 +883,7 @@ function App() {
     }
 
     setTeamWordForm(normalizedWords);
-    setTeamWordSavedKey(serializeWords(normalizedWords));
+    setTeamWordFormDirty(false);
   }
 
   async function handleClueSubmit() {
@@ -1053,7 +1007,7 @@ function App() {
     if (result !== null) {
       setClueForm(['', '', '']);
       setTeamWordForm(emptyWordForm());
-      setTeamWordSavedKey('');
+      setTeamWordFormDirty(false);
       setDecodeGuess('');
       setInterceptGuess('');
     }
@@ -1073,7 +1027,7 @@ function App() {
     if (result !== null) {
       setClueForm(['', '', '']);
       setTeamWordForm(emptyWordForm());
-      setTeamWordSavedKey('');
+      setTeamWordFormDirty(false);
       setDecodeGuess('');
       setInterceptGuess('');
     }
@@ -1466,7 +1420,7 @@ function App() {
                       <label className="action-line" key={`team-word-${index}`}>
                         <span className={cn('code-word', `code-word-${teamTone(myTeam)}`)}>
                           <b>{index + 1}</b>
-                          <span>{word.trim() || `词语 ${index + 1}`}</span>
+                          <span>{`位置 ${index + 1}`}</span>
                         </span>
                         <input
                           maxLength={24}
@@ -1632,7 +1586,7 @@ function App() {
                 <div className="matrix-row matrix-head">
                   {[0, 1, 2, 3].map((index) => (
                     <div key={index}>
-                      {index + 1} {displayedOwnWords[index]?.trim() || myWordPlaceholder}
+                      {isWordAssignmentPhase ? index + 1 : `${index + 1} ${myTeamWords[index]?.trim() || myWordPlaceholder}`}
                     </div>
                   ))}
                 </div>
