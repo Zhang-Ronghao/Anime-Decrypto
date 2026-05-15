@@ -20,6 +20,9 @@ export interface RoomRecord {
   score_team_b_miscomms: number;
   team_a_words_confirmed: boolean;
   team_b_words_confirmed: boolean;
+  bangumi_catalog_inputs: string[];
+  bangumi_catalog_words: string[];
+  bangumi_catalog_updated_at: string | null;
   created_at: string;
   updated_at: string;
 }

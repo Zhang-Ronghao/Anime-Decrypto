@@ -10,6 +10,7 @@ import {
   joinRoom,
   kickPlayer,
   leaveRoom,
+  loadBangumiCatalog,
   restartRoom,
   startGame,
   submitClues,
@@ -62,6 +63,12 @@ interface RoleGroupProps {
   team: Team;
   players: PlayerRecord[];
   selfId?: string;
+}
+
+interface BangumiCatalogSummary {
+  configured: boolean;
+  userCount: number;
+  wordCount: number;
 }
 
 function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: SeatCardProps) {
@@ -221,6 +228,31 @@ function serializeWords(words: string[]): string {
   return words.join('\u0001');
 }
 
+function emptyBangumiCatalogInputRow(): string[] {
+  return [''];
+}
+
+function normalizeBangumiCatalogDraft(inputs: string[]): string[] {
+  return inputs.map((value) => value.trim()).filter((value) => value.length > 0);
+}
+
+function isBangumiCatalogInputValid(value: string): boolean {
+  if (/^\d+$/.test(value)) {
+    return true;
+  }
+
+  try {
+    const url = new URL(value);
+    if (!['bangumi.tv', 'bgm.tv', 'chii.in'].includes(url.hostname)) {
+      return false;
+    }
+
+    return /^\/anime\/list\/[^/]+\/collect\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function getTeamWords(snapshot: RoomSnapshot, team: Team): string[] {
   return snapshot.teamWords.find((entry) => entry.team === team)?.words ?? [];
 }
@@ -354,6 +386,9 @@ function App() {
   const [decodeGuess, setDecodeGuess] = useState('');
   const [interceptGuess, setInterceptGuess] = useState('');
   const [kickSyncPollUntil, setKickSyncPollUntil] = useState<number | null>(null);
+  const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
+  const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
+  const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
 
   useEffect(() => {
     let cancelled = false;
@@ -483,6 +518,18 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!snapshot || snapshot.room.phase !== 'lobby' || bangumiCatalogModalOpen) {
+      return;
+    }
+
+    setBangumiCatalogInputsDraft(
+      snapshot.room.bangumi_catalog_inputs.length > 0
+        ? [...snapshot.room.bangumi_catalog_inputs]
+        : emptyBangumiCatalogInputRow(),
+    );
+  }, [bangumiCatalogModalOpen, snapshot]);
+
   const self = useMemo(() => {
     if (!snapshot || !sessionUserId) {
       return null;
@@ -520,6 +567,19 @@ function App() {
   const rosterPlayers = useMemo(() => (snapshot ? getSortedRoster(snapshot.players) : []), [snapshot]);
   const teamAPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'A') : []), [snapshot]);
   const teamBPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'B') : []), [snapshot]);
+  const bangumiCatalogWords = useMemo(
+    () => (snapshot?.room.bangumi_catalog_words ?? []).slice().sort((left, right) => left.localeCompare(right, 'zh-CN')),
+    [snapshot],
+  );
+  const bangumiCatalogSummary = useMemo<BangumiCatalogSummary>(
+    () => ({
+      configured: bangumiCatalogWords.length > 0,
+      userCount: snapshot?.room.bangumi_catalog_inputs.length ?? 0,
+      wordCount: bangumiCatalogWords.length,
+    }),
+    [bangumiCatalogWords, snapshot],
+  );
+  const isLoadingBangumiCatalog = busyKey === 'load-bangumi-catalog';
 
   const myTeam = self?.team ?? 'A';
   const opponentTeam = otherTeam(myTeam);
@@ -729,6 +789,9 @@ function App() {
     setTeamWordFormDirty(false);
     setDecodeGuess('');
     setInterceptGuess('');
+    setBangumiCatalogModalOpen(false);
+    setBangumiCatalogBrowserOpen(false);
+    setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
     setActionError(message ?? null);
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -748,6 +811,49 @@ function App() {
   function updateTeamWord(index: number, value: string) {
     setTeamWordFormDirty(true);
     setTeamWordForm((current) => current.map((item, itemIndex) => (itemIndex === index ? value : item)));
+  }
+
+  function openBangumiCatalogModal() {
+    if (!snapshot || !self?.is_host) {
+      return;
+    }
+
+    setBangumiCatalogInputsDraft(
+      snapshot.room.bangumi_catalog_inputs.length > 0
+        ? [...snapshot.room.bangumi_catalog_inputs]
+        : emptyBangumiCatalogInputRow(),
+    );
+    setBangumiCatalogModalOpen(true);
+  }
+
+  function closeBangumiCatalogModal() {
+    setBangumiCatalogModalOpen(false);
+  }
+
+  function openBangumiCatalogBrowser() {
+    if (!snapshot || snapshot.room.bangumi_catalog_words.length === 0) {
+      return;
+    }
+
+    setBangumiCatalogBrowserOpen(true);
+  }
+
+  function closeBangumiCatalogBrowser() {
+    setBangumiCatalogBrowserOpen(false);
+  }
+
+  function updateBangumiCatalogInput(index: number, value: string) {
+    setBangumiCatalogInputsDraft((current) => current.map((item, itemIndex) => (itemIndex === index ? value : item)));
+  }
+
+  function addBangumiCatalogInput() {
+    setBangumiCatalogInputsDraft((current) => [...current, '']);
+  }
+
+  function removeBangumiCatalogInput(index: number) {
+    setBangumiCatalogInputsDraft((current) =>
+      current.length <= 1 ? current.map(() => '') : current.filter((_, itemIndex) => itemIndex !== index),
+    );
   }
 
   async function handleCreateRoom() {
@@ -854,6 +960,33 @@ function App() {
 
     setTeamWordForm(result);
     setTeamWordFormDirty(true);
+  }
+
+  async function handleLoadBangumiCatalog() {
+    if (!snapshot || !self?.is_host) {
+      return;
+    }
+
+    const normalizedInputs = normalizeBangumiCatalogDraft(bangumiCatalogInputsDraft);
+    if (normalizedInputs.length === 0) {
+      setActionError('至少填写 1 个 Bangumi 用户 ID 或看过页面链接。');
+      return;
+    }
+
+    const invalidValue = normalizedInputs.find((value) => !isBangumiCatalogInputValid(value));
+    if (invalidValue) {
+      setActionError('仅支持纯数字 ID，或 bangumi.tv / bgm.tv / chii.in 的看过页链接。');
+      return;
+    }
+
+    const result = await withAction('load-bangumi-catalog', () => loadBangumiCatalog(snapshot.room.id, normalizedInputs));
+    if (result === null) {
+      return;
+    }
+
+    setBangumiCatalogInputsDraft(result.inputs.length > 0 ? [...result.inputs] : emptyBangumiCatalogInputRow());
+    setBangumiCatalogModalOpen(false);
+    await loadRoomSnapshot(snapshot.room.id, { silentError: true });
   }
 
   async function handleConfirmWords() {
@@ -1224,6 +1357,7 @@ function App() {
 
             {self.is_host ? (
               <div className="lobby-settings">
+                <div className="lobby-settings-block">
                 <label className="lobby-setting">
                   <span>房间席位</span>
                   <select
@@ -1251,6 +1385,42 @@ function App() {
                     <span>默认开启，每轮结束后按队内顺序轮换身份</span>
                   </div>
                 </label>
+                </div>
+
+                <div className="lobby-settings-block lobby-settings-catalog">
+                  <div className="lobby-settings-head">
+                    <div>
+                      <strong>Bangumi 看过动画词库</strong>
+                      <p className="muted">支持填写用户 ID 或“看过”页面链接，保存后房间内持续复用。</p>
+                    </div>
+                    <div className="catalog-action-row">
+                      <button
+                        className="outline-button"
+                        disabled={busyKey !== null}
+                        onClick={openBangumiCatalogModal}
+                        type="button"
+                      >
+                        {isLoadingBangumiCatalog ? '载入中...' : '载入 Bangumi 看过动画词库'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="catalog-summary-row">
+                    <div className="catalog-summary-grid">
+                      <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
+                      <div className="tag">用户数：{bangumiCatalogSummary.userCount}</div>
+                      <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
+                    </div>
+
+                    {bangumiCatalogSummary.configured ? (
+                      <div className="catalog-card-footer">
+                        <button className="ghost-button" onClick={openBangumiCatalogBrowser} type="button">
+                          浏览词库
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="lobby-settings lobby-settings-readonly">
@@ -1258,6 +1428,26 @@ function App() {
                 <div className="tag">身份轮换：{snapshot.room.role_rotation_enabled ? '开启' : '关闭'}</div>
               </div>
             )}
+
+            {!self.is_host ? (
+              <div className="lobby-readonly-catalog">
+                <div className="catalog-summary-row">
+                  <div className="catalog-summary-grid">
+                    <div className="tag">{bangumiCatalogSummary.configured ? '词库：已配置' : '词库：未配置'}</div>
+                    <div className="tag">用户数：{bangumiCatalogSummary.userCount}</div>
+                    <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
+                  </div>
+
+                  {bangumiCatalogSummary.configured ? (
+                    <div className="catalog-card-footer">
+                      <button className="ghost-button" onClick={openBangumiCatalogBrowser} type="button">
+                        浏览词库
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             <div className="team-seat-columns">
               {teamOrder.map((team) => (
@@ -1319,6 +1509,7 @@ function App() {
             </div>
 
             <p className="muted lobby-hint">{self.is_host ? lobbyStartHint : '等待房主开始游戏'}</p>
+            <p className="muted lobby-hint">词语随机生成依赖 Bangumi 词库。未配置也可开局，但选词阶段随机抽词会失败。</p>
           </article>
 
           <article className="panel">
@@ -1709,6 +1900,117 @@ function App() {
           ) : null}
         </>
       )}
+
+      {bangumiCatalogModalOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && busyKey !== 'load-bangumi-catalog') {
+              closeBangumiCatalogModal();
+            }
+          }}
+          role="presentation"
+        >
+          <section aria-modal="true" className="modal-card" role="dialog">
+            <div className="modal-card-head">
+              <div>
+                <h2>载入 Bangumi 看过动画词库</h2>
+                <p className="muted">支持填写 Bangumi 用户 ID，或“看过”页面链接。</p>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={busyKey === 'load-bangumi-catalog'}
+                onClick={closeBangumiCatalogModal}
+                type="button"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="modal-form-stack">
+              {isLoadingBangumiCatalog ? (
+                <div className="catalog-loading-note" role="status">
+                  正在从 Bangumi 载入并保存词库，通常会稍慢一些，请稍等。
+                </div>
+              ) : null}
+
+              {bangumiCatalogInputsDraft.map((value, index) => (
+                <div className="modal-input-row" key={`bangumi-input-${index}`}>
+                  <input
+                    disabled={busyKey === 'load-bangumi-catalog'}
+                    onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
+                    placeholder="例如：123456 或 https://bgm.tv/anime/list/用户名/collect"
+                    value={value}
+                  />
+                  <button
+                    className="ghost-button"
+                    disabled={busyKey === 'load-bangumi-catalog' || bangumiCatalogInputsDraft.length <= 1}
+                    onClick={() => removeBangumiCatalogInput(index)}
+                    type="button"
+                  >
+                    删除
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="ghost-button"
+                disabled={busyKey === 'load-bangumi-catalog'}
+                onClick={addBangumiCatalogInput}
+                type="button"
+              >
+                新增用户
+              </button>
+              <button
+                className="primary-button"
+                disabled={busyKey === 'load-bangumi-catalog'}
+                onClick={() => void handleLoadBangumiCatalog()}
+                type="button"
+              >
+                {isLoadingBangumiCatalog ? '载入中...' : '载入并保存词库'}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {bangumiCatalogBrowserOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeBangumiCatalogBrowser();
+            }
+          }}
+          role="presentation"
+        >
+          <section aria-modal="true" className="modal-card modal-card-compact" role="dialog">
+            <div className="modal-card-head">
+              <div>
+                <h2>Bangumi 词库</h2>
+                <p className="muted">当前房间已保存的动画词条，所有人都可以浏览。</p>
+              </div>
+              <button className="ghost-button" onClick={closeBangumiCatalogBrowser} type="button">
+                关闭
+              </button>
+            </div>
+
+            <div className="catalog-browser-summary">
+              <div className="tag">词数：{bangumiCatalogWords.length}</div>
+            </div>
+
+            <div className="catalog-browser-list" role="list">
+              {bangumiCatalogWords.map((word) => (
+                <span className="catalog-browser-item" key={word} role="listitem">
+                  {word}
+                </span>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

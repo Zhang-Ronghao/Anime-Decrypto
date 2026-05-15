@@ -1,6 +1,7 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type {
+  RoomRecord,
   PlayerRecord,
   RoomSnapshot,
   RoundCodeRecord,
@@ -178,6 +179,50 @@ export async function generateTeamWords(roomId: string, team: Team) {
   return (data ?? []) as string[];
 }
 
+export async function loadBangumiCatalog(roomId: string, inputs: string[]) {
+  const client = assertSupabase();
+  const { data, error } = await client.functions.invoke('load-bangumi-catalog', {
+    body: {
+      roomId,
+      inputs,
+    },
+  });
+
+  if (error) {
+    const context = (error as { context?: Response }).context;
+    if (context instanceof Response) {
+      try {
+        const payload = (await context.json()) as { error?: unknown } | null;
+        if (payload && typeof payload.error === 'string' && payload.error.trim()) {
+          throw new Error(payload.error);
+        }
+      } catch {
+        // Ignore JSON parsing errors and fall back to the function error below.
+      }
+    }
+
+    throw error;
+  }
+
+  const value = data as
+    | {
+        inputs?: string[];
+        wordCount?: number;
+        updatedAt?: string;
+      }
+    | null;
+
+  if (!value || !Array.isArray(value.inputs) || typeof value.wordCount !== 'number' || typeof value.updatedAt !== 'string') {
+    throw new Error('Bangumi 词库加载结果格式不正确。');
+  }
+
+  return {
+    inputs: value.inputs,
+    wordCount: value.wordCount,
+    updatedAt: value.updatedAt,
+  };
+}
+
 export async function saveTeamWords(roomId: string, team: Team, words: string[]) {
   const client = assertSupabase();
   const { error } = await client.rpc('save_team_words', {
@@ -329,7 +374,7 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
   if (submissionsResult.error) throw submissionsResult.error;
 
   return {
-    room: roomResult.data,
+    room: roomResult.data as RoomRecord,
     players: (playersResult.data ?? []) as PlayerRecord[],
     teamWords: (wordsResult.data ?? []) as TeamWordsRecord[],
     roundCodes: (codesResult.data ?? []) as RoundCodeRecord[],

@@ -33,6 +33,15 @@ add column if not exists seat_count integer not null default 4;
 alter table public.rooms
 add column if not exists role_rotation_enabled boolean not null default true;
 
+alter table public.rooms
+add column if not exists bangumi_catalog_inputs text[] not null default '{}';
+
+alter table public.rooms
+add column if not exists bangumi_catalog_words text[] not null default '{}';
+
+alter table public.rooms
+add column if not exists bangumi_catalog_updated_at timestamptz null;
+
 alter table public.rooms drop constraint if exists rooms_seat_count_check;
 alter table public.rooms
 add constraint rooms_seat_count_check
@@ -1045,6 +1054,9 @@ set search_path = public
 as $$
 declare
   v_room public.rooms%rowtype;
+  v_catalog_words text[];
+  v_other_team text;
+  v_other_team_words text[];
   v_words text[];
 begin
   perform public.assert_authenticated();
@@ -1084,7 +1096,37 @@ begin
     raise exception '本队词语已确认，不能再修改。';
   end if;
 
-  v_words := public.draw_words(4);
+  v_catalog_words := coalesce(v_room.bangumi_catalog_words, array[]::text[]);
+
+  if coalesce(array_length(v_catalog_words, 1), 0) = 0 then
+    raise exception '当前房间未配置 Bangumi 词库，请终止游戏返回大厅配置。';
+  end if;
+
+  v_other_team := case when p_team = 'A' then 'B' else 'A' end;
+
+  select words
+  into v_other_team_words
+  from public.team_words
+  where room_id = p_room_id
+    and team = v_other_team;
+
+  select array_agg(word order by sort_key)
+  into v_words
+  from (
+    select word, random() as sort_key
+    from (
+      select distinct trim(value) as word
+      from unnest(v_catalog_words) as items(value)
+      where trim(value) <> ''
+        and not (trim(value) = any(coalesce(v_other_team_words, array[]::text[])))
+    ) unique_words
+    order by sort_key
+    limit 4
+  ) picked;
+
+  if coalesce(array_length(v_words, 1), 0) <> 4 then
+    raise exception '当前房间词库不足以为两队提供 8 个不重复词语，请重新载入 Bangumi 词库。';
+  end if;
 
   update public.team_words
   set words = v_words

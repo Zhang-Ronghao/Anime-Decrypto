@@ -996,7 +996,8 @@ select:focus {
 .lobby-settings {
   margin-top: 18px;
   display: grid;
-  grid-template-columns: minmax(200px, 220px) minmax(0, 1fr);
+  grid-template-columns: minmax(250px, 320px) minmax(360px, 520px);
+  justify-content: space-between;
   gap: 14px;
   padding: 16px;
   border: 1px solid var(--line);
@@ -1004,8 +1005,72 @@ select:focus {
   background: #fbfcff;
 }
 
+.lobby-settings-block {
+  display: grid;
+  gap: 12px;
+}
+
 .lobby-settings-readonly {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.lobby-settings-catalog {
+  width: 100%;
+  max-width: 520px;
+  justify-self: end;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.lobby-settings-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.catalog-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.lobby-settings-head p {
+  margin-top: 6px;
+}
+
+.catalog-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.catalog-summary-grid {
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lobby-readonly-catalog {
+  margin-top: 14px;
+}
+
+.catalog-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.catalog-card-footer .ghost-button {
+  min-height: 40px;
+  padding: 0.6rem 0.9rem;
 }
 
 .lobby-setting,
@@ -1532,6 +1597,99 @@ select:focus {
   font-weight: 700;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(18, 24, 38, 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.modal-card {
+  width: min(720px, 100%);
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid rgba(185, 196, 212, 0.8);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 30px 80px rgba(18, 24, 38, 0.22);
+}
+
+.modal-card-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.modal-card-head p {
+  margin-top: 6px;
+}
+
+.modal-form-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.modal-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.modal-card-compact {
+  width: min(680px, 100%);
+}
+
+.catalog-loading-note {
+  padding: 12px 14px;
+  border: 1px solid rgba(35, 89, 201, 0.18);
+  border-radius: 10px;
+  background: rgba(238, 244, 255, 0.92);
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.catalog-browser-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.catalog-browser-list {
+  max-height: min(56vh, 520px);
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  padding: 4px;
+}
+
+.catalog-browser-item {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 700;
+  word-break: break-word;
+}
+
 code {
   font-family: 'IBM Plex Mono', 'Consolas', monospace;
 }
@@ -1587,6 +1745,13 @@ code {
   .team-seat-columns,
   .lobby-settings {
     grid-template-columns: 1fr;
+  }
+
+  .lobby-settings-catalog {
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
   }
 
   .action-header {
@@ -1674,6 +1839,33 @@ code {
   }
 
   .roster-kick-button {
+    width: 100%;
+  }
+
+  .lobby-settings-head,
+  .modal-card-head,
+  .modal-input-row,
+  .modal-footer {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .catalog-summary-row,
+  .catalog-action-row,
+  .catalog-card-footer {
+    justify-content: stretch;
+  }
+
+  .catalog-summary-grid {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .catalog-action-row .ghost-button,
+  .catalog-action-row .outline-button,
+  .catalog-card-footer .ghost-button {
     width: 100%;
   }
 
