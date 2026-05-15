@@ -90,6 +90,8 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
   { value: 5, label: '抛弃' },
 ];
 
+const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
+
 function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: SeatCardProps) {
   return (
     <button
@@ -442,6 +444,19 @@ function getTeamSubmissions(snapshot: RoomSnapshot, team: Team): RoundSubmission
     .sort((a, b) => a.round_number - b.round_number);
 }
 
+function filterVisibleRoundRecords(
+  submissions: RoundSubmissionRecord[],
+  currentRoundNumber: number,
+  showAll: boolean,
+): RoundSubmissionRecord[] {
+  if (showAll) {
+    return submissions;
+  }
+
+  const minimumRoundNumber = Math.max(currentRoundNumber - 1, 1);
+  return submissions.filter((entry) => entry.round_number >= minimumRoundNumber);
+}
+
 function buildClueMatrixRows(
   submissions: RoundSubmissionRecord[],
   options: { showGuessNumbers?: boolean } = {},
@@ -538,6 +553,7 @@ function App() {
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
   );
+  const [showAllRoundRecords, setShowAllRoundRecords] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -754,6 +770,15 @@ function App() {
     : false;
   const mySubmissions = snapshot ? getTeamSubmissions(snapshot, myTeam) : [];
   const opponentSubmissions = snapshot ? getTeamSubmissions(snapshot, opponentTeam) : [];
+  const currentRoundNumber = snapshot?.room.round_number ?? 0;
+  const visibleMySubmissions = useMemo(
+    () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, showAllRoundRecords),
+    [currentRoundNumber, mySubmissions, showAllRoundRecords],
+  );
+  const visibleOpponentSubmissions = useMemo(
+    () => filterVisibleRoundRecords(opponentSubmissions, currentRoundNumber, showAllRoundRecords),
+    [currentRoundNumber, opponentSubmissions, showAllRoundRecords],
+  );
   const myClueRows = buildClueMatrixRows(mySubmissions);
   const opponentClueRows = buildClueMatrixRows(opponentSubmissions, { showGuessNumbers: true });
   const decodeDigits = guessDigits(decodeGuess);
@@ -1586,7 +1611,12 @@ function App() {
           <div className="hero-orb hero-orb-red" aria-hidden="true" />
           <div className="hero-orb hero-orb-blue" aria-hidden="true" />
           <div className="hero-copy">
-            <p className="eyebrow">动漫高手</p>
+            <div className="hero-eyebrow-row">
+              <a className="eyebrow eyebrow-link" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
+                GitHub 仓库
+              </a>
+              <p className="eyebrow">动漫高手4.0</p>
+            </div>
             <h1>动漫高手——截码战</h1>
             <div className="hero-tags" aria-label="游戏特点">
               <span>4-14 人</span>
@@ -1656,42 +1686,51 @@ function App() {
         </div>
 
         <div className="top-actions">
-          <article className={cn('team-score', `team-score-${teamTone(myTeam)}`)}>
-            <div className="team-score-display">
-              <strong>{displayTeamName(myTeam)}</strong>
-              <div className="team-score-tracks">
-                <ScoreTrack count={myScore.intercepts} kind="intercept" tone={teamTone(myTeam)} />
-                <ScoreTrack count={myScore.miscomms} kind="miscomm" tone={teamTone(myTeam)} />
-              </div>
-            </div>
-            <div>
-              <strong>{displayTeamName(myTeam)}</strong>
-              <small>
-                拦截 {myScore.intercepts} · 失误 {myScore.miscomms}
-              </small>
-            </div>
-            <b>{myScore.net}</b>
-          </article>
+          {!isLobbyPhase ? (
+            <>
+              <article className={cn('team-score', `team-score-${teamTone(myTeam)}`)}>
+                <div className="team-score-display">
+                  <strong>{displayTeamName(myTeam)}</strong>
+                  <div className="team-score-tracks">
+                    <ScoreTrack count={myScore.intercepts} kind="intercept" tone={teamTone(myTeam)} />
+                    <ScoreTrack count={myScore.miscomms} kind="miscomm" tone={teamTone(myTeam)} />
+                  </div>
+                </div>
+                <div>
+                  <strong>{displayTeamName(myTeam)}</strong>
+                  <small>
+                    拦截 {myScore.intercepts} · 失误 {myScore.miscomms}
+                  </small>
+                </div>
+                <b>{myScore.net}</b>
+              </article>
 
-          <article className={cn('team-score', `team-score-${teamTone(opponentTeam)}`)}>
-            <div className="team-score-display">
-              <strong>{displayTeamName(opponentTeam)}</strong>
-              <div className="team-score-tracks">
-                <ScoreTrack count={opponentScore.intercepts} kind="intercept" tone={teamTone(opponentTeam)} />
-                <ScoreTrack count={opponentScore.miscomms} kind="miscomm" tone={teamTone(opponentTeam)} />
-              </div>
-            </div>
-            <div>
-              <strong>{displayTeamName(opponentTeam)}</strong>
-              <small>
-                拦截 {opponentScore.intercepts} · 失误 {opponentScore.miscomms}
-              </small>
-            </div>
-            <b>{opponentScore.net}</b>
-          </article>
+              <article className={cn('team-score', `team-score-${teamTone(opponentTeam)}`)}>
+                <div className="team-score-display">
+                  <strong>{displayTeamName(opponentTeam)}</strong>
+                  <div className="team-score-tracks">
+                    <ScoreTrack count={opponentScore.intercepts} kind="intercept" tone={teamTone(opponentTeam)} />
+                    <ScoreTrack count={opponentScore.miscomms} kind="miscomm" tone={teamTone(opponentTeam)} />
+                  </div>
+                </div>
+                <div>
+                  <strong>{displayTeamName(opponentTeam)}</strong>
+                  <small>
+                    拦截 {opponentScore.intercepts} · 失误 {opponentScore.miscomms}
+                  </small>
+                </div>
+                <b>{opponentScore.net}</b>
+              </article>
+            </>
+          ) : null}
 
           {canLeaveCurrentRoom ? (
             <div className="room-actions">
+              {isLobbyPhase ? (
+                <a className="outline-button repo-link-button" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
+                  GitHub 仓库
+                </a>
+              ) : null}
               {self.is_host ? (
                 <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleDisbandRoom()} type="button">
                   解散房间
@@ -2290,7 +2329,16 @@ function App() {
 
               <section className="record-block" id="round-records">
                 <div className="record-block-header">
-                <h3>我方轮次记录</h3>
+                  <div className="record-block-header-main">
+                    <h3>我方轮次记录</h3>
+                    <button
+                      className="ghost-button record-toggle-button"
+                      onClick={() => setShowAllRoundRecords((current) => !current)}
+                      type="button"
+                    >
+                      {showAllRoundRecords ? '隐藏信息' : '显示全部'}
+                    </button>
+                  </div>
                 </div>
                 <div className="record-table">
                   <div className="record-row record-head">
@@ -2300,7 +2348,7 @@ function App() {
                     <span>我方解密</span>
                     <span>对方拦截</span>
                   </div>
-                  {mySubmissions.map((entry) => (
+                  {visibleMySubmissions.map((entry) => (
                     <div className="record-row" key={entry.id}>
                       <span>第 {entry.round_number} 轮</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
@@ -2358,7 +2406,16 @@ function App() {
               </div>
               <section className="record-block">
                 <div className="record-block-header">
-                  <span>对方轮次记录</span>
+                  <div className="record-block-header-main">
+                    <span>对方轮次记录</span>
+                    <button
+                      className="ghost-button record-toggle-button"
+                      onClick={() => setShowAllRoundRecords((current) => !current)}
+                      type="button"
+                    >
+                      {showAllRoundRecords ? '隐藏信息' : '显示全部'}
+                    </button>
+                  </div>
                   <small className="record-note">括号表示对方猜测的数字，只有猜错时才显示</small>
                 </div>
                 <div className="record-table">
@@ -2369,7 +2426,7 @@ function App() {
                     <span>对方解密</span>
                     <span>我方拦截</span>
                   </div>
-                  {opponentSubmissions.map((entry) => (
+                  {visibleOpponentSubmissions.map((entry) => (
                     <div className="record-row" key={entry.id}>
                       <span>第 {entry.round_number} 轮</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>

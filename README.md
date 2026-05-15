@@ -1,55 +1,58 @@
-# 解码战
+# Anime Decrypto
 
-一个基于 `React + Supabase` 的四人联机解码战原型。  
-前端负责界面和交互，Supabase 负责匿名身份、房间状态、实时同步和 RLS 隐藏信息。
+基于 React + Supabase 的网页多人动漫高手——截码战，强调同房不同视角、隐藏信息隔离和低后端成本部署。
 
-## 功能范围
+在线游玩：<https://anime-decrypto.vercel.app/>
 
-- 创建房间 / 加入房间
-- 支持房主自定义 6 位房间码；如果留空则自动生成
-- 四个固定席位：`A 队出题者`、`A 队解码者`、`B 队出题者`、`B 队解码者`
-- 房主开局，系统为两队发 4 个关键词，并为两位出题者生成当前回合密码
-- 阶段流转：`lobby -> clue -> intercept -> decode -> result -> ...`
-- Realtime 同步房间状态
-- 通过 RLS 限制：
-  - 只有本队能看到本队关键词
-  - 只有当前出题者能看到自己本轮密码
-  - 所有人只能通过受控 RPC 改写游戏状态
+以下文档均有AI生成
 
-## 启动方式
+## 功能亮点
 
-1. 安装依赖
+- 双队对抗。玩家按队伍和席位加入房间，不同身份看到不同信息。
+- 隐藏信息不靠前端遮挡。队伍词语、当前密码等敏感数据主要通过表拆分和 Supabase RLS 控制可见性。
+- 房间配置可调。大厅阶段支持切换 `4 / 6 / 8 / 10 / 12 / 14` 席，并可开启或关闭身份轮换。
+- 词语分配更贴近动画题材。支持从 Bangumi 收藏交集生成词库，并可进一步提取角色名作为词语候选。
+- 房主管理完整。支持踢人、解散房间、终止对局、对局结束后重新开始。
+
+## 快速部署
+
+1. 创建一个 Supabase 项目。
+2. 在 Supabase SQL Editor 执行 [`supabase/schema.sql`](./supabase/schema.sql)。
+3. 在 Supabase Dashboard 开启 Anonymous Auth。
+4. 在 Realtime 中把 `rooms`、`room_players`、`team_words`、`round_codes`、`round_submissions` 加入发布。
+5. 为前端配置环境变量：
+
+```bash
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+6. 部署前端到 Vercel，或任意能托管 Vite 静态产物的平台。
+7. 可选：部署 Bangumi 相关 Edge Functions，让房主可以直接载入 Bangumi 词库并自动提取角色名。
+
+本地启动：
 
 ```bash
 npm install
-```
-
-2. 创建 `.env.local`
-
-```bash
-VITE_SUPABASE_URL=你的 Supabase URL
-VITE_SUPABASE_ANON_KEY=你的 Supabase anon key
-```
-
-3. 在 Supabase SQL Editor 执行 [supabase/schema.sql](./supabase/schema.sql)
-
-4. 启动开发环境
-
-```bash
 npm run dev
 ```
 
-## Supabase 要求
+## 项目现状
 
-- 开启 `Anonymous sign-ins`
-- 开启 `Realtime`
-- 在 Realtime 中将 `rooms`、`room_players`、`team_words`、`round_codes`、`round_submissions` 加入发布
-- 用 `schema.sql` 创建表、RLS 和 RPC
+- 当前已经实现完整房间流和核心回合流：`lobby -> word_assignment -> encrypt -> decode -> intercept -> result -> finished`
+- 支持可变席位、身份轮换、词语确认与替换、Bangumi 词库载入、角色提取、重新开始和终止游戏
+- 这是可玩的原型，不是完整商业化产品
 
-## 当前实现说明
+## 已知边界
 
-- 这是一个可运行的 MVP，不含观战、断线恢复、聊天、排行榜。
-- 目前固定为 `4 人开局`，每队 `1 出题者 + 1 解码者`。
-- 游戏结束条件沿用 Decrypto 风格：
-  - 某队成功截获对方 2 次，则该队获胜
-  - 某队本队误传 2 次，则该队失败，对方获胜
+- 没有观战模式
+- 没有聊天系统
+- 断线重连和房间清理仍是基础实现
+- Bangumi 词库属于可选增强，不是基础部署前置
+- 未配置 Bangumi 词库也能开局，但选词阶段的随机抽词会失败，此时需要手动填写词语
+
+## 文档导航
+
+- [架构说明](./docs/architecture.md)
+- [部署说明](./docs/deployment.md)
+- [Bangumi 词库与角色提取](./docs/bangumi-catalog.md)
