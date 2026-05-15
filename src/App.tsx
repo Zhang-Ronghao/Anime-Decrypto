@@ -2461,7 +2461,8 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>载入 Bangumi 动画词库</h2>
-                <p className="muted">填写用户 ID（推荐）或收藏夹页面链接，再勾选要搜索的分类。</p>
+                <p className="muted">填写<strong>用户 ID</strong>（推荐）或收藏夹页面链接，再勾选要搜索的分类。</p>
+                <p className="muted">支持填写多个用户，词库将取所选分类下的收藏<strong>交集</strong>。</p>
               </div>
               <button
                 className="ghost-button"
@@ -2499,7 +2500,7 @@ function App() {
                   <input
                     disabled={busyKey === 'load-bangumi-catalog'}
                     onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
-                    placeholder="填写用户 ID（推荐）或收藏夹页面链接，再勾选要搜索的分类"
+                    placeholder="例如：123456 或 https://bangumi.tv/anime/list/123456"
                     value={value}
                   />
                   <button
