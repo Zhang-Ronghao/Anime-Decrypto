@@ -4,7 +4,7 @@
 
 在线游玩：<https://anime-decrypto.vercel.app/>
 
-以下文档均有AI生成
+以下文档均由AI生成
 
 ## 功能亮点
 
