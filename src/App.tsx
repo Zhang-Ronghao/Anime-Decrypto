@@ -447,14 +447,20 @@ function getTeamSubmissions(snapshot: RoomSnapshot, team: Team): RoundSubmission
 function filterVisibleRoundRecords(
   submissions: RoundSubmissionRecord[],
   currentRoundNumber: number,
+  currentPhase: RoomSnapshot['room']['phase'] | null,
   showAll: boolean,
 ): RoundSubmissionRecord[] {
+  const canRevealCurrentRound = currentPhase === 'result' || currentPhase === 'finished';
+
   if (showAll) {
-    return submissions;
+    return submissions.filter((entry) => canRevealCurrentRound || entry.round_number !== currentRoundNumber);
   }
 
-  const minimumRoundNumber = Math.max(currentRoundNumber - 1, 1);
-  return submissions.filter((entry) => entry.round_number >= minimumRoundNumber);
+  const visibleRoundNumbers = canRevealCurrentRound
+    ? new Set([currentRoundNumber - 1, currentRoundNumber].filter((roundNumber) => roundNumber >= 1))
+    : new Set([currentRoundNumber - 1].filter((roundNumber) => roundNumber >= 1));
+
+  return submissions.filter((entry) => visibleRoundNumbers.has(entry.round_number));
 }
 
 function buildClueMatrixRows(
@@ -772,13 +778,14 @@ function App() {
   const mySubmissions = snapshot ? getTeamSubmissions(snapshot, myTeam) : [];
   const opponentSubmissions = snapshot ? getTeamSubmissions(snapshot, opponentTeam) : [];
   const currentRoundNumber = snapshot?.room.round_number ?? 0;
+  const currentPhase = snapshot?.room.phase ?? null;
   const visibleMySubmissions = useMemo(
-    () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, showAllRoundRecords),
-    [currentRoundNumber, mySubmissions, showAllRoundRecords],
+    () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
+    [currentPhase, currentRoundNumber, mySubmissions, showAllRoundRecords],
   );
   const visibleOpponentSubmissions = useMemo(
-    () => filterVisibleRoundRecords(opponentSubmissions, currentRoundNumber, showAllRoundRecords),
-    [currentRoundNumber, opponentSubmissions, showAllRoundRecords],
+    () => filterVisibleRoundRecords(opponentSubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
+    [currentPhase, currentRoundNumber, opponentSubmissions, showAllRoundRecords],
   );
   const myClueRows = buildClueMatrixRows(mySubmissions);
   const opponentClueRows = buildClueMatrixRows(opponentSubmissions, { showGuessNumbers: true });
