@@ -494,7 +494,13 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
   };
 }
 
-export function subscribeToRoom(roomId: string, onChange: () => void): RealtimeChannel {
+export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
+
+export function subscribeToRoom(
+  roomId: string,
+  onChange: () => void,
+  onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
+): RealtimeChannel {
   const client = assertSupabase();
   const channel = client
     .channel(`room-${roomId}`)
@@ -523,7 +529,9 @@ export function subscribeToRoom(roomId: string, onChange: () => void): RealtimeC
       { event: '*', schema: 'public', table: 'round_submissions', filter: `room_id=eq.${roomId}` },
       onChange,
     )
-    .subscribe();
+    .subscribe((status, error) => {
+      onStatus?.(status as RoomSubscriptionStatus, error);
+    });
 
   return channel;
 }

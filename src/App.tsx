@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
+import { useRef } from 'react';
 import {
   advanceRound,
   cleanupExpiredRooms,
@@ -20,6 +21,7 @@ import {
   skipFirstIntercept,
   submitOwnGuess,
   subscribeToRoom,
+  type RoomSubscriptionStatus,
   terminateGame,
   updateRoomLobbySettings,
   updateSelfSeat,
@@ -535,6 +537,8 @@ function isRoomMembershipLostError(error: unknown): boolean {
 }
 
 function App() {
+  const snapshotRequestIdRef = useRef(0);
+  const realtimeRefreshTimerRef = useRef<number | null>(null);
   const [booting, setBooting] = useState(true);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
@@ -552,7 +556,7 @@ function App() {
   const [pendingConfirmedTeamWordSlots, setPendingConfirmedTeamWordSlots] = useState<TeamWordSlot[] | null>(null);
   const [decodeGuess, setDecodeGuess] = useState('');
   const [interceptGuess, setInterceptGuess] = useState('');
-  const [kickSyncPollUntil, setKickSyncPollUntil] = useState<number | null>(null);
+  const [syncFallbackUntil, setSyncFallbackUntil] = useState<number | null>(null);
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
   const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
@@ -611,69 +615,109 @@ function App() {
 
   useEffect(() => {
     if (!roomId) {
+      snapshotRequestIdRef.current += 1;
       setSnapshot(null);
       return;
     }
 
-    const channel = subscribeToRoom(roomId, () => {
-      void loadRoomSnapshot(roomId);
-    });
+    const scheduleRealtimeRefresh = () => {
+      if (realtimeRefreshTimerRef.current !== null) {
+        window.clearTimeout(realtimeRefreshTimerRef.current);
+      }
 
-    void loadRoomSnapshot(roomId);
+      realtimeRefreshTimerRef.current = window.setTimeout(() => {
+        realtimeRefreshTimerRef.current = null;
+        void refreshRoomSnapshot(roomId, { silentError: true });
+      }, 100);
+    };
+
+    const handleSubscriptionStatus = (status: RoomSubscriptionStatus) => {
+      if (status === 'SUBSCRIBED') {
+        setSyncFallbackUntil(null);
+        void refreshRoomSnapshot(roomId, { silentError: true });
+        return;
+      }
+
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setSyncFallbackUntil(Date.now() + 10_000);
+      }
+    };
+
+    const channel = subscribeToRoom(roomId, scheduleRealtimeRefresh, handleSubscriptionStatus);
+
+    void refreshRoomSnapshot(roomId);
 
     return () => {
+      if (realtimeRefreshTimerRef.current !== null) {
+        window.clearTimeout(realtimeRefreshTimerRef.current);
+        realtimeRefreshTimerRef.current = null;
+      }
       void channel.unsubscribe();
     };
   }, [roomId, sessionUserId]);
 
-  async function loadRoomSnapshot(nextRoomId: string, options?: { silentError?: boolean }) {
+  async function refreshRoomSnapshot(nextRoomId: string, options?: { silentError?: boolean }) {
+    const requestId = snapshotRequestIdRef.current + 1;
+    snapshotRequestIdRef.current = requestId;
+
     try {
       const nextSnapshot = await fetchRoomSnapshot(nextRoomId);
+      if (snapshotRequestIdRef.current !== requestId) {
+        return true;
+      }
+
       if (sessionUserId && !nextSnapshot.players.some((player) => player.auth_user_id === sessionUserId)) {
         resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
-        return;
+        return false;
       }
 
       setSnapshot(nextSnapshot);
+      return true;
     } catch (error) {
+      if (snapshotRequestIdRef.current !== requestId) {
+        return true;
+      }
+
       if (isRoomMembershipLostError(error)) {
         resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
       } else if (!options?.silentError) {
         setActionError(getErrorMessage(error, '读取房间失败'));
       }
+
+      return false;
     }
   }
 
   useEffect(() => {
-    if (!roomId || !kickSyncPollUntil) {
+    if (!roomId || !syncFallbackUntil) {
       return;
     }
 
-    const remainingMs = kickSyncPollUntil - Date.now();
+    const remainingMs = syncFallbackUntil - Date.now();
     if (remainingMs <= 0) {
-      setKickSyncPollUntil(null);
+      setSyncFallbackUntil(null);
       return;
     }
 
     const poller = window.setInterval(() => {
-      if (Date.now() >= kickSyncPollUntil) {
+      if (Date.now() >= syncFallbackUntil) {
         window.clearInterval(poller);
-        setKickSyncPollUntil(null);
+        setSyncFallbackUntil(null);
         return;
       }
 
-      void loadRoomSnapshot(roomId, { silentError: true });
+      void refreshRoomSnapshot(roomId, { silentError: true });
     }, 2500);
 
     const stopper = window.setTimeout(() => {
-      setKickSyncPollUntil(null);
+      setSyncFallbackUntil(null);
     }, remainingMs);
 
     return () => {
       window.clearInterval(poller);
       window.clearTimeout(stopper);
     };
-  }, [kickSyncPollUntil, roomId, sessionUserId]);
+  }, [syncFallbackUntil, roomId, sessionUserId]);
 
   useEffect(() => {
     if (!supabase) {
@@ -988,12 +1032,25 @@ function App() {
     teamWordServerSlots,
   ]);
 
-  async function withAction<T>(key: string, action: () => Promise<T>): Promise<T | null> {
+  async function withAction<T>(
+    key: string,
+    action: () => Promise<T>,
+    options?: { refreshRoomId?: string | null },
+  ): Promise<T | null> {
     setActionError(null);
     setBusyKey(key);
 
     try {
-      return await action();
+      const result = await action();
+
+      if (options?.refreshRoomId) {
+        const refreshed = await refreshRoomSnapshot(options.refreshRoomId);
+        if (!refreshed) {
+          return null;
+        }
+      }
+
+      return result;
     } catch (error) {
       if (isRoomMembershipLostError(error)) {
         resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
@@ -1007,9 +1064,14 @@ function App() {
   }
 
   function resetRoomState(message?: string) {
+    snapshotRequestIdRef.current += 1;
+    if (realtimeRefreshTimerRef.current !== null) {
+      window.clearTimeout(realtimeRefreshTimerRef.current);
+      realtimeRefreshTimerRef.current = null;
+    }
     setRoomId(null);
     setSnapshot(null);
-    setKickSyncPollUntil(null);
+    setSyncFallbackUntil(null);
     setJoinCode('');
     setClueForm(['', '', '']);
     setTeamWordSlotsDraft(emptyTeamWordSlots());
@@ -1172,7 +1234,9 @@ function App() {
       return;
     }
 
-    await withAction(`seat-${team}-${teamSeat}`, () => updateSelfSeat(snapshot.room.id, team, teamSeat));
+    await withAction(`seat-${team}-${teamSeat}`, () => updateSelfSeat(snapshot.room.id, team, teamSeat), {
+      refreshRoomId: snapshot.room.id,
+    });
   }
 
   async function handleStandUp() {
@@ -1180,7 +1244,9 @@ function App() {
       return;
     }
 
-    await withAction('seat-clear', () => updateSelfSeat(snapshot.room.id, null, null));
+    await withAction('seat-clear', () => updateSelfSeat(snapshot.room.id, null, null), {
+      refreshRoomId: snapshot.room.id,
+    });
   }
 
   async function handleSeatCountChange(seatCount: number) {
@@ -1208,7 +1274,9 @@ function App() {
       return;
     }
 
-    const result = await withAction('start-game', () => startGame(snapshot.room.id));
+    const result = await withAction('start-game', () => startGame(snapshot.room.id), {
+      refreshRoomId: snapshot.room.id,
+    });
     if (result === null) {
       return;
     }
@@ -1365,7 +1433,7 @@ function App() {
         : defaultBangumiCatalogTypes(),
     );
     setBangumiCatalogModalOpen(false);
-    await loadRoomSnapshot(snapshot.room.id, { silentError: true });
+    await refreshRoomSnapshot(snapshot.room.id, { silentError: true });
   }
 
   async function handleConfirmWords() {
@@ -1393,8 +1461,10 @@ function App() {
         text: normalizedWords[index] ?? '',
       }),
     );
-    const result = await withAction('confirm-team-words', () =>
-      confirmTeamWords(snapshot.room.id, team, normalizedWords, normalizedSlots),
+    const result = await withAction(
+      'confirm-team-words',
+      () => confirmTeamWords(snapshot.room.id, team, normalizedWords, normalizedSlots),
+      { refreshRoomId: snapshot.room.id },
     );
     if (result === null) {
       return;
@@ -1420,7 +1490,9 @@ function App() {
       return;
     }
 
-    await withAction('submit-clues', () => submitClues(snapshot.room.id, team, clueForm));
+    await withAction('submit-clues', () => submitClues(snapshot.room.id, team, clueForm), {
+      refreshRoomId: snapshot.room.id,
+    });
     setClueForm(['', '', '']);
   }
 
@@ -1437,7 +1509,9 @@ function App() {
       return;
     }
 
-    await withAction('submit-decode', () => submitOwnGuess(snapshot.room.id, team, guess));
+    await withAction('submit-decode', () => submitOwnGuess(snapshot.room.id, team, guess), {
+      refreshRoomId: snapshot.room.id,
+    });
     setDecodeGuess('');
   }
 
@@ -1454,7 +1528,9 @@ function App() {
       return;
     }
 
-    await withAction('submit-intercept', () => submitInterceptGuess(snapshot.room.id, otherTeam(team), guess));
+    await withAction('submit-intercept', () => submitInterceptGuess(snapshot.room.id, otherTeam(team), guess), {
+      refreshRoomId: snapshot.room.id,
+    });
     setInterceptGuess('');
   }
 
@@ -1463,7 +1539,9 @@ function App() {
       return;
     }
 
-    await withAction('skip-first-intercept', () => skipFirstIntercept(snapshot.room.id));
+    await withAction('skip-first-intercept', () => skipFirstIntercept(snapshot.room.id), {
+      refreshRoomId: snapshot.room.id,
+    });
   }
 
   async function handleAdvanceRound() {
@@ -1471,7 +1549,9 @@ function App() {
       return;
     }
 
-    await withAction('advance-round', () => advanceRound(snapshot.room.id));
+    await withAction('advance-round', () => advanceRound(snapshot.room.id), {
+      refreshRoomId: snapshot.room.id,
+    });
   }
 
   async function handleLeaveRoom() {
@@ -1506,7 +1586,9 @@ function App() {
       return;
     }
 
-    const result = await withAction(`kick-player-${player.id}`, () => kickPlayer(snapshot.room.id, player.id));
+    const result = await withAction(`kick-player-${player.id}`, () => kickPlayer(snapshot.room.id, player.id), {
+      refreshRoomId: snapshot.room.id,
+    });
     if (result !== null) {
       setSnapshot((current) =>
         current
@@ -1516,7 +1598,7 @@ function App() {
             }
           : current,
       );
-      setKickSyncPollUntil(Date.now() + 10_000);
+      setSyncFallbackUntil(Date.now() + 10_000);
     }
   }
 
@@ -1525,7 +1607,9 @@ function App() {
       return;
     }
 
-    const result = await withAction('restart-room', () => restartRoom(snapshot.room.id));
+    const result = await withAction('restart-room', () => restartRoom(snapshot.room.id), {
+      refreshRoomId: snapshot.room.id,
+    });
     if (result !== null) {
       setClueForm(['', '', '']);
       setTeamWordSlotsDraft(emptyTeamWordSlots());
@@ -1549,7 +1633,9 @@ function App() {
       return;
     }
 
-    const result = await withAction('terminate-game', () => terminateGame(snapshot.room.id));
+    const result = await withAction('terminate-game', () => terminateGame(snapshot.room.id), {
+      refreshRoomId: snapshot.room.id,
+    });
     if (result !== null) {
       setClueForm(['', '', '']);
       setTeamWordSlotsDraft(emptyTeamWordSlots());
