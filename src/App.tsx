@@ -1036,7 +1036,9 @@ function App() {
           : snapshot?.room.phase === 'intercept'
             ? `拦截进度 ${interceptSubmitCount}/2`
             : snapshot?.room.phase === 'result'
-              ? '本轮已经结算'
+              ? self?.is_host
+                ? '本轮已经结算，请点击左侧按钮开始下一轮'
+                : '本轮已经结算，等待房主开始下一轮'
               : snapshot?.room.phase === 'finished'
                 ? '对局已结束'
                 : '等待房间同步';
