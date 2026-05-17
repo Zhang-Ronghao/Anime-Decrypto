@@ -40,7 +40,16 @@ import {
   teamCapacity,
   teamOrder,
 } from './lib/utils';
-import type { PlayerRecord, Role, RoomSnapshot, RoundSubmissionRecord, Team, TeamWordSlot, TeamWordsRecord } from './types';
+import type {
+  PlayerRecord,
+  Role,
+  RoomPhase,
+  RoomSnapshot,
+  RoundSubmissionRecord,
+  Team,
+  TeamWordSlot,
+  TeamWordsRecord,
+} from './types';
 
 interface SeatCardProps {
   team: Team;
@@ -76,8 +85,15 @@ interface BangumiCatalogSummary {
 }
 
 type TeamWordDraftMode = 'manual' | 'generated' | 'characters';
+type TimedPhase = 'encrypt' | 'decode' | 'intercept';
 
 type BangumiCollectionType = 1 | 2 | 3 | 4 | 5;
+
+interface LobbyTimerSettings {
+  encryptMinutes: number;
+  decodeMinutes: number;
+  interceptMinutes: number;
+}
 
 interface BangumiCollectionTypeOption {
   value: BangumiCollectionType;
@@ -93,6 +109,12 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
 ];
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
+const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
+const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
+  encryptMinutes: 2,
+  decodeMinutes: 2,
+  interceptMinutes: 2,
+};
 
 function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: SeatCardProps) {
   return (
@@ -204,6 +226,40 @@ function displayTeamName(team: Team): string {
 
 function teamTone(team: Team): 'red' | 'blue' {
   return team === 'A' ? 'red' : 'blue';
+}
+
+function isTimedPhase(phase: RoomPhase): phase is TimedPhase {
+  return phase === 'encrypt' || phase === 'decode' || phase === 'intercept';
+}
+
+function timedPhaseLabel(phase: TimedPhase): string {
+  if (phase === 'encrypt') {
+    return '加密';
+  }
+
+  if (phase === 'decode') {
+    return '解密';
+  }
+
+  return '拦截';
+}
+
+function lobbyTimerSettingsFromRoom(room?: RoomSnapshot['room'] | null): LobbyTimerSettings {
+  if (!room) {
+    return DEFAULT_LOBBY_TIMER_SETTINGS;
+  }
+
+  return {
+    encryptMinutes: room.encrypt_phase_minutes,
+    decodeMinutes: room.decode_phase_minutes,
+    interceptMinutes: room.intercept_phase_minutes,
+  };
+}
+
+function formatCountdown(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function formatGuessResult(guess: string | null, correct: boolean | null): string {
@@ -543,6 +599,7 @@ function App() {
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
+  const [timerNow, setTimerNow] = useState(() => Date.now());
   const [displayName, setDisplayName] = useState(() => localStorage.getItem('decrypto-name') ?? '');
   const [joinCode, setJoinCode] = useState(() => new URLSearchParams(window.location.search).get('room') ?? '');
   const [actionError, setActionError] = useState<string | null>(null);
@@ -655,6 +712,21 @@ function App() {
       void channel.unsubscribe();
     };
   }, [roomId, sessionUserId]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+
+    setTimerNow(Date.now());
+    const intervalId = window.setInterval(() => {
+      setTimerNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [snapshot]);
 
   async function refreshRoomSnapshot(nextRoomId: string, options?: { silentError?: boolean }) {
     const requestId = snapshotRequestIdRef.current + 1;
@@ -823,6 +895,7 @@ function App() {
   const opponentSubmissions = snapshot ? getTeamSubmissions(snapshot, opponentTeam) : [];
   const currentRoundNumber = snapshot?.room.round_number ?? 0;
   const currentPhase = snapshot?.room.phase ?? null;
+  const lobbyTimerSettings = lobbyTimerSettingsFromRoom(snapshot?.room);
   const visibleMySubmissions = useMemo(
     () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
     [currentPhase, currentRoundNumber, mySubmissions, showAllRoundRecords],
@@ -973,6 +1046,15 @@ function App() {
       : '第一轮拦截阶段无需操作，等待房主跳过'
     : actionHint;
   const effectiveProgressText = isFirstRoundInterceptSkip ? '等待房主跳过第一轮拦截' : progressText;
+  const activeTimedPhase = snapshot && isTimedPhase(snapshot.room.phase) ? snapshot.room.phase : null;
+  const countdownHasDeadline = Boolean(activeTimedPhase && snapshot?.room.phase_deadline_at);
+  const countdownSeconds =
+    countdownHasDeadline && snapshot?.room.phase_deadline_at
+      ? Math.max(0, Math.ceil((new Date(snapshot.room.phase_deadline_at).getTime() - timerNow) / 1000))
+      : 0;
+  const countdownExpired = countdownHasDeadline && countdownSeconds === 0;
+  const countdownTitle = activeTimedPhase ? `${timedPhaseLabel(activeTimedPhase)}倒计时` : '倒计时';
+  const countdownText = formatCountdown(countdownSeconds);
   const lobbyStartHint = snapshot
     ? !allPlayersSeated
       ? '开始前，所有已加入房间的玩家都需要先入座'
@@ -1254,8 +1336,9 @@ function App() {
       return;
     }
 
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
     await withAction('lobby-seat-count', () =>
-      updateRoomLobbySettings(snapshot.room.id, seatCount, snapshot.room.role_rotation_enabled),
+      updateRoomLobbySettings(snapshot.room.id, seatCount, snapshot.room.role_rotation_enabled, timers),
     );
   }
 
@@ -1264,8 +1347,35 @@ function App() {
       return;
     }
 
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
     await withAction('lobby-rotation', () =>
-      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, enabled),
+      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, enabled, timers),
+    );
+  }
+
+  async function handleLobbyTimerChange(phase: TimedPhase, minutes: number) {
+    if (!snapshot || !self?.is_host) {
+      return;
+    }
+
+    const currentTimers = lobbyTimerSettingsFromRoom(snapshot.room);
+    const nextTimers: LobbyTimerSettings =
+      phase === 'encrypt'
+        ? { ...currentTimers, encryptMinutes: minutes }
+        : phase === 'decode'
+          ? { ...currentTimers, decodeMinutes: minutes }
+          : { ...currentTimers, interceptMinutes: minutes };
+
+    if (
+      nextTimers.encryptMinutes === currentTimers.encryptMinutes &&
+      nextTimers.decodeMinutes === currentTimers.decodeMinutes &&
+      nextTimers.interceptMinutes === currentTimers.interceptMinutes
+    ) {
+      return;
+    }
+
+    await withAction(`lobby-timer-${phase}`, () =>
+      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, snapshot.room.role_rotation_enabled, nextTimers),
     );
   }
 
@@ -1849,13 +1959,16 @@ function App() {
               </div>
             </div>
 
-            {self.is_host ? (
-              <div className="lobby-settings">
-                <div className="lobby-settings-block">
-                <label className="lobby-setting">
-                  <span>房间席位</span>
+            <div className={cn('lobby-settings', !self.is_host && 'lobby-settings-readonly')}>
+              <div className="lobby-settings-block lobby-settings-main">
+                <div className="lobby-settings-head">
+                  <strong>人数/身份设置</strong>
+                </div>
+
+                <label className="lobby-setting lobby-setting-compact">
+                  <span>席位数</span>
                   <select
-                    disabled={busyKey !== null}
+                    disabled={!self.is_host || busyKey !== null}
                     onChange={(event) => void handleSeatCountChange(Number(event.target.value))}
                     value={snapshot.room.seat_count}
                   >
@@ -1870,78 +1983,81 @@ function App() {
                 <label className="lobby-toggle">
                   <input
                     checked={snapshot.room.role_rotation_enabled}
-                    disabled={busyKey !== null}
+                    disabled={!self.is_host || busyKey !== null}
                     onChange={(event) => void handleRoleRotationToggle(event.target.checked)}
                     type="checkbox"
                   />
                   <div>
-                    <strong>身份轮换</strong>
-                    <span>默认开启，每轮结束后按队内顺序轮换身份</span>
+                    <strong>每轮队内身份轮换</strong>
                   </div>
                 </label>
+              </div>
+
+              <div className="lobby-settings-block lobby-settings-timers">
+                <div className="lobby-settings-head">
+                  <strong>各阶段时间设置</strong>
                 </div>
 
-                <div className="lobby-settings-block lobby-settings-catalog">
-                  <div className="lobby-settings-head">
-                    <div>
-                      <strong>Bangumi 动画词库</strong>
-                      <p className="muted">支持填写用户 ID（推荐）或收藏夹页面链接，保存后房间内持续复用。</p>
-                    </div>
-                    <div className="catalog-action-row">
-                      <button
-                        className="outline-button"
-                        disabled={busyKey !== null}
-                        onClick={openBangumiCatalogModal}
-                        type="button"
-                      >
-                        {isLoadingBangumiCatalog ? '载入中...' : '载入 Bangumi 动画词库'}
-                      </button>
-                    </div>
+                {([
+                  { phase: 'encrypt', label: '加密阶段', value: lobbyTimerSettings.encryptMinutes },
+                  { phase: 'decode', label: '解密阶段', value: lobbyTimerSettings.decodeMinutes },
+                  { phase: 'intercept', label: '拦截阶段', value: lobbyTimerSettings.interceptMinutes },
+                ] as Array<{ phase: TimedPhase; label: string; value: number }>).map((item) => (
+                  <label className="lobby-setting lobby-setting-inline" key={item.phase}>
+                    <span>{item.label}</span>
+                    <select
+                      disabled={!self.is_host || busyKey !== null}
+                      onChange={(event) => void handleLobbyTimerChange(item.phase, Number(event.target.value))}
+                      value={item.value}
+                    >
+                      {LOBBY_TIMER_MINUTE_OPTIONS.map((option) => (
+                        <option key={`${item.phase}-${option}`} value={option}>
+                          {option} 分钟
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+
+              <div className="lobby-settings-block lobby-settings-catalog">
+                <div className="lobby-settings-head">
+                  <div>
+                    <strong>Bangumi 动画词库</strong>
+                    <p className="muted lobby-settings-copy">支持填写用户 ID（推荐）或收藏夹页面链接，从Bangumi一键导入动画列表。</p>
                   </div>
 
-                  <div className="catalog-summary-row">
-                    <div className="catalog-summary-grid">
-                      <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
-                      <div className="tag">用户数：{bangumiCatalogSummary.userCount}</div>
-                      <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
-                    </div>
-
-                    {bangumiCatalogSummary.configured ? (
-                      <div className="catalog-card-footer">
-                        <button className="ghost-button" onClick={openBangumiCatalogBrowser} type="button">
-                          浏览词库
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
+                  {self.is_host ? (
+                    <button
+                      className="outline-button"
+                      disabled={busyKey !== null}
+                      onClick={openBangumiCatalogModal}
+                      type="button"
+                    >
+                      {isLoadingBangumiCatalog ? '载入中...' : '载入 Bangumi 动画词库'}
+                    </button>
+                  ) : (
+                    <span className="muted lobby-settings-note">房主可更新词库</span>
+                  )}
                 </div>
-              </div>
-            ) : (
-              <div className="lobby-settings lobby-settings-readonly">
-                <div className="tag">房间席位：{snapshot.room.seat_count} 席</div>
-                <div className="tag">身份轮换：{snapshot.room.role_rotation_enabled ? '开启' : '关闭'}</div>
-              </div>
-            )}
 
-            {!self.is_host ? (
-              <div className="lobby-readonly-catalog">
                 <div className="catalog-summary-row">
                   <div className="catalog-summary-grid">
-                    <div className="tag">{bangumiCatalogSummary.configured ? '词库：已配置' : '词库：未配置'}</div>
+                    <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
                     <div className="tag">用户数：{bangumiCatalogSummary.userCount}</div>
                     <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
                   </div>
 
-                  {bangumiCatalogSummary.configured ? (
-                    <div className="catalog-card-footer">
+                  <div className="catalog-actions">
+                    {bangumiCatalogSummary.configured ? (
                       <button className="ghost-button" onClick={openBangumiCatalogBrowser} type="button">
                         浏览词库
                       </button>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
               </div>
-            ) : null}
+            </div>
 
             <div className="team-seat-columns">
               {teamOrder.map((team) => (
@@ -2354,8 +2470,22 @@ function App() {
               </div>
 
               <aside className="action-progress">
-                <span>进度</span>
-                <strong>{effectiveProgressText}</strong>
+                <div
+                  className={cn(
+                    'action-progress-block',
+                    'action-progress-block-timer',
+                    activeTimedPhase === null && 'action-progress-block-timer-idle',
+                    countdownExpired && 'action-progress-block-timer-expired',
+                  )}
+                >
+                  <span>{countdownTitle}</span>
+                  <strong>{countdownText}</strong>
+                  {countdownExpired ? <small>请尽快确认</small> : <small>&nbsp;</small>}
+                </div>
+                <div className="action-progress-block">
+                  <span>进度</span>
+                  <strong>{effectiveProgressText}</strong>
+                </div>
               </aside>
             </div>
           </section>

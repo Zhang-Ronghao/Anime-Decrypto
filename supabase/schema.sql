@@ -10,6 +10,11 @@ create table if not exists public.rooms (
   max_rounds integer not null default 8,
   seat_count integer not null default 4 check (seat_count in (4, 6, 8, 10, 12, 14)),
   role_rotation_enabled boolean not null default true,
+  encrypt_phase_minutes integer not null default 2 check (encrypt_phase_minutes between 1 and 5),
+  decode_phase_minutes integer not null default 2 check (decode_phase_minutes between 1 and 5),
+  intercept_phase_minutes integer not null default 2 check (intercept_phase_minutes between 1 and 5),
+  phase_started_at timestamptz null default timezone('utc', now()),
+  phase_deadline_at timestamptz null,
   winner text null check (winner in ('A', 'B')),
   score_team_a_intercepts integer not null default 0,
   score_team_b_intercepts integer not null default 0,
@@ -32,6 +37,21 @@ add column if not exists seat_count integer not null default 4;
 
 alter table public.rooms
 add column if not exists role_rotation_enabled boolean not null default true;
+
+alter table public.rooms
+add column if not exists encrypt_phase_minutes integer not null default 2;
+
+alter table public.rooms
+add column if not exists decode_phase_minutes integer not null default 2;
+
+alter table public.rooms
+add column if not exists intercept_phase_minutes integer not null default 2;
+
+alter table public.rooms
+add column if not exists phase_started_at timestamptz null default timezone('utc', now());
+
+alter table public.rooms
+add column if not exists phase_deadline_at timestamptz null;
 
 alter table public.rooms
 add column if not exists bangumi_catalog_inputs text[] not null default '{}';
@@ -60,6 +80,24 @@ where phase = 'clue';
 alter table public.rooms
 add constraint rooms_phase_check
 check (phase in ('lobby', 'word_assignment', 'encrypt', 'decode', 'intercept', 'result', 'finished'));
+
+alter table public.rooms drop constraint if exists rooms_encrypt_phase_minutes_check;
+alter table public.rooms
+add constraint rooms_encrypt_phase_minutes_check
+check (encrypt_phase_minutes between 1 and 5);
+
+alter table public.rooms drop constraint if exists rooms_decode_phase_minutes_check;
+alter table public.rooms
+add constraint rooms_decode_phase_minutes_check
+check (decode_phase_minutes between 1 and 5);
+
+alter table public.rooms drop constraint if exists rooms_intercept_phase_minutes_check;
+alter table public.rooms
+add constraint rooms_intercept_phase_minutes_check
+check (intercept_phase_minutes between 1 and 5);
+
+update public.rooms
+set phase_started_at = coalesce(phase_started_at, updated_at, created_at);
 
 create table if not exists public.room_players (
   id uuid primary key default gen_random_uuid(),
@@ -345,6 +383,23 @@ language sql
 immutable
 as $$
   select p_seat_count / 2;
+$$;
+
+create or replace function public.phase_deadline_for_room(
+  p_room public.rooms,
+  p_phase text,
+  p_started_at timestamptz default timezone('utc', now())
+)
+returns timestamptz
+language sql
+immutable
+as $$
+  select case
+    when p_phase = 'encrypt' then p_started_at + make_interval(mins => p_room.encrypt_phase_minutes)
+    when p_phase = 'decode' then p_started_at + make_interval(mins => p_room.decode_phase_minutes)
+    when p_phase = 'intercept' then p_started_at + make_interval(mins => p_room.intercept_phase_minutes)
+    else null
+  end;
 $$;
 
 create or replace function public.role_for_team_seat(p_team_seat integer)
@@ -872,6 +927,98 @@ begin
 end;
 $$;
 
+create or replace function public.update_room_lobby_settings(
+  p_room_id uuid,
+  p_seat_count integer,
+  p_role_rotation_enabled boolean,
+  p_encrypt_phase_minutes integer,
+  p_decode_phase_minutes integer,
+  p_intercept_phase_minutes integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_player_count integer;
+  v_max_team_players integer;
+begin
+  perform public.assert_authenticated();
+
+  if p_seat_count not in (4, 6, 8, 10, 12, 14) then
+    raise exception 'Seat count must be one of 4, 6, 8, 10, 12, or 14.';
+  end if;
+
+  if p_encrypt_phase_minutes not between 1 and 5
+     or p_decode_phase_minutes not between 1 and 5
+     or p_intercept_phase_minutes not between 1 and 5 then
+    raise exception 'Phase timers must be between 1 and 5 minutes.';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.id is null then
+    raise exception 'Room not found.';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception 'Only the host can update lobby settings.';
+  end if;
+
+  if v_room.status <> 'lobby' or v_room.phase <> 'lobby' then
+    raise exception 'Lobby settings can only be changed in the lobby.';
+  end if;
+
+  select count(*)
+  into v_player_count
+  from public.room_players
+  where room_id = p_room_id;
+
+  if v_player_count > p_seat_count then
+    raise exception 'The target seat count cannot be lower than the current player count.';
+  end if;
+
+  select coalesce(max(team_count), 0)
+  into v_max_team_players
+  from (
+    select count(*) as team_count
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+    group by team
+  ) teams;
+
+  if v_max_team_players > public.room_team_capacity(p_seat_count) then
+    raise exception 'Cannot shrink seats below the current team occupancy.';
+  end if;
+
+  if exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+      and team_seat is not null
+      and team_seat > public.room_team_capacity(p_seat_count)
+  ) then
+    raise exception 'Cannot shrink seats while occupied seats exceed the new team capacity.';
+  end if;
+
+  update public.rooms
+  set seat_count = p_seat_count,
+      role_rotation_enabled = p_role_rotation_enabled,
+      encrypt_phase_minutes = p_encrypt_phase_minutes,
+      decode_phase_minutes = p_decode_phase_minutes,
+      intercept_phase_minutes = p_intercept_phase_minutes
+  where id = p_room_id;
+end;
+$$;
+
 drop function if exists public.update_self_seat(uuid, text, text);
 
 create or replace function public.update_self_seat(p_room_id uuid, p_team text, p_team_seat integer)
@@ -1044,6 +1191,8 @@ begin
   set status = 'active',
       phase = 'word_assignment',
       round_number = v_round,
+      phase_started_at = timezone('utc', now()),
+      phase_deadline_at = null,
       winner = null,
       score_team_a_intercepts = 0,
       score_team_b_intercepts = 0,
@@ -1054,6 +1203,8 @@ begin
   where id = p_room_id;
 end;
 $$;
+
+drop function if exists public.generate_team_words(uuid, text);
 
 create or replace function public.generate_team_words(p_room_id uuid, p_team text)
 returns text[]
@@ -1312,6 +1463,7 @@ set search_path = public
 as $$
 declare
   v_room public.rooms%rowtype;
+  v_started_at timestamptz := timezone('utc', now());
 begin
   perform public.assert_authenticated();
 
@@ -1359,7 +1511,9 @@ begin
   end if;
 
   update public.rooms
-  set phase = 'decode'
+  set phase = 'decode',
+      phase_started_at = v_started_at,
+      phase_deadline_at = public.phase_deadline_for_room(v_room, 'decode', v_started_at)
   where id = p_room_id;
 end;
 $$;
@@ -1543,6 +1697,7 @@ declare
   v_next_round integer;
   v_a_encoder uuid;
   v_b_encoder uuid;
+  v_started_at timestamptz := timezone('utc', now());
 begin
   perform public.assert_authenticated();
 
@@ -1595,7 +1750,9 @@ begin
   update public.rooms
   set phase = 'encrypt',
       status = 'active',
-      round_number = v_next_round
+      round_number = v_next_round,
+      phase_started_at = v_started_at,
+      phase_deadline_at = public.phase_deadline_for_room(v_room, 'encrypt', v_started_at)
   where id = p_room_id;
 end;
 $$;
@@ -1608,6 +1765,7 @@ set search_path = public
 as $$
 declare
   v_room public.rooms%rowtype;
+  v_started_at timestamptz := timezone('utc', now());
 begin
   perform public.assert_authenticated();
 
@@ -1656,7 +1814,9 @@ begin
   end if;
 
   update public.rooms
-  set phase = 'intercept'
+  set phase = 'intercept',
+      phase_started_at = v_started_at,
+      phase_deadline_at = public.phase_deadline_for_room(v_room, 'intercept', v_started_at)
   where id = p_room_id;
 end;
 $$;
@@ -1686,6 +1846,7 @@ declare
   v_b_score integer;
   v_game_finished boolean := false;
   v_winner text;
+  v_started_at timestamptz := timezone('utc', now());
 begin
   perform public.assert_authenticated();
 
@@ -1794,6 +1955,8 @@ begin
       score_team_b_miscomms = v_next_b_miscomms,
       phase = case when v_game_finished then 'finished' else 'result' end,
       status = case when v_game_finished then 'finished' else 'active' end,
+      phase_started_at = v_started_at,
+      phase_deadline_at = null,
       winner = v_winner
   where id = p_room_id;
 end;
@@ -1819,6 +1982,7 @@ declare
   v_b_score integer;
   v_game_finished boolean := false;
   v_winner text;
+  v_started_at timestamptz := timezone('utc', now());
 begin
   perform public.assert_authenticated();
 
@@ -1894,6 +2058,8 @@ begin
       score_team_b_miscomms = v_next_b_miscomms,
       phase = case when v_game_finished then 'finished' else 'result' end,
       status = case when v_game_finished then 'finished' else 'active' end,
+      phase_started_at = v_started_at,
+      phase_deadline_at = null,
       winner = v_winner
   where id = p_room_id;
 end;
@@ -1910,6 +2076,7 @@ declare
   v_next_round integer;
   v_a_encoder uuid;
   v_b_encoder uuid;
+  v_started_at timestamptz := timezone('utc', now());
 begin
   perform public.assert_authenticated();
 
@@ -1951,7 +2118,9 @@ begin
   update public.rooms
   set phase = 'encrypt',
       status = 'active',
-      round_number = v_next_round
+      round_number = v_next_round,
+      phase_started_at = v_started_at,
+      phase_deadline_at = public.phase_deadline_for_room(v_room, 'encrypt', v_started_at)
   where id = p_room_id;
 end;
 $$;
@@ -1999,6 +2168,8 @@ begin
   set status = 'lobby',
       phase = 'lobby',
       round_number = 0,
+      phase_started_at = timezone('utc', now()),
+      phase_deadline_at = null,
       winner = null,
       score_team_a_intercepts = 0,
       score_team_b_intercepts = 0,
@@ -2053,6 +2224,8 @@ begin
   set status = 'lobby',
       phase = 'lobby',
       round_number = 0,
+      phase_started_at = timezone('utc', now()),
+      phase_deadline_at = null,
       winner = null,
       score_team_a_intercepts = 0,
       score_team_b_intercepts = 0,
@@ -2468,6 +2641,7 @@ declare
   v_slots jsonb;
   v_index integer;
   v_item jsonb;
+  v_started_at timestamptz := timezone('utc', now());
 begin
   perform public.assert_authenticated();
 
@@ -2601,7 +2775,9 @@ begin
 
   update public.rooms
   set phase = 'encrypt',
-      round_number = v_round
+      round_number = v_round,
+      phase_started_at = v_started_at,
+      phase_deadline_at = public.phase_deadline_for_room(v_room, 'encrypt', v_started_at)
   where id = p_room_id;
 end;
 $$;
@@ -2615,6 +2791,7 @@ grant execute on function public.leave_room(uuid) to authenticated;
 grant execute on function public.kick_player(uuid, uuid) to authenticated;
 grant execute on function public.disband_room(uuid) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean) to authenticated;
+grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;
 grant execute on function public.generate_team_words(uuid, text) to authenticated;

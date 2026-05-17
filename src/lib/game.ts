@@ -163,12 +163,20 @@ export async function kickPlayer(roomId: string, playerId: string) {
   }
 }
 
-export async function updateRoomLobbySettings(roomId: string, seatCount: number, roleRotationEnabled: boolean) {
+export async function updateRoomLobbySettings(
+  roomId: string,
+  seatCount: number,
+  roleRotationEnabled: boolean,
+  timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number },
+) {
   const client = assertSupabase();
   const { error } = await client.rpc('update_room_lobby_settings', {
     p_room_id: roomId,
     p_seat_count: seatCount,
     p_role_rotation_enabled: roleRotationEnabled,
+    p_encrypt_phase_minutes: timers.encryptMinutes,
+    p_decode_phase_minutes: timers.decodeMinutes,
+    p_intercept_phase_minutes: timers.interceptMinutes,
   });
 
   if (error) {

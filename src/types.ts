@@ -26,6 +26,11 @@ export interface RoomRecord {
   max_rounds: number;
   seat_count: number;
   role_rotation_enabled: boolean;
+  encrypt_phase_minutes: number;
+  decode_phase_minutes: number;
+  intercept_phase_minutes: number;
+  phase_started_at: string | null;
+  phase_deadline_at: string | null;
   winner: Team | null;
   score_team_a_intercepts: number;
   score_team_b_intercepts: number;

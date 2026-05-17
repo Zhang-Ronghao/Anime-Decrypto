@@ -920,14 +920,40 @@ select:focus {
 }
 
 .action-progress {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 0 0 18px;
+  border-left: 1px solid var(--line);
   min-height: 100%;
+}
+
+.action-progress-block {
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 5px;
-  padding: 8px 0 8px 22px;
-  border-left: 1px solid var(--line);
+  gap: 4px;
+  min-height: 0;
+  height: 100%;
+  padding: 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
   text-align: center;
+}
+
+.action-progress-block-timer-idle {
+  color: var(--muted);
+  background: var(--soft);
+}
+
+.action-progress-block-timer-idle strong {
+  color: var(--muted);
+}
+
+.action-progress-block-timer-expired {
+  border-color: rgba(200, 41, 41, 0.34);
+  background: var(--red-soft);
 }
 
 .action-progress span {
@@ -938,7 +964,25 @@ select:focus {
 
 .action-progress strong {
   color: var(--text);
-  font-size: 1.05rem;
+  font-size: 1rem;
+}
+
+.action-progress-block-timer strong {
+  font-size: 1.45rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+.action-progress-block-timer-expired strong,
+.action-progress-block-timer-expired small {
+  color: var(--red);
+}
+
+.action-progress small {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .wait-card {
@@ -1031,7 +1075,7 @@ select:focus {
 
 .layout-grid {
   margin-top: 18px;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.75fr);
+  grid-template-columns: minmax(0, 1.42fr) minmax(280px, 0.64fr);
 }
 
 .layout-grid > .panel {
@@ -1040,7 +1084,7 @@ select:focus {
 
 .seat-grid {
   margin-top: 18px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 }
 
 .panel-head {
@@ -1053,10 +1097,10 @@ select:focus {
 .lobby-settings {
   margin-top: 18px;
   display: grid;
-  grid-template-columns: minmax(250px, 320px) minmax(360px, 520px);
-  justify-content: space-between;
-  gap: 14px;
-  padding: 16px;
+  grid-template-columns: minmax(210px, 0.74fr) minmax(180px, 0.54fr) minmax(360px, 1.42fr);
+  align-items: stretch;
+  gap: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fbfcff;
@@ -1064,19 +1108,30 @@ select:focus {
 
 .lobby-settings-block {
   display: grid;
-  gap: 12px;
+  grid-template-rows: auto 1fr;
+  align-content: start;
+  gap: 8px;
+  min-height: 118px;
+  height: 100%;
+  min-width: 0;
 }
 
 .lobby-settings-readonly {
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  opacity: 0.96;
+}
+
+.lobby-settings-main {
+  padding-right: 28px;
+  border-right: 1px solid var(--line);
+}
+
+.lobby-settings-timers {
+  padding-right: 28px;
+  border-right: 1px solid var(--line);
 }
 
 .lobby-settings-catalog {
-  width: 100%;
-  max-width: 520px;
-  justify-self: end;
-  padding-left: 14px;
-  border-left: 1px solid var(--line);
+  min-width: 0;
 }
 
 .lobby-settings-head {
@@ -1086,65 +1141,96 @@ select:focus {
   gap: 14px;
 }
 
-.catalog-action-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.lobby-settings-head > strong {
+  font-size: 0.98rem;
+  line-height: 1.2;
 }
 
-.lobby-settings-head p {
-  margin-top: 6px;
+.lobby-settings-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .catalog-summary-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  flex-wrap: wrap;
 }
 
 .catalog-summary-grid {
-  width: fit-content;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
-.lobby-readonly-catalog {
-  margin-top: 14px;
-}
-
-.catalog-card-footer {
+.catalog-actions {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  flex: 0 0 auto;
+  justify-self: end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.catalog-card-footer .ghost-button {
-  min-height: 40px;
-  padding: 0.6rem 0.9rem;
+.catalog-actions .ghost-button,
+.lobby-settings-head .outline-button {
+  min-height: 36px;
+  padding: 0.48rem 0.78rem;
 }
 
 .lobby-setting,
 .lobby-toggle {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+}
+
+.lobby-setting-compact,
+.lobby-setting-inline {
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-content: start;
+  column-gap: 8px;
 }
 
 .lobby-setting span {
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.84rem;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.lobby-setting select {
+  min-height: 34px;
+  width: auto;
+  min-width: 84px;
+  padding: 0.32rem 0.55rem;
+  font-size: 0.9rem;
+}
+
+.lobby-setting-compact select {
+  min-width: 72px;
+}
+
+.lobby-setting-inline {
+  min-height: 34px;
+}
+
+.lobby-setting-inline span {
+  font-size: 0.82rem;
 }
 
 .lobby-toggle {
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
 }
 
 .lobby-toggle input {
@@ -1161,12 +1247,18 @@ select:focus {
 
 .lobby-toggle strong {
   display: block;
-  margin-bottom: 4px;
+  font-size: 0.9rem;
 }
 
 .lobby-toggle span {
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.8rem;
+}
+
+.lobby-settings-copy {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 .team-seat-columns {
@@ -1179,7 +1271,7 @@ select:focus {
 .team-seat-panel {
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 18px;
+  padding: 15px;
   background: #fff;
 }
 
@@ -1219,13 +1311,14 @@ select:focus {
 }
 
 .seat-card {
-  min-height: 108px;
+  min-height: 92px;
   display: grid;
   align-content: space-between;
   text-align: left;
   background: #fff;
   color: var(--text);
   border: 1px solid var(--line);
+  padding: 0.68rem 0.8rem;
 }
 
 .seat-card-red {
@@ -1249,12 +1342,13 @@ select:focus {
 
 .seat-card-title {
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.88rem;
 }
 
 .seat-card small {
   color: var(--muted);
   font-weight: 700;
+  font-size: 0.8rem;
 }
 
 .seat-role-pill {
@@ -1310,14 +1404,15 @@ select:focus {
 .roster-item {
   display: flex;
   justify-content: space-between;
-  gap: 14px;
+  gap: 10px;
   align-items: center;
+  padding: 12px;
 }
 
 .roster-item-side {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -1338,11 +1433,11 @@ select:focus {
 .tag {
   display: inline-flex;
   align-items: center;
-  padding: 0.35rem 0.7rem;
+  padding: 0.32rem 0.62rem;
   border-radius: 8px;
   background: var(--soft);
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: 0.84rem;
   font-weight: 700;
 }
 
@@ -1874,11 +1969,16 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .lobby-settings-main,
+  .lobby-settings-timers {
+    padding-right: 0;
+    border-right: 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
   .lobby-settings-catalog {
-    padding-left: 0;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    padding-top: 14px;
+    padding-top: 0;
   }
 
   .action-header {
@@ -1920,6 +2020,10 @@ code {
     padding: 16px 0 0;
     border-top: 1px solid var(--line);
     border-left: 0;
+  }
+
+  .catalog-summary-row {
+    grid-template-columns: 1fr;
   }
 
   .action-line select {
