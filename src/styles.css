@@ -207,6 +207,22 @@ select:focus {
   box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
 }
 
+.hero-tag-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid rgba(35, 89, 201, 0.26);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #2359c9;
+  font-size: 0.92rem;
+  font-weight: 800;
+  text-decoration: none;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
+}
+
 .eyebrow,
 .section-label {
   margin: 0;

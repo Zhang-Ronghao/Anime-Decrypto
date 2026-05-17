@@ -109,6 +109,7 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
 ];
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
+const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/main/docs/game-rules.md';
 const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
 const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
   encryptMinutes: 2,
@@ -1833,6 +1834,9 @@ function App() {
               <span>4-14 人</span>
               <span>双队对抗</span>
               <span>实时房间</span>
+              <a className="hero-tag-link" href={GAME_RULES_URL} rel="noreferrer" target="_blank">
+                游戏规则
+              </a>
             </div>
           </div>
 
@@ -1935,9 +1939,14 @@ function App() {
           {canLeaveCurrentRoom ? (
             <div className="room-actions">
               {isLobbyPhase ? (
-                <a className="outline-button repo-link-button" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
-                  GitHub 仓库
-                </a>
+                <>
+                  <a className="outline-button repo-link-button" href={GAME_RULES_URL} rel="noreferrer" target="_blank">
+                    游戏规则
+                  </a>
+                  <a className="outline-button repo-link-button" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
+                    GitHub 仓库
+                  </a>
+                </>
               ) : null}
               {self.is_host ? (
                 <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleDisbandRoom()} type="button">
