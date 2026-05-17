@@ -1036,9 +1036,7 @@ function App() {
           : snapshot?.room.phase === 'intercept'
             ? `拦截进度 ${interceptSubmitCount}/2`
             : snapshot?.room.phase === 'result'
-              ? self?.is_host
-                ? '本轮已经结算，请点击左侧按钮开始下一轮'
-                : '本轮已经结算，等待房主开始下一轮'
+              ? '本轮已经结算'
               : snapshot?.room.phase === 'finished'
                 ? '对局已结束'
                 : '等待房间同步';
@@ -1048,6 +1046,12 @@ function App() {
       : '第一轮拦截阶段无需操作，等待房主跳过'
     : actionHint;
   const effectiveProgressText = isFirstRoundInterceptSkip ? '等待房主跳过第一轮拦截' : progressText;
+  const centerStatusText =
+    snapshot?.room.phase === 'result'
+      ? self?.is_host
+        ? '本轮已经结算，请点击左侧按钮开始下一轮'
+        : '本轮已经结算，等待房主开始下一轮'
+      : effectiveProgressText;
   const activeTimedPhase = snapshot && isTimedPhase(snapshot.room.phase) ? snapshot.room.phase : null;
   const countdownHasDeadline = Boolean(activeTimedPhase && snapshot?.room.phase_deadline_at);
   const countdownSeconds =
@@ -2466,7 +2470,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="wait-card">
-                    <strong>{effectiveProgressText}</strong>
+                    <strong>{centerStatusText}</strong>
                   </div>
                 )}
               </div>
