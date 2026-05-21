@@ -1831,7 +1831,7 @@ function App() {
             </div>
             <h1>动漫高手——截码战</h1>
             <div className="hero-tags" aria-label="游戏特点">
-              <span>4-14 人</span>
+              <span>4人及以上</span>
               <span>双队对抗</span>
               <span>实时房间</span>
               <a className="hero-tag-link" href={GAME_RULES_URL} rel="noreferrer" target="_blank">
