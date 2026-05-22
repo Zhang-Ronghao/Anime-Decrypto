@@ -197,6 +197,17 @@ export async function updateSelfSeat(roomId: string, team: Team | null, teamSeat
   }
 }
 
+export async function clearAllSeats(roomId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('clear_all_seats', {
+    p_room_id: roomId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function startGame(roomId: string) {
   const client = assertSupabase();
   const { error } = await client.rpc('start_game', {
@@ -503,6 +514,7 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
 }
 
 export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
+export type SelfNotificationKind = 'kicked';
 
 export function subscribeToRoom(
   roomId: string,
@@ -536,6 +548,41 @@ export function subscribeToRoom(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'round_submissions', filter: `room_id=eq.${roomId}` },
       onChange,
+    )
+    .subscribe((status, error) => {
+      onStatus?.(status as RoomSubscriptionStatus, error);
+    });
+
+  return channel;
+}
+
+export function subscribeToSelfNotifications(
+  authUserId: string,
+  onNotification: (notification: { roomId: string | null; kind: SelfNotificationKind }) => void,
+  onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
+): RealtimeChannel {
+  const client = assertSupabase();
+  const channel = client
+    .channel(`self-notifications-${authUserId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'player_notifications',
+        filter: `auth_user_id=eq.${authUserId}`,
+      },
+      (payload) => {
+        const next = payload.new as { room_id?: string | null; kind?: SelfNotificationKind } | null;
+        if (!next || next.kind !== 'kicked') {
+          return;
+        }
+
+        onNotification({
+          roomId: typeof next.room_id === 'string' ? next.room_id : null,
+          kind: next.kind,
+        });
+      },
     )
     .subscribe((status, error) => {
       onStatus?.(status as RoomSubscriptionStatus, error);

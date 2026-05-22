@@ -7,6 +7,7 @@ const corsHeaders = {
 
 const USER_AGENT = 'Zhang-Ronghao/Anime-Decrypto (https://github.com/Zhang-Ronghao/Anime-Decrypto)';
 const LEGACY_BANGUMI_API_BASE = 'https://api.bgm.tv';
+const MAX_CHARACTER_OPTIONS = 12;
 
 type Team = 'A' | 'B';
 
@@ -96,6 +97,10 @@ async function fetchCharacterNames(subjectId: number): Promise<string[]> {
 
     names.add(name);
     result.push(name);
+
+    if (result.length >= MAX_CHARACTER_OPTIONS) {
+      break;
+    }
   }
 
   return result;

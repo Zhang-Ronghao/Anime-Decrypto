@@ -10,7 +10,7 @@ create table if not exists public.rooms (
   max_rounds integer not null default 8,
   seat_count integer not null default 4 check (seat_count in (4, 6, 8, 10, 12, 14)),
   role_rotation_enabled boolean not null default true,
-  encrypt_phase_minutes integer not null default 2 check (encrypt_phase_minutes between 1 and 5),
+  encrypt_phase_minutes integer not null default 3 check (encrypt_phase_minutes between 1 and 5),
   decode_phase_minutes integer not null default 2 check (decode_phase_minutes between 1 and 5),
   intercept_phase_minutes integer not null default 2 check (intercept_phase_minutes between 1 and 5),
   phase_started_at timestamptz null default timezone('utc', now()),
@@ -39,7 +39,7 @@ alter table public.rooms
 add column if not exists role_rotation_enabled boolean not null default true;
 
 alter table public.rooms
-add column if not exists encrypt_phase_minutes integer not null default 2;
+add column if not exists encrypt_phase_minutes integer not null default 3;
 
 alter table public.rooms
 add column if not exists decode_phase_minutes integer not null default 2;
@@ -95,6 +95,15 @@ alter table public.rooms drop constraint if exists rooms_intercept_phase_minutes
 alter table public.rooms
 add constraint rooms_intercept_phase_minutes_check
 check (intercept_phase_minutes between 1 and 5);
+
+alter table public.rooms
+alter column encrypt_phase_minutes set default 3;
+
+alter table public.rooms
+alter column decode_phase_minutes set default 2;
+
+alter table public.rooms
+alter column intercept_phase_minutes set default 2;
 
 update public.rooms
 set phase_started_at = coalesce(phase_started_at, updated_at, created_at);
@@ -206,6 +215,14 @@ create table if not exists public.round_submissions (
   unique (room_id, team, round_number)
 );
 
+create table if not exists public.player_notifications (
+  id uuid primary key default gen_random_uuid(),
+  auth_user_id uuid not null,
+  room_id uuid null references public.rooms(id) on delete set null,
+  kind text not null check (kind in ('kicked')),
+  created_at timestamptz not null default timezone('utc', now())
+);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -213,6 +230,21 @@ as $$
 begin
   new.updated_at = timezone('utc', now());
   return new;
+end;
+$$;
+
+create or replace function public.touch_room_updated_at_from_players()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.rooms
+  set updated_at = timezone('utc', now())
+  where id = coalesce(new.room_id, old.room_id);
+
+  return coalesce(new, old);
 end;
 $$;
 
@@ -227,6 +259,12 @@ create trigger trg_round_submissions_updated_at
 before update on public.round_submissions
 for each row
 execute function public.set_updated_at();
+
+drop trigger if exists trg_room_players_touch_room on public.room_players;
+create trigger trg_room_players_touch_room
+after insert or update or delete on public.room_players
+for each row
+execute function public.touch_room_updated_at_from_players();
 
 create or replace function public.is_room_member(p_room_id uuid)
 returns boolean
@@ -262,6 +300,7 @@ alter table public.room_players enable row level security;
 alter table public.team_words enable row level security;
 alter table public.round_codes enable row level security;
 alter table public.round_submissions enable row level security;
+alter table public.player_notifications enable row level security;
 
 drop policy if exists "rooms_select_member" on public.rooms;
 create policy "rooms_select_member"
@@ -332,6 +371,13 @@ on public.round_submissions
 for select
 to authenticated
 using (public.is_room_member(room_id));
+
+drop policy if exists "player_notifications_select_self" on public.player_notifications;
+create policy "player_notifications_select_self"
+on public.player_notifications
+for select
+to authenticated
+using (auth_user_id = auth.uid());
 
 create or replace function public.generate_room_code()
 returns text
@@ -610,8 +656,14 @@ begin
     v_room_code := public.generate_room_code();
   end if;
 
-  insert into public.rooms (room_code, host_user_id)
-  values (v_room_code, auth.uid())
+  insert into public.rooms (
+    room_code,
+    host_user_id,
+    encrypt_phase_minutes,
+    decode_phase_minutes,
+    intercept_phase_minutes
+  )
+  values (v_room_code, auth.uid(), 3, 2, 2)
   returning id into v_room_id;
 
   insert into public.room_players (room_id, auth_user_id, player_name, is_host)
@@ -808,6 +860,9 @@ begin
   if v_target.auth_user_id = auth.uid() then
     raise exception '不能踢出自己。';
   end if;
+
+  insert into public.player_notifications (auth_user_id, room_id, kind)
+  values (v_target.auth_user_id, p_room_id, 'kicked');
 
   delete from public.room_players
   where id = v_target.id;
@@ -1094,6 +1149,44 @@ begin
         else public.role_for_team_seat(p_team_seat)
       end
   where id = v_self_id;
+end;
+$$;
+
+create or replace function public.clear_all_seats(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以让全体站起。';
+  end if;
+
+  if v_room.status <> 'lobby' then
+    raise exception '游戏开始后不能清空座位。';
+  end if;
+
+  update public.room_players
+  set team = null,
+      team_seat = null,
+      role = null
+  where room_id = p_room_id
+    and team is not null;
 end;
 $$;
 
@@ -2783,7 +2876,7 @@ end;
 $$;
 
 grant usage on schema public to authenticated;
-grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions to authenticated;
+grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
 grant execute on function public.join_room(text, text) to authenticated;
 grant execute on function public.cleanup_expired_rooms() to authenticated;
@@ -2793,6 +2886,7 @@ grant execute on function public.disband_room(uuid) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
+grant execute on function public.clear_all_seats(uuid) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;
 grant execute on function public.generate_team_words(uuid, text) to authenticated;
 grant execute on function public.replace_team_word_slot(uuid, text, integer) to authenticated;
@@ -2841,6 +2935,14 @@ $$;
 do $$
 begin
   alter publication supabase_realtime add table public.round_submissions;
+exception
+  when duplicate_object then null;
+end;
+$$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.player_notifications;
 exception
   when duplicate_object then null;
 end;

@@ -3,6 +3,7 @@ import { useRef } from 'react';
 import {
   advanceRound,
   cleanupExpiredRooms,
+  clearAllSeats,
   confirmTeamWords,
   createRoom,
   disbandRoom,
@@ -20,6 +21,7 @@ import {
   submitInterceptGuess,
   skipFirstIntercept,
   submitOwnGuess,
+  subscribeToSelfNotifications,
   subscribeToRoom,
   type RoomSubscriptionStatus,
   terminateGame,
@@ -100,6 +102,8 @@ interface BangumiCollectionTypeOption {
   label: string;
 }
 
+const MAX_CHARACTER_OPTIONS = 12;
+
 const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
   { value: 1, label: '想看' },
   { value: 2, label: '看过' },
@@ -124,6 +128,7 @@ interface HomeFooterLinkItemProps {
   label: string;
   href: string | null;
   icon: 'video' | 'rules' | 'github' | 'group' | 'spark';
+  tooltip?: string;
   wide?: boolean;
 }
 
@@ -205,7 +210,7 @@ function RoleGroup({ team, players, selfId }: RoleGroupProps) {
   );
 }
 
-function HomeFooterLinkItem({ label, href, icon, wide = false }: HomeFooterLinkItemProps) {
+function HomeFooterLinkItem({ label, href, icon, tooltip, wide = false }: HomeFooterLinkItemProps) {
   const iconNode =
     icon === 'video' ? (
       <svg aria-hidden="true" className="home-footer-icon" viewBox="0 0 24 24">
@@ -245,7 +250,10 @@ function HomeFooterLinkItem({ label, href, icon, wide = false }: HomeFooterLinkI
 
   if (!href) {
     return (
-      <span className={cn('home-footer-link', 'home-footer-link-disabled', wide && 'home-footer-link-wide')}>
+      <span
+        className={cn('home-footer-link', 'home-footer-link-disabled', wide && 'home-footer-link-wide')}
+        title={tooltip}
+      >
         {content}
       </span>
     );
@@ -257,6 +265,7 @@ function HomeFooterLinkItem({ label, href, icon, wide = false }: HomeFooterLinkI
       href={href}
       rel="noreferrer"
       target="_blank"
+      title={tooltip}
     >
       {content}
     </a>
@@ -390,11 +399,13 @@ function normalizeTeamWordSlot(slot: Partial<TeamWordSlot> | null | undefined): 
   return {
     text: (slot?.text ?? '').trim(),
     subjectId: typeof slot?.subjectId === 'number' && Number.isFinite(slot.subjectId) ? slot.subjectId : null,
-    sourceTitle: typeof slot?.sourceTitle === 'string' && slot.sourceTitle.trim() ? slot.sourceTitle.trim() : null,
-    showSourceTitle:
-      slot?.showSourceTitle === true && typeof slot?.sourceTitle === 'string' && slot.sourceTitle.trim().length > 0,
+    sourceTitle: typeof slot?.sourceTitle === 'string' ? slot.sourceTitle.trim() : null,
+    showSourceTitle: slot?.showSourceTitle === true,
     characterOptions: Array.isArray(slot?.characterOptions)
-      ? Array.from(new Set(slot.characterOptions.map((value) => value.trim()).filter((value) => value.length > 0)))
+      ? Array.from(new Set(slot.characterOptions.map((value) => value.trim()).filter((value) => value.length > 0))).slice(
+          0,
+          MAX_CHARACTER_OPTIONS,
+        )
       : [],
   };
 }
@@ -425,14 +436,14 @@ function clearTeamWordSlotAutomation(slots: TeamWordSlot[]): TeamWordSlot[] {
   return slots.map((slot) => ({
     text: slot.text.trim(),
     subjectId: null,
-    sourceTitle: slot.showSourceTitle ? (slot.sourceTitle?.trim() || null) : null,
-    showSourceTitle: slot.showSourceTitle && Boolean(slot.sourceTitle?.trim()),
+    sourceTitle: slot.showSourceTitle ? (slot.sourceTitle?.trim() ?? '') : null,
+    showSourceTitle: slot.showSourceTitle,
     characterOptions: [],
   }));
 }
 
 function slotShowsSourceTitle(slot: TeamWordSlot): boolean {
-  return slot.showSourceTitle && Boolean(slot.sourceTitle);
+  return slot.showSourceTitle;
 }
 
 function renderTeamWordDisplay(slot: TeamWordSlot, fallback: string, prefix?: string) {
@@ -664,6 +675,8 @@ function isRoomMembershipLostError(error: unknown): boolean {
 function App() {
   const snapshotRequestIdRef = useRef(0);
   const realtimeRefreshTimerRef = useRef<number | null>(null);
+  const teamWordDraftRevisionRef = useRef(0);
+  const teamWordServerSyncFreezeUntilRef = useRef(0);
   const [booting, setBooting] = useState(true);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
@@ -690,6 +703,18 @@ function App() {
     defaultBangumiCatalogTypes(),
   );
   const [showAllRoundRecords, setShowAllRoundRecords] = useState(false);
+
+  function invalidateTeamWordDraftAsyncResults() {
+    teamWordDraftRevisionRef.current += 1;
+  }
+
+  function freezeTeamWordServerSync(durationMs = 2000) {
+    teamWordServerSyncFreezeUntilRef.current = Date.now() + durationMs;
+  }
+
+  function beginSyncFallback(durationMs = 10_000) {
+    setSyncFallbackUntil(Date.now() + durationMs);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -797,6 +822,51 @@ function App() {
     };
   }, [snapshot]);
 
+  useEffect(() => {
+    if (!roomId) {
+      return;
+    }
+
+    const resyncForegroundState = () => {
+      beginSyncFallback(12_000);
+      void refreshRoomSnapshot(roomId, { silentError: true }).then((success) => {
+        if (success) {
+          setSyncFallbackUntil(null);
+        }
+      });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        resyncForegroundState();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      resyncForegroundState();
+    };
+
+    const handlePageShow = () => {
+      resyncForegroundState();
+    };
+
+    const handleOnline = () => {
+      resyncForegroundState();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [roomId, sessionUserId]);
+
   async function refreshRoomSnapshot(nextRoomId: string, options?: { silentError?: boolean }) {
     const requestId = snapshotRequestIdRef.current + 1;
     snapshotRequestIdRef.current = requestId;
@@ -873,6 +943,28 @@ function App() {
       data.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      return;
+    }
+
+    const channel = subscribeToSelfNotifications(sessionUserId, (notification) => {
+      if (!roomId || notification.kind !== 'kicked') {
+        return;
+      }
+
+      if (notification.roomId && notification.roomId !== roomId) {
+        return;
+      }
+
+      resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+    });
+
+    return () => {
+      void channel.unsubscribe();
+    };
+  }, [roomId, sessionUserId]);
 
   useEffect(() => {
     if (!snapshot || snapshot.room.phase !== 'lobby' || bangumiCatalogModalOpen) {
@@ -995,6 +1087,7 @@ function App() {
   const seatedPlayerCount = snapshot
     ? snapshot.players.filter((player) => Boolean(player.team) && player.team_seat !== null).length
     : 0;
+  const hasSeatedPlayers = seatedPlayerCount > 0;
   const startGameReady = snapshot
     ? allPlayersSeated && coreSeatsReady && (snapshot.room.seat_count > 4 || seatedPlayerCount === 4)
     : false;
@@ -1142,6 +1235,7 @@ function App() {
 
   useEffect(() => {
     if (!isWordAssignmentPhase) {
+      invalidateTeamWordDraftAsyncResults();
       setTeamWordSlotsDraft(emptyTeamWordSlots());
       setTeamWordDraftMode('manual');
       setTeamWordFormDirty(false);
@@ -1152,6 +1246,7 @@ function App() {
     }
 
     if (self?.role !== 'encoder' || !self.team) {
+      invalidateTeamWordDraftAsyncResults();
       setTeamWordSlotsDraft(emptyTeamWordSlots());
       setTeamWordDraftMode('manual');
       setTeamWordFormDirty(false);
@@ -1164,6 +1259,10 @@ function App() {
 
   useEffect(() => {
     if (!isWordAssignmentPhase || self?.role !== 'encoder' || !self.team || !myTeamWordRecord) {
+      return;
+    }
+
+    if (Date.now() < teamWordServerSyncFreezeUntilRef.current) {
       return;
     }
 
@@ -1231,6 +1330,7 @@ function App() {
     setSyncFallbackUntil(null);
     setJoinCode('');
     setClueForm(['', '', '']);
+    invalidateTeamWordDraftAsyncResults();
     setTeamWordSlotsDraft(emptyTeamWordSlots());
     setTeamWordDraftMode('manual');
     setTeamWordFormDirty(false);
@@ -1260,6 +1360,8 @@ function App() {
   }
 
   function updateTeamWord(index: number, value: string) {
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordFormDirty(true);
     setPendingConfirmedTeamWordSlots(null);
     setWordAssignmentNotice(null);
@@ -1276,6 +1378,8 @@ function App() {
   }
 
   function updateTeamWordTitle(index: number, value: string) {
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordFormDirty(true);
     setPendingConfirmedTeamWordSlots(null);
     setWordAssignmentNotice(null);
@@ -1391,9 +1495,12 @@ function App() {
       return;
     }
 
-    await withAction(`seat-${team}-${teamSeat}`, () => updateSelfSeat(snapshot.room.id, team, teamSeat), {
+    const result = await withAction(`seat-${team}-${teamSeat}`, () => updateSelfSeat(snapshot.room.id, team, teamSeat), {
       refreshRoomId: snapshot.room.id,
     });
+    if (result !== null) {
+      beginSyncFallback();
+    }
   }
 
   async function handleStandUp() {
@@ -1401,9 +1508,25 @@ function App() {
       return;
     }
 
-    await withAction('seat-clear', () => updateSelfSeat(snapshot.room.id, null, null), {
+    const result = await withAction('seat-clear', () => updateSelfSeat(snapshot.room.id, null, null), {
       refreshRoomId: snapshot.room.id,
     });
+    if (result !== null) {
+      beginSyncFallback();
+    }
+  }
+
+  async function handleClearAllSeats() {
+    if (!snapshot || !self?.is_host || !hasSeatedPlayers) {
+      return;
+    }
+
+    const result = await withAction('seat-clear-all', () => clearAllSeats(snapshot.room.id), {
+      refreshRoomId: snapshot.room.id,
+    });
+    if (result !== null) {
+      beginSyncFallback();
+    }
   }
 
   async function handleSeatCountChange(seatCount: number) {
@@ -1488,6 +1611,8 @@ function App() {
       return;
     }
 
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordSlotsDraft(result.map((slot) => normalizeTeamWordSlot(slot)));
     setTeamWordDraftMode('generated');
     setTeamWordFormDirty(true);
@@ -1507,6 +1632,8 @@ function App() {
       return;
     }
 
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordSlotsDraft(result.map((slot) => normalizeTeamWordSlot(slot)));
     setTeamWordDraftMode('generated');
     setTeamWordFormDirty(true);
@@ -1521,11 +1648,14 @@ function App() {
     }
 
     const team = self.team;
+    const requestRevision = teamWordDraftRevisionRef.current;
     const result = await withAction('extract-bangumi-characters', () => extractBangumiCharacters(snapshot.room.id, team));
-    if (!result || result.slots.length !== 4) {
+    if (!result || result.slots.length !== 4 || teamWordDraftRevisionRef.current !== requestRevision) {
       return;
     }
 
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordSlotsDraft(result.slots.map((slot) => normalizeTeamWordSlot(slot)));
     setTeamWordDraftMode('characters');
     setTeamWordFormDirty(true);
@@ -1537,6 +1667,8 @@ function App() {
   }
 
   function updateTeamWordCharacter(index: number, value: string) {
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordFormDirty(true);
     setPendingConfirmedTeamWordSlots(null);
     setWordAssignmentNotice(null);
@@ -1553,6 +1685,8 @@ function App() {
   }
 
   function handleToggleSourceTitles() {
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordFormDirty(true);
     setPendingConfirmedTeamWordSlots(null);
     setWordAssignmentNotice(null);
@@ -1572,6 +1706,8 @@ function App() {
       }
     }
 
+    invalidateTeamWordDraftAsyncResults();
+    freezeTeamWordServerSync();
     setTeamWordSlotsDraft((current) => clearTeamWordSlotAutomation(current));
     setTeamWordDraftMode('manual');
     setTeamWordFormDirty(true);
@@ -1783,7 +1919,7 @@ function App() {
             }
           : current,
       );
-      setSyncFallbackUntil(Date.now() + 10_000);
+      beginSyncFallback();
     }
   }
 
@@ -1892,16 +2028,14 @@ function App() {
           <div className="hero-orb hero-orb-blue" aria-hidden="true" />
           <div className="hero-copy">
             <div className="hero-eyebrow-row">
-              <p className="eyebrow">动漫高手4.0</p>
+              <p className="hero-tag">动漫高手4.0</p>
             </div>
             <h1>动漫高手——截码战</h1>
             <div className="hero-tags" aria-label="游戏特点">
-              <span>4人及以上</span>
-              <span>双队对抗</span>
-              <span>实时房间</span>
-              <a className="hero-tag-link" href={GAME_RULES_URL} rel="noreferrer" target="_blank">
-                游戏规则
-              </a>
+              <span className="hero-tag">4人及以上</span>
+              <span className="hero-tag">双队对抗</span>
+              <span className="hero-tag">实时房间</span>
+              <span className="hero-tag">Bangumi词库</span>
             </div>
           </div>
 
@@ -1947,7 +2081,13 @@ function App() {
             <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
             <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
             <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
-            <HomeFooterLinkItem href={OTHER_GAME_URL} icon="spark" label="作者其他动漫高手游戏：一眼顶针" wide />
+            <HomeFooterLinkItem
+              href={OTHER_GAME_URL}
+              icon="spark"
+              label="作者其他动漫高手游戏：一眼顶针"
+              tooltip="即将公布，敬请期待"
+              wide
+            />
           </div>
         </footer>
       </main>
@@ -2188,6 +2328,17 @@ function App() {
 
               {self.is_host ? (
                 <button
+                  className="ghost-button"
+                  disabled={!hasSeatedPlayers || busyKey !== null}
+                  onClick={() => void handleClearAllSeats()}
+                  type="button"
+                >
+                  全体站起
+                </button>
+              ) : null}
+
+              {self.is_host ? (
+                <button
                   className="primary-button"
                   disabled={!startGameReady || busyKey !== null}
                   onClick={() => void handleStartGame()}
@@ -2240,7 +2391,13 @@ function App() {
               <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
               <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
               <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
-              <HomeFooterLinkItem href={OTHER_GAME_URL} icon="spark" label="作者其他动漫高手游戏：一眼顶针" wide />
+              <HomeFooterLinkItem
+                href={OTHER_GAME_URL}
+                icon="spark"
+                label="作者其他动漫高手游戏：一眼顶针"
+                tooltip="即将公布，敬请期待"
+                wide
+              />
             </div>
           </footer>
         </>
