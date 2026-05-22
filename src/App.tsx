@@ -114,7 +114,8 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
 const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/main/docs/game-rules.md';
-const VIDEO_INTRO_URL: string | null = null;
+const VIDEO_INTRO_URL =
+  'https://www.bilibili.com/video/BV1z4Gt6rEFC/?share_source=copy_web&vd_source=adcd58a56c0c896937ee4c3fe22de339';
 const FEEDBACK_QQ_GROUP_URL = 'https://qm.qq.com/q/bHJQIRplmg';
 const OTHER_GAME_URL: string | null = null;
 const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
