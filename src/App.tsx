@@ -110,12 +110,22 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
 const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/main/docs/game-rules.md';
+const VIDEO_INTRO_URL: string | null = null;
+const FEEDBACK_QQ_GROUP_URL = 'https://qm.qq.com/q/bHJQIRplmg';
+const OTHER_GAME_URL: string | null = null;
 const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
 const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
-  encryptMinutes: 2,
+  encryptMinutes: 3,
   decodeMinutes: 2,
   interceptMinutes: 2,
 };
+
+interface HomeFooterLinkItemProps {
+  label: string;
+  href: string | null;
+  icon: 'video' | 'rules' | 'github' | 'group' | 'spark';
+  wide?: boolean;
+}
 
 function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: SeatCardProps) {
   return (
@@ -192,6 +202,64 @@ function RoleGroup({ team, players, selfId }: RoleGroupProps) {
         )}
       </div>
     </article>
+  );
+}
+
+function HomeFooterLinkItem({ label, href, icon, wide = false }: HomeFooterLinkItemProps) {
+  const iconNode =
+    icon === 'video' ? (
+      <svg aria-hidden="true" className="home-footer-icon" viewBox="0 0 24 24">
+        <rect height="12" rx="2.5" width="15" x="3" y="6" />
+        <path d="M18 10.2 22 8v8l-4-2.2" />
+      </svg>
+    ) : icon === 'rules' ? (
+      <svg aria-hidden="true" className="home-footer-icon" viewBox="0 0 24 24">
+        <path d="M7 4.5h8.5A2.5 2.5 0 0 1 18 7v12H8.5A2.5 2.5 0 0 0 6 21.5V7A2.5 2.5 0 0 1 8.5 4.5Z" />
+        <path d="M6 7.5h9" />
+        <path d="M9 11h6" />
+        <path d="M9 14.5h6" />
+      </svg>
+    ) : icon === 'github' ? (
+      <svg aria-hidden="true" className="home-footer-icon" viewBox="0 0 24 24">
+        <path d="M12 2.5a9.5 9.5 0 0 0-3 18.52c.48.09.65-.2.65-.47v-1.66c-2.64.57-3.2-1.12-3.2-1.12-.43-1.1-1.06-1.4-1.06-1.4-.86-.59.07-.58.07-.58.95.07 1.45.97 1.45.97.84 1.44 2.21 1.02 2.75.78.09-.61.33-1.02.6-1.26-2.1-.24-4.31-1.05-4.31-4.67 0-1.03.37-1.88.97-2.54-.1-.24-.42-1.22.09-2.54 0 0 .79-.25 2.6.97A9.02 9.02 0 0 1 12 7.8c.8 0 1.6.1 2.35.31 1.8-1.22 2.59-.97 2.59-.97.52 1.32.2 2.3.1 2.54.6.66.97 1.51.97 2.54 0 3.63-2.21 4.42-4.32 4.66.34.29.64.86.64 1.74v2.58c0 .27.17.57.66.47A9.5 9.5 0 0 0 12 2.5Z" />
+      </svg>
+    ) : icon === 'group' ? (
+      <svg aria-hidden="true" className="home-footer-icon" viewBox="0 0 24 24">
+        <path d="M8 12.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+        <path d="M16.5 11a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+        <path d="M3.5 18.5a4.5 4.5 0 0 1 9 0" />
+        <path d="M13 18.5a3.8 3.8 0 0 1 7.5 0" />
+      </svg>
+    ) : (
+      <svg aria-hidden="true" className="home-footer-icon" viewBox="0 0 24 24">
+        <path d="m12 3 1.85 5.15L19 10l-5.15 1.85L12 17l-1.85-5.15L5 10l5.15-1.85L12 3Z" />
+      </svg>
+    );
+
+  const content = (
+    <>
+      {iconNode}
+      <span>{label}</span>
+    </>
+  );
+
+  if (!href) {
+    return (
+      <span className={cn('home-footer-link', 'home-footer-link-disabled', wide && 'home-footer-link-wide')}>
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      className={cn('home-footer-link', wide && 'home-footer-link-wide')}
+      href={href}
+      rel="noreferrer"
+      target="_blank"
+    >
+      {content}
+    </a>
   );
 }
 
@@ -1824,9 +1892,6 @@ function App() {
           <div className="hero-orb hero-orb-blue" aria-hidden="true" />
           <div className="hero-copy">
             <div className="hero-eyebrow-row">
-              <a className="eyebrow eyebrow-link" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
-                GitHub 仓库
-              </a>
               <p className="eyebrow">动漫高手4.0</p>
             </div>
             <h1>动漫高手——截码战</h1>
@@ -1875,6 +1940,16 @@ function App() {
 
           {actionError ? <p className="error-text">{actionError}</p> : null}
         </section>
+
+        <footer className="home-footer" aria-label="相关信息">
+          <div className="home-footer-grid">
+            <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
+            <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
+            <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
+            <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
+            <HomeFooterLinkItem href={OTHER_GAME_URL} icon="spark" label="作者其他动漫高手游戏：一眼顶针" wide />
+          </div>
+        </footer>
       </main>
     );
   }
@@ -1938,16 +2013,6 @@ function App() {
 
           {canLeaveCurrentRoom ? (
             <div className="room-actions">
-              {isLobbyPhase ? (
-                <>
-                  <a className="outline-button repo-link-button" href={GAME_RULES_URL} rel="noreferrer" target="_blank">
-                    游戏规则
-                  </a>
-                  <a className="outline-button repo-link-button" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
-                    GitHub 仓库
-                  </a>
-                </>
-              ) : null}
               {self.is_host ? (
                 <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleDisbandRoom()} type="button">
                   解散房间
@@ -1965,12 +2030,12 @@ function App() {
       {actionError ? <p className="error-banner">{actionError}</p> : null}
 
       {isLobbyPhase ? (
-        <section className="layout-grid">
-          <article className="panel">
+        <>
+          <section className="layout-grid">
+            <article className="panel">
             <div className="panel-head">
               <div>
                 <h2>选座大厅</h2>
-                <p className="muted">队内可自由选择任意空位 1 号位是加密/拦截者，2 号位是解码者，其余为队员位</p>
               </div>
             </div>
 
@@ -2134,41 +2199,51 @@ function App() {
             </div>
 
             <p className="muted lobby-hint">{self.is_host ? lobbyStartHint : '等待房主开始游戏'}</p>
-            <p className="muted lobby-hint">词语随机生成依赖 Bangumi 词库。未配置也可开局，但选词阶段随机抽词会失败。</p>
-          </article>
+            </article>
 
-          <article className="panel">
-            <h2>房间玩家</h2>
-            <div className="roster-list">
-              {rosterPlayers.map((player) => (
-                <div className="roster-item" key={player.id}>
-                  <div>
-                    <strong>{player.player_name}</strong>
-                    <p>{player.is_host ? '房主' : '成员'}</p>
-                  </div>
-                  <div className="roster-item-side">
-                    <div className="tag-row">
-                    <span className="tag">{player.team ? displayTeamName(player.team) : '未入队'}</span>
-                    <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
-                      {player.role ? roleName(player.role) : '未选座位'}
-                    </span>
+            <article className="panel">
+              <h2>房间玩家</h2>
+              <div className="roster-list">
+                {rosterPlayers.map((player) => (
+                  <div className="roster-item" key={player.id}>
+                    <div>
+                      <strong>{player.player_name}</strong>
+                      <p>{player.is_host ? '房主' : '成员'}</p>
                     </div>
-                    {self.is_host && player.id !== self.id ? (
-                      <button
-                        className="danger-button roster-kick-button"
-                        disabled={busyKey !== null}
-                        onClick={() => void handleKickPlayer(player)}
-                        type="button"
-                      >
-                        踢出
-                      </button>
-                    ) : null}
+                    <div className="roster-item-side">
+                      <div className="tag-row">
+                      <span className="tag">{player.team ? displayTeamName(player.team) : '未入队'}</span>
+                      <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
+                        {player.role ? roleName(player.role) : '未选座位'}
+                      </span>
+                      </div>
+                      {self.is_host && player.id !== self.id ? (
+                        <button
+                          className="danger-button roster-kick-button"
+                          disabled={busyKey !== null}
+                          onClick={() => void handleKickPlayer(player)}
+                          type="button"
+                        >
+                          踢出
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            </article>
+          </section>
+
+          <footer className="home-footer" aria-label="相关信息">
+            <div className="home-footer-grid">
+              <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
+              <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
+              <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
+              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
+              <HomeFooterLinkItem href={OTHER_GAME_URL} icon="spark" label="作者其他动漫高手游戏：一眼顶针" wide />
             </div>
-          </article>
-        </section>
+          </footer>
+        </>
       ) : (
         <>
           <section className="role-strip">
