@@ -136,7 +136,7 @@ const DEFAULT_MISCOMMUNICATION_LIMIT = 2;
 const LIFE_POINT_OPTIONS = [3, 4] as const;
 const DEFAULT_LIFE_POINTS = 3;
 const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
-  encryptMinutes: 3,
+  encryptMinutes: 2,
   decodeMinutes: 2,
   interceptMinutes: 2,
 };
@@ -1992,13 +1992,13 @@ function App() {
 
     const normalizedInputs = normalizeBangumiCatalogDraft(bangumiCatalogInputsDraft);
     if (normalizedInputs.length === 0) {
-      setActionError('至少填写 1 个 Bangumi 用户 ID 或收藏夹页面链接。');
+      setActionError('至少填写 1 个 Bangumi 用户 ID、收藏夹页面链接或目录链接。');
       return;
     }
 
     const invalidValue = normalizedInputs.find((value) => !isBangumiCatalogInputValid(value));
     if (invalidValue) {
-      setActionError('仅支持纯数字 ID，或 bangumi.tv / bgm.tv / chii.in 的用户主页、收藏夹页面链接。');
+      setActionError('仅支持用户 ID，或 bangumi.tv / bgm.tv / chii.in 的用户主页、收藏夹页面、目录链接。');
       return;
     }
 
@@ -2487,7 +2487,13 @@ function App() {
                     ) : (
                       <>
                         <ScoreTrack count={myScore.intercepts} kind="intercept" limit={2} tone={teamTone(myTeam)} />
-                        <ScoreTrack count={myScore.miscomms} kind="miscomm" limit={miscommunicationLimit} tone={teamTone(myTeam)} />
+                        <ScoreTrack
+                          count={myScore.miscomms}
+                          key={`${myTeam}-miscomm-${miscommunicationLimit}`}
+                          kind="miscomm"
+                          limit={miscommunicationLimit}
+                          tone={teamTone(myTeam)}
+                        />
                       </>
                     )}
                   </div>
@@ -2514,6 +2520,7 @@ function App() {
                         <ScoreTrack count={opponentScore.intercepts} kind="intercept" limit={2} tone={teamTone(opponentTeam)} />
                         <ScoreTrack
                           count={opponentScore.miscomms}
+                          key={`${opponentTeam}-miscomm-${miscommunicationLimit}`}
                           kind="miscomm"
                           limit={miscommunicationLimit}
                           tone={teamTone(opponentTeam)}
@@ -2642,7 +2649,7 @@ function App() {
                 <div className="lobby-settings-head">
                   <div>
                     <strong>Bangumi 动画词库</strong>
-                    <p className="muted lobby-settings-copy">支持填写用户 ID（推荐）或收藏夹页面链接，从Bangumi一键导入动画列表。</p>
+                    <p className="muted lobby-settings-copy">支持用户 ID、收藏夹页面链接或目录链接，多个来源取交集。</p>
                   </div>
 
                   {self.is_host ? (
@@ -2662,7 +2669,7 @@ function App() {
                 <div className="catalog-summary-row">
                   <div className="catalog-summary-grid">
                     <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
-                    <div className="tag">用户数：{bangumiCatalogSummary.userCount}</div>
+                    <div className="tag">来源数：{bangumiCatalogSummary.userCount}</div>
                     <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
                   </div>
 
@@ -2721,7 +2728,7 @@ function App() {
               <div className="spectator-panel-main">
                 <div>
                   <h3>观战区</h3>
-                  <p>{spectatorPlayers.length > 0 ? `${spectatorPlayers.length} 人正在观战` : '不占用红蓝队席位，可在游戏中切换视角'}</p>
+                  <p>不占用红蓝队席位，可在游戏中切换视角</p>
                 </div>
                 <div className="spectator-list">
                   {spectatorPlayers.length > 0 ? (
@@ -3397,54 +3404,69 @@ function App() {
             </div>
 
             <div className="modal-form-stack">
-              <label className="settings-select-row">
-                <span>
-                  <strong>失误上限</strong>
-                  <small>任一队失误达到该次数时，对方获胜</small>
-                </span>
-                <select
-                  disabled={!self?.is_host || busyKey !== null}
-                  onChange={(event) => void handleMiscommunicationLimitChange(Number(event.target.value))}
-                  value={miscommunicationLimit}
-                >
-                  {MISCOMMUNICATION_LIMIT_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option} 次
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="settings-mode-grid" role="radiogroup" aria-label="容错模式">
+                <section className={cn('settings-mode-card', !lifeModeEnabled && 'settings-mode-card-active')}>
+                  <label className="settings-mode-choice">
+                    <input
+                      checked={!lifeModeEnabled}
+                      disabled={!self?.is_host || busyKey !== null}
+                      name="fault-mode"
+                      onChange={() => void handleLifeModeToggle(false)}
+                      type="radio"
+                    />
+                    <span>
+                      <strong>经典模式</strong>
+                      <small>失误达到上限即败</small>
+                    </span>
+                  </label>
 
-              <label className="settings-toggle-row">
-                <input
-                  checked={lifeModeEnabled}
-                  disabled={!self?.is_host || busyKey !== null}
-                  onChange={(event) => void handleLifeModeToggle(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  <strong>生命模式</strong>
-                  <small>失误或被拦截各扣 1 点生命；生命归零的队伍失败</small>
-                </span>
-              </label>
+                  <label className="settings-inline-select">
+                    <span>失误上限</span>
+                    <select
+                      disabled={!self?.is_host || busyKey !== null || lifeModeEnabled}
+                      onChange={(event) => void handleMiscommunicationLimitChange(Number(event.target.value))}
+                      value={miscommunicationLimit}
+                    >
+                      {MISCOMMUNICATION_LIMIT_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option} 次
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </section>
 
-              <label className="settings-select-row">
-                <span>
-                  <strong>生命值</strong>
-                  <small>生命模式开启后生效；双方同时归零按剩余生命比较，完全相同则平局</small>
-                </span>
-                <select
-                  disabled={!self?.is_host || busyKey !== null || !lifeModeEnabled}
-                  onChange={(event) => void handleLifePointsChange(Number(event.target.value))}
-                  value={lifePoints}
-                >
-                  {LIFE_POINT_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option} 点
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <section className={cn('settings-mode-card', lifeModeEnabled && 'settings-mode-card-active')}>
+                  <label className="settings-mode-choice">
+                    <input
+                      checked={lifeModeEnabled}
+                      disabled={!self?.is_host || busyKey !== null}
+                      name="fault-mode"
+                      onChange={() => void handleLifeModeToggle(true)}
+                      type="radio"
+                    />
+                    <span>
+                      <strong>生命模式</strong>
+                      <small>失误或被拦截扣生命</small>
+                    </span>
+                  </label>
+
+                  <label className="settings-inline-select">
+                    <span>生命值</span>
+                    <select
+                      disabled={!self?.is_host || busyKey !== null || !lifeModeEnabled}
+                      onChange={(event) => void handleLifePointsChange(Number(event.target.value))}
+                      value={lifePoints}
+                    >
+                      {LIFE_POINT_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option} 点
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </section>
+              </div>
 
               <label className="settings-toggle-row">
                 <input
@@ -3477,8 +3499,9 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>载入 Bangumi 动画词库</h2>
-                <p className="muted">填写<strong>用户 ID</strong>（推荐）或收藏夹页面链接，再勾选要搜索的分类。</p>
-                <p className="muted">支持填写多个用户，词库将取所选分类下的收藏<strong>交集</strong>。</p>
+                <p className="muted">填写<strong>用户 ID</strong>（推荐）或<strong>收藏夹页面链接</strong>或<strong>目录链接</strong></p>
+                <p className="muted">支持填写多个用户/目录，词库将取<strong>交集</strong></p>
+                <p className="muted">用户收藏夹可按如下按钮进行过滤</p>
               </div>
               <button
                 className="ghost-button"
@@ -3516,7 +3539,7 @@ function App() {
                   <input
                     disabled={busyKey === 'load-bangumi-catalog'}
                     onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
-                    placeholder="例如：123456 或 https://bangumi.tv/anime/list/123456"
+                    placeholder="例如：123456、https://bangumi.tv/anime/list/123456 或 https://bangumi.tv/index/12345"
                     value={value}
                   />
                   <button

@@ -10,7 +10,7 @@ create table if not exists public.rooms (
   max_rounds integer not null default 8,
   seat_count integer not null default 4 check (seat_count in (4, 6, 8, 10, 12, 14)),
   role_rotation_enabled boolean not null default true,
-  encrypt_phase_minutes integer not null default 3 check (encrypt_phase_minutes between 1 and 5),
+  encrypt_phase_minutes integer not null default 2 check (encrypt_phase_minutes between 1 and 5),
   decode_phase_minutes integer not null default 2 check (decode_phase_minutes between 1 and 5),
   intercept_phase_minutes integer not null default 2 check (intercept_phase_minutes between 1 and 5),
   miscommunication_limit integer not null default 2 check (miscommunication_limit in (2, 3, 4)),
@@ -43,7 +43,7 @@ alter table public.rooms
 add column if not exists role_rotation_enabled boolean not null default true;
 
 alter table public.rooms
-add column if not exists encrypt_phase_minutes integer not null default 3;
+add column if not exists encrypt_phase_minutes integer not null default 2;
 
 alter table public.rooms
 add column if not exists decode_phase_minutes integer not null default 2;
@@ -123,7 +123,7 @@ add constraint rooms_life_points_check
 check (life_points in (3, 4));
 
 alter table public.rooms
-alter column encrypt_phase_minutes set default 3;
+alter column encrypt_phase_minutes set default 2;
 
 alter table public.rooms
 alter column decode_phase_minutes set default 2;
@@ -727,7 +727,7 @@ begin
     decode_phase_minutes,
     intercept_phase_minutes
   )
-  values (v_room_code, auth.uid(), 3, 2, 2)
+  values (v_room_code, auth.uid(), 2, 2, 2)
   returning id into v_room_id;
 
   insert into public.room_players (room_id, auth_user_id, player_name, is_host)
