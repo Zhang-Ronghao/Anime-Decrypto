@@ -3626,7 +3626,7 @@ function App() {
                 onClick={addBangumiCatalogInput}
                 type="button"
               >
-                新增用户
+                新增词库来源
               </button>
               <button
                 className="primary-button"
