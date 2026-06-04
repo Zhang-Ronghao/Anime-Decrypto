@@ -14,6 +14,8 @@ create table if not exists public.rooms (
   decode_phase_minutes integer not null default 2 check (decode_phase_minutes between 1 and 5),
   intercept_phase_minutes integer not null default 2 check (intercept_phase_minutes between 1 and 5),
   miscommunication_limit integer not null default 2 check (miscommunication_limit in (2, 3, 4)),
+  life_mode_enabled boolean not null default false,
+  life_points integer not null default 3 check (life_points in (3, 4)),
   allow_midgame_join boolean not null default true,
   phase_started_at timestamptz null default timezone('utc', now()),
   phase_deadline_at timestamptz null,
@@ -51,6 +53,12 @@ add column if not exists intercept_phase_minutes integer not null default 2;
 
 alter table public.rooms
 add column if not exists miscommunication_limit integer not null default 2;
+
+alter table public.rooms
+add column if not exists life_mode_enabled boolean not null default false;
+
+alter table public.rooms
+add column if not exists life_points integer not null default 3;
 
 alter table public.rooms
 add column if not exists allow_midgame_join boolean not null default true;
@@ -109,6 +117,11 @@ alter table public.rooms
 add constraint rooms_miscommunication_limit_check
 check (miscommunication_limit in (2, 3, 4));
 
+alter table public.rooms drop constraint if exists rooms_life_points_check;
+alter table public.rooms
+add constraint rooms_life_points_check
+check (life_points in (3, 4));
+
 alter table public.rooms
 alter column encrypt_phase_minutes set default 3;
 
@@ -120,6 +133,12 @@ alter column intercept_phase_minutes set default 2;
 
 alter table public.rooms
 alter column miscommunication_limit set default 2;
+
+alter table public.rooms
+alter column life_mode_enabled set default false;
+
+alter table public.rooms
+alter column life_points set default 3;
 
 update public.rooms
 set phase_started_at = coalesce(phase_started_at, updated_at, created_at);
@@ -1561,6 +1580,8 @@ create or replace function public.update_room_lobby_settings(
   p_decode_phase_minutes integer,
   p_intercept_phase_minutes integer,
   p_miscommunication_limit integer,
+  p_life_mode_enabled boolean,
+  p_life_points integer,
   p_allow_midgame_join boolean
 )
 returns void
@@ -1587,6 +1608,10 @@ begin
 
   if p_miscommunication_limit not in (2, 3, 4) then
     raise exception 'Miscommunication limit must be 2, 3, or 4.';
+  end if;
+
+  if p_life_points not in (3, 4) then
+    raise exception 'Life points must be 3 or 4.';
   end if;
 
   select *
@@ -1650,8 +1675,49 @@ begin
       decode_phase_minutes = p_decode_phase_minutes,
       intercept_phase_minutes = p_intercept_phase_minutes,
       miscommunication_limit = p_miscommunication_limit,
+      life_mode_enabled = p_life_mode_enabled,
+      life_points = p_life_points,
       allow_midgame_join = p_allow_midgame_join
   where id = p_room_id;
+end;
+$$;
+
+create or replace function public.update_room_lobby_settings(
+  p_room_id uuid,
+  p_seat_count integer,
+  p_role_rotation_enabled boolean,
+  p_encrypt_phase_minutes integer,
+  p_decode_phase_minutes integer,
+  p_intercept_phase_minutes integer,
+  p_miscommunication_limit integer,
+  p_allow_midgame_join boolean
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_life_mode_enabled boolean;
+  v_life_points integer;
+begin
+  select life_mode_enabled, life_points
+  into v_life_mode_enabled, v_life_points
+  from public.rooms
+  where id = p_room_id;
+
+  perform public.update_room_lobby_settings(
+    p_room_id,
+    p_seat_count,
+    p_role_rotation_enabled,
+    p_encrypt_phase_minutes,
+    p_decode_phase_minutes,
+    p_intercept_phase_minutes,
+    p_miscommunication_limit,
+    coalesce(v_life_mode_enabled, false),
+    coalesce(v_life_points, 3),
+    p_allow_midgame_join
+  );
 end;
 $$;
 
@@ -2569,6 +2635,8 @@ declare
   v_b_win_condition boolean;
   v_a_score integer;
   v_b_score integer;
+  v_a_life integer;
+  v_b_life integer;
   v_game_finished boolean := false;
   v_winner text;
   v_started_at timestamptz := timezone('utc', now());
@@ -2652,25 +2720,45 @@ begin
   v_next_a_miscomms := v_room.score_team_a_miscomms + case when not v_a_own_correct then 1 else 0 end;
   v_next_b_miscomms := v_room.score_team_b_miscomms + case when not v_b_own_correct then 1 else 0 end;
 
-  v_a_win_condition := v_next_a_intercepts >= 2 or v_next_b_miscomms >= v_room.miscommunication_limit;
-  v_b_win_condition := v_next_b_intercepts >= 2 or v_next_a_miscomms >= v_room.miscommunication_limit;
-  v_game_finished := v_a_win_condition or v_b_win_condition;
+  if v_room.life_mode_enabled then
+    v_a_life := v_room.life_points - v_next_a_miscomms - v_next_b_intercepts;
+    v_b_life := v_room.life_points - v_next_b_miscomms - v_next_a_intercepts;
+    v_game_finished := v_a_life <= 0 or v_b_life <= 0;
 
-  if v_a_win_condition and v_b_win_condition then
-    v_a_score := v_next_a_intercepts - v_next_a_miscomms;
-    v_b_score := v_next_b_intercepts - v_next_b_miscomms;
-
-    if v_a_score > v_b_score then
-      v_winner := 'A';
-    elsif v_b_score > v_a_score then
+    if v_a_life <= 0 and v_b_life <= 0 then
+      if v_a_life > v_b_life then
+        v_winner := 'A';
+      elsif v_b_life > v_a_life then
+        v_winner := 'B';
+      else
+        v_winner := null;
+      end if;
+    elsif v_a_life <= 0 then
       v_winner := 'B';
-    else
-      v_winner := null;
+    elsif v_b_life <= 0 then
+      v_winner := 'A';
     end if;
-  elsif v_a_win_condition then
-    v_winner := 'A';
-  elsif v_b_win_condition then
-    v_winner := 'B';
+  else
+    v_a_win_condition := v_next_a_intercepts >= 2 or v_next_b_miscomms >= v_room.miscommunication_limit;
+    v_b_win_condition := v_next_b_intercepts >= 2 or v_next_a_miscomms >= v_room.miscommunication_limit;
+    v_game_finished := v_a_win_condition or v_b_win_condition;
+
+    if v_a_win_condition and v_b_win_condition then
+      v_a_score := v_next_a_intercepts - v_next_a_miscomms;
+      v_b_score := v_next_b_intercepts - v_next_b_miscomms;
+
+      if v_a_score > v_b_score then
+        v_winner := 'A';
+      elsif v_b_score > v_a_score then
+        v_winner := 'B';
+      else
+        v_winner := null;
+      end if;
+    elsif v_a_win_condition then
+      v_winner := 'A';
+    elsif v_b_win_condition then
+      v_winner := 'B';
+    end if;
   end if;
 
   update public.rooms
@@ -2705,6 +2793,8 @@ declare
   v_b_win_condition boolean;
   v_a_score integer;
   v_b_score integer;
+  v_a_life integer;
+  v_b_life integer;
   v_game_finished boolean := false;
   v_winner text;
   v_started_at timestamptz := timezone('utc', now());
@@ -2757,25 +2847,45 @@ begin
   v_next_a_miscomms := v_room.score_team_a_miscomms + case when not v_a_own_correct then 1 else 0 end;
   v_next_b_miscomms := v_room.score_team_b_miscomms + case when not v_b_own_correct then 1 else 0 end;
 
-  v_a_win_condition := v_room.score_team_a_intercepts >= 2 or v_next_b_miscomms >= v_room.miscommunication_limit;
-  v_b_win_condition := v_room.score_team_b_intercepts >= 2 or v_next_a_miscomms >= v_room.miscommunication_limit;
-  v_game_finished := v_a_win_condition or v_b_win_condition;
+  if v_room.life_mode_enabled then
+    v_a_life := v_room.life_points - v_next_a_miscomms - v_room.score_team_b_intercepts;
+    v_b_life := v_room.life_points - v_next_b_miscomms - v_room.score_team_a_intercepts;
+    v_game_finished := v_a_life <= 0 or v_b_life <= 0;
 
-  if v_a_win_condition and v_b_win_condition then
-    v_a_score := v_room.score_team_a_intercepts - v_next_a_miscomms;
-    v_b_score := v_room.score_team_b_intercepts - v_next_b_miscomms;
-
-    if v_a_score > v_b_score then
-      v_winner := 'A';
-    elsif v_b_score > v_a_score then
+    if v_a_life <= 0 and v_b_life <= 0 then
+      if v_a_life > v_b_life then
+        v_winner := 'A';
+      elsif v_b_life > v_a_life then
+        v_winner := 'B';
+      else
+        v_winner := null;
+      end if;
+    elsif v_a_life <= 0 then
       v_winner := 'B';
-    else
-      v_winner := null;
+    elsif v_b_life <= 0 then
+      v_winner := 'A';
     end if;
-  elsif v_a_win_condition then
-    v_winner := 'A';
-  elsif v_b_win_condition then
-    v_winner := 'B';
+  else
+    v_a_win_condition := v_room.score_team_a_intercepts >= 2 or v_next_b_miscomms >= v_room.miscommunication_limit;
+    v_b_win_condition := v_room.score_team_b_intercepts >= 2 or v_next_a_miscomms >= v_room.miscommunication_limit;
+    v_game_finished := v_a_win_condition or v_b_win_condition;
+
+    if v_a_win_condition and v_b_win_condition then
+      v_a_score := v_room.score_team_a_intercepts - v_next_a_miscomms;
+      v_b_score := v_room.score_team_b_intercepts - v_next_b_miscomms;
+
+      if v_a_score > v_b_score then
+        v_winner := 'A';
+      elsif v_b_score > v_a_score then
+        v_winner := 'B';
+      else
+        v_winner := null;
+      end if;
+    elsif v_a_win_condition then
+      v_winner := 'A';
+    elsif v_b_win_condition then
+      v_winner := 'B';
+    end if;
   end if;
 
   update public.rooms
@@ -3699,6 +3809,7 @@ grant execute on function public.update_room_lobby_settings(uuid, integer, boole
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer, boolean) to authenticated;
+grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer, boolean, integer, boolean) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
 grant execute on function public.update_self_spectator(uuid, boolean) to authenticated;
 grant execute on function public.clear_all_seats(uuid) to authenticated;

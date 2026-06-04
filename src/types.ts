@@ -30,6 +30,8 @@ export interface RoomRecord {
   decode_phase_minutes: number;
   intercept_phase_minutes: number;
   miscommunication_limit: number;
+  life_mode_enabled: boolean;
+  life_points: number;
   allow_midgame_join: boolean;
   phase_started_at: string | null;
   phase_deadline_at: string | null;

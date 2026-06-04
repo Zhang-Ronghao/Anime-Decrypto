@@ -76,9 +76,14 @@ interface TeamScore {
 
 interface ScoreTrackProps {
   count: number;
-  kind: 'intercept' | 'miscomm';
+  kind: 'intercept' | 'miscomm' | 'life';
   limit: number;
   tone: 'red' | 'blue';
+}
+
+interface TeamLife {
+  remaining: number;
+  damage: number;
 }
 
 interface RoleGroupProps {
@@ -128,6 +133,8 @@ const OTHER_GAME_URL: string | null = null;
 const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
 const MISCOMMUNICATION_LIMIT_OPTIONS = [2, 3, 4] as const;
 const DEFAULT_MISCOMMUNICATION_LIMIT = 2;
+const LIFE_POINT_OPTIONS = [3, 4] as const;
+const DEFAULT_LIFE_POINTS = 3;
 const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
   encryptMinutes: 3,
   decodeMinutes: 2,
@@ -163,8 +170,14 @@ function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: 
 function ScoreTrack({ count, kind, limit, tone }: ScoreTrackProps) {
   const safeLimit = Math.max(1, limit);
   const filledCount = Math.min(Math.max(count, 0), safeLimit);
-  const label = kind === 'intercept' ? `拦截 ${filledCount}/${safeLimit}` : `失误 ${filledCount}/${safeLimit}`;
-  const text = kind === 'intercept' ? '拦截' : '失误';
+  const displayCount = kind === 'life' ? count : filledCount;
+  const label =
+    kind === 'intercept'
+      ? `拦截 ${filledCount}/${safeLimit}`
+      : kind === 'miscomm'
+        ? `失误 ${filledCount}/${safeLimit}`
+        : `生命 ${displayCount}/${safeLimit}`;
+  const text = kind === 'intercept' ? '拦截' : kind === 'miscomm' ? '失误' : '生命';
 
   return (
     <div className={cn('score-track', `score-track-${kind}`, filledCount >= safeLimit && 'score-track-full')} aria-label={label}>
@@ -309,6 +322,14 @@ function scoreFor(snapshot: RoomSnapshot, team: Team): TeamScore {
   return { intercepts, miscomms, net: intercepts - miscomms };
 }
 
+function lifeFor(snapshot: RoomSnapshot, team: Team): TeamLife {
+  const score = scoreFor(snapshot, team);
+  const opponentScore = scoreFor(snapshot, otherTeam(team));
+  const lifePoints = lifePointsFromRoom(snapshot.room);
+  const damage = score.miscomms + opponentScore.intercepts;
+  return { remaining: lifePoints - damage, damage };
+}
+
 function displayTeamName(team: Team): string {
   return team === 'A' ? '红队' : '蓝队';
 }
@@ -349,6 +370,12 @@ function miscommunicationLimitFromRoom(room?: RoomSnapshot['room'] | null): numb
   return MISCOMMUNICATION_LIMIT_OPTIONS.includes(room?.miscommunication_limit as (typeof MISCOMMUNICATION_LIMIT_OPTIONS)[number])
     ? room!.miscommunication_limit
     : DEFAULT_MISCOMMUNICATION_LIMIT;
+}
+
+function lifePointsFromRoom(room?: RoomSnapshot['room'] | null): number {
+  return LIFE_POINT_OPTIONS.includes(room?.life_points as (typeof LIFE_POINT_OPTIONS)[number])
+    ? room!.life_points
+    : DEFAULT_LIFE_POINTS;
 }
 
 function formatCountdown(totalSeconds: number): string {
@@ -1090,6 +1117,8 @@ function App() {
   const opponentTeamWords = snapshot ? getTeamWords(snapshot, opponentTeam) : [];
   const myScore = snapshot ? scoreFor(snapshot, myTeam) : { intercepts: 0, miscomms: 0, net: 0 };
   const opponentScore = snapshot ? scoreFor(snapshot, opponentTeam) : { intercepts: 0, miscomms: 0, net: 0 };
+  const myLife = snapshot ? lifeFor(snapshot, myTeam) : { remaining: DEFAULT_LIFE_POINTS, damage: 0 };
+  const opponentLife = snapshot ? lifeFor(snapshot, opponentTeam) : { remaining: DEFAULT_LIFE_POINTS, damage: 0 };
   const myTeamWords = snapshot ? getTeamWords(snapshot, myTeam) : [];
   const myTeamConfirmed = snapshot
     ? myTeam === 'A'
@@ -1102,6 +1131,8 @@ function App() {
   const currentPhase = snapshot?.room.phase ?? null;
   const lobbyTimerSettings = lobbyTimerSettingsFromRoom(snapshot?.room);
   const miscommunicationLimit = miscommunicationLimitFromRoom(snapshot?.room);
+  const lifeModeEnabled = snapshot?.room.life_mode_enabled === true;
+  const lifePoints = lifePointsFromRoom(snapshot?.room);
   const visibleMySubmissions = useMemo(
     () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
     [currentPhase, currentRoundNumber, mySubmissions, showAllRoundRecords],
@@ -1673,6 +1704,8 @@ function App() {
         snapshot.room.role_rotation_enabled,
         timers,
         miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.life_mode_enabled,
+        lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
       ),
     );
@@ -1691,6 +1724,8 @@ function App() {
         enabled,
         timers,
         miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.life_mode_enabled,
+        lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
       ),
     );
@@ -1724,6 +1759,8 @@ function App() {
         snapshot.room.role_rotation_enabled,
         nextTimers,
         miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.life_mode_enabled,
+        lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
       ),
     );
@@ -1742,6 +1779,48 @@ function App() {
         snapshot.room.role_rotation_enabled,
         timers,
         limit,
+        snapshot.room.life_mode_enabled,
+        lifePointsFromRoom(snapshot.room),
+        snapshot.room.allow_midgame_join,
+      ),
+    );
+  }
+
+  async function handleLifeModeToggle(enabled: boolean) {
+    if (!snapshot || !self?.is_host || enabled === snapshot.room.life_mode_enabled) {
+      return;
+    }
+
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
+    await withAction('lobby-life-mode', () =>
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        snapshot.room.role_rotation_enabled,
+        timers,
+        miscommunicationLimitFromRoom(snapshot.room),
+        enabled,
+        lifePointsFromRoom(snapshot.room),
+        snapshot.room.allow_midgame_join,
+      ),
+    );
+  }
+
+  async function handleLifePointsChange(points: number) {
+    if (!snapshot || !self?.is_host || points === lifePointsFromRoom(snapshot.room)) {
+      return;
+    }
+
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
+    await withAction('lobby-life-points', () =>
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        snapshot.room.role_rotation_enabled,
+        timers,
+        miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.life_mode_enabled,
+        points,
         snapshot.room.allow_midgame_join,
       ),
     );
@@ -1760,6 +1839,8 @@ function App() {
         snapshot.room.role_rotation_enabled,
         timers,
         miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.life_mode_enabled,
+        lifePointsFromRoom(snapshot.room),
         enabled,
       ),
     );
@@ -2401,39 +2482,55 @@ function App() {
                 <div className="team-score-display">
                   <strong>{displayTeamName(myTeam)}</strong>
                   <div className="team-score-tracks">
-                    <ScoreTrack count={myScore.intercepts} kind="intercept" limit={2} tone={teamTone(myTeam)} />
-                    <ScoreTrack count={myScore.miscomms} kind="miscomm" limit={miscommunicationLimit} tone={teamTone(myTeam)} />
+                    {lifeModeEnabled ? (
+                      <ScoreTrack count={myLife.remaining} kind="life" limit={lifePoints} tone={teamTone(myTeam)} />
+                    ) : (
+                      <>
+                        <ScoreTrack count={myScore.intercepts} kind="intercept" limit={2} tone={teamTone(myTeam)} />
+                        <ScoreTrack count={myScore.miscomms} kind="miscomm" limit={miscommunicationLimit} tone={teamTone(myTeam)} />
+                      </>
+                    )}
                   </div>
                 </div>
                 <div>
                   <strong>{displayTeamName(myTeam)}</strong>
                   <small>
-                    拦截 {myScore.intercepts} · 失误 {myScore.miscomms}
+                    {lifeModeEnabled
+                      ? `生命 ${myLife.remaining}/${lifePoints} · 受伤 ${myLife.damage}`
+                      : `拦截 ${myScore.intercepts} · 失误 ${myScore.miscomms}`}
                   </small>
                 </div>
-                <b>{myScore.net}</b>
+                <b>{lifeModeEnabled ? myLife.remaining : myScore.net}</b>
               </article>
 
               <article className={cn('team-score', `team-score-${teamTone(opponentTeam)}`)}>
                 <div className="team-score-display">
                   <strong>{displayTeamName(opponentTeam)}</strong>
                   <div className="team-score-tracks">
-                    <ScoreTrack count={opponentScore.intercepts} kind="intercept" limit={2} tone={teamTone(opponentTeam)} />
-                    <ScoreTrack
-                      count={opponentScore.miscomms}
-                      kind="miscomm"
-                      limit={miscommunicationLimit}
-                      tone={teamTone(opponentTeam)}
-                    />
+                    {lifeModeEnabled ? (
+                      <ScoreTrack count={opponentLife.remaining} kind="life" limit={lifePoints} tone={teamTone(opponentTeam)} />
+                    ) : (
+                      <>
+                        <ScoreTrack count={opponentScore.intercepts} kind="intercept" limit={2} tone={teamTone(opponentTeam)} />
+                        <ScoreTrack
+                          count={opponentScore.miscomms}
+                          kind="miscomm"
+                          limit={miscommunicationLimit}
+                          tone={teamTone(opponentTeam)}
+                        />
+                      </>
+                    )}
                   </div>
                 </div>
                 <div>
                   <strong>{displayTeamName(opponentTeam)}</strong>
                   <small>
-                    拦截 {opponentScore.intercepts} · 失误 {opponentScore.miscomms}
+                    {lifeModeEnabled
+                      ? `生命 ${opponentLife.remaining}/${lifePoints} · 受伤 ${opponentLife.damage}`
+                      : `拦截 ${opponentScore.intercepts} · 失误 ${opponentScore.miscomms}`}
                   </small>
                 </div>
-                <b>{opponentScore.net}</b>
+                <b>{lifeModeEnabled ? opponentLife.remaining : opponentScore.net}</b>
               </article>
             </>
           ) : null}
@@ -3277,7 +3374,7 @@ function App() {
         <div
           className="modal-backdrop"
           onClick={(event) => {
-            if (event.target === event.currentTarget && busyKey !== 'lobby-miscommunication-limit') {
+            if (event.target === event.currentTarget && busyKey === null) {
               setLobbySettingsModalOpen(false);
             }
           }}
@@ -3291,7 +3388,7 @@ function App() {
               </div>
               <button
                 className="ghost-button"
-                disabled={busyKey === 'lobby-miscommunication-limit'}
+                disabled={busyKey !== null}
                 onClick={() => setLobbySettingsModalOpen(false)}
                 type="button"
               >
@@ -3313,6 +3410,37 @@ function App() {
                   {MISCOMMUNICATION_LIMIT_OPTIONS.map((option) => (
                     <option key={option} value={option}>
                       {option} 次
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="settings-toggle-row">
+                <input
+                  checked={lifeModeEnabled}
+                  disabled={!self?.is_host || busyKey !== null}
+                  onChange={(event) => void handleLifeModeToggle(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>生命模式</strong>
+                  <small>失误或被拦截各扣 1 点生命；生命归零的队伍失败</small>
+                </span>
+              </label>
+
+              <label className="settings-select-row">
+                <span>
+                  <strong>生命值</strong>
+                  <small>生命模式开启后生效；双方同时归零按剩余生命比较，完全相同则平局</small>
+                </span>
+                <select
+                  disabled={!self?.is_host || busyKey !== null || !lifeModeEnabled}
+                  onChange={(event) => void handleLifePointsChange(Number(event.target.value))}
+                  value={lifePoints}
+                >
+                  {LIFE_POINT_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option} 点
                     </option>
                   ))}
                 </select>

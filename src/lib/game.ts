@@ -224,6 +224,8 @@ export async function updateRoomLobbySettings(
   roleRotationEnabled: boolean,
   timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number },
   miscommunicationLimit: number,
+  lifeModeEnabled: boolean,
+  lifePoints: number,
   allowMidgameJoin: boolean,
 ) {
   const client = assertSupabase();
@@ -235,6 +237,8 @@ export async function updateRoomLobbySettings(
     p_decode_phase_minutes: timers.decodeMinutes,
     p_intercept_phase_minutes: timers.interceptMinutes,
     p_miscommunication_limit: miscommunicationLimit,
+    p_life_mode_enabled: lifeModeEnabled,
+    p_life_points: lifePoints,
     p_allow_midgame_join: allowMidgameJoin,
   });
 
