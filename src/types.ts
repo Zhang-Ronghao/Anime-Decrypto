@@ -29,6 +29,7 @@ export interface RoomRecord {
   encrypt_phase_minutes: number;
   decode_phase_minutes: number;
   intercept_phase_minutes: number;
+  miscommunication_limit: number;
   phase_started_at: string | null;
   phase_deadline_at: string | null;
   winner: Team | null;

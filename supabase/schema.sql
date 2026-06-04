@@ -13,6 +13,7 @@ create table if not exists public.rooms (
   encrypt_phase_minutes integer not null default 3 check (encrypt_phase_minutes between 1 and 5),
   decode_phase_minutes integer not null default 2 check (decode_phase_minutes between 1 and 5),
   intercept_phase_minutes integer not null default 2 check (intercept_phase_minutes between 1 and 5),
+  miscommunication_limit integer not null default 2 check (miscommunication_limit in (2, 3, 4)),
   phase_started_at timestamptz null default timezone('utc', now()),
   phase_deadline_at timestamptz null,
   winner text null check (winner in ('A', 'B')),
@@ -46,6 +47,9 @@ add column if not exists decode_phase_minutes integer not null default 2;
 
 alter table public.rooms
 add column if not exists intercept_phase_minutes integer not null default 2;
+
+alter table public.rooms
+add column if not exists miscommunication_limit integer not null default 2;
 
 alter table public.rooms
 add column if not exists phase_started_at timestamptz null default timezone('utc', now());
@@ -96,6 +100,11 @@ alter table public.rooms
 add constraint rooms_intercept_phase_minutes_check
 check (intercept_phase_minutes between 1 and 5);
 
+alter table public.rooms drop constraint if exists rooms_miscommunication_limit_check;
+alter table public.rooms
+add constraint rooms_miscommunication_limit_check
+check (miscommunication_limit in (2, 3, 4));
+
 alter table public.rooms
 alter column encrypt_phase_minutes set default 3;
 
@@ -104,6 +113,9 @@ alter column decode_phase_minutes set default 2;
 
 alter table public.rooms
 alter column intercept_phase_minutes set default 2;
+
+alter table public.rooms
+alter column miscommunication_limit set default 2;
 
 update public.rooms
 set phase_started_at = coalesce(phase_started_at, updated_at, created_at);
@@ -1074,6 +1086,104 @@ begin
 end;
 $$;
 
+create or replace function public.update_room_lobby_settings(
+  p_room_id uuid,
+  p_seat_count integer,
+  p_role_rotation_enabled boolean,
+  p_encrypt_phase_minutes integer,
+  p_decode_phase_minutes integer,
+  p_intercept_phase_minutes integer,
+  p_miscommunication_limit integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_player_count integer;
+  v_max_team_players integer;
+begin
+  perform public.assert_authenticated();
+
+  if p_seat_count not in (4, 6, 8, 10, 12, 14) then
+    raise exception 'Seat count must be one of 4, 6, 8, 10, 12, or 14.';
+  end if;
+
+  if p_encrypt_phase_minutes not between 1 and 5
+     or p_decode_phase_minutes not between 1 and 5
+     or p_intercept_phase_minutes not between 1 and 5 then
+    raise exception 'Phase timers must be between 1 and 5 minutes.';
+  end if;
+
+  if p_miscommunication_limit not in (2, 3, 4) then
+    raise exception 'Miscommunication limit must be 2, 3, or 4.';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.id is null then
+    raise exception 'Room not found.';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception 'Only the host can update lobby settings.';
+  end if;
+
+  if v_room.status <> 'lobby' or v_room.phase <> 'lobby' then
+    raise exception 'Lobby settings can only be changed in the lobby.';
+  end if;
+
+  select count(*)
+  into v_player_count
+  from public.room_players
+  where room_id = p_room_id;
+
+  if v_player_count > p_seat_count then
+    raise exception 'The target seat count cannot be lower than the current player count.';
+  end if;
+
+  select coalesce(max(team_count), 0)
+  into v_max_team_players
+  from (
+    select count(*) as team_count
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+    group by team
+  ) teams;
+
+  if v_max_team_players > public.room_team_capacity(p_seat_count) then
+    raise exception 'Cannot shrink seats below the current team occupancy.';
+  end if;
+
+  if exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+      and team_seat is not null
+      and team_seat > public.room_team_capacity(p_seat_count)
+  ) then
+    raise exception 'Cannot shrink seats while occupied seats exceed the new team capacity.';
+  end if;
+
+  update public.rooms
+  set seat_count = p_seat_count,
+      role_rotation_enabled = p_role_rotation_enabled,
+      encrypt_phase_minutes = p_encrypt_phase_minutes,
+      decode_phase_minutes = p_decode_phase_minutes,
+      intercept_phase_minutes = p_intercept_phase_minutes,
+      miscommunication_limit = p_miscommunication_limit
+  where id = p_room_id;
+end;
+$$;
+
 drop function if exists public.update_self_seat(uuid, text, text);
 
 create or replace function public.update_self_seat(p_room_id uuid, p_team text, p_team_seat integer)
@@ -1761,9 +1871,9 @@ begin
   v_next_a_miscomms := v_room.score_team_a_miscomms + case when not v_a_own_correct then 1 else 0 end;
   v_next_b_miscomms := v_room.score_team_b_miscomms + case when not v_b_own_correct then 1 else 0 end;
 
-  if v_next_a_intercepts >= 2 or v_next_b_miscomms >= 2 then
+  if v_next_a_intercepts >= 2 or v_next_b_miscomms >= v_room.miscommunication_limit then
     v_winner := 'A';
-  elsif v_next_b_intercepts >= 2 or v_next_a_miscomms >= 2 then
+  elsif v_next_b_intercepts >= 2 or v_next_a_miscomms >= v_room.miscommunication_limit then
     v_winner := 'B';
   end if;
 
@@ -2020,8 +2130,8 @@ begin
   v_next_a_miscomms := v_room.score_team_a_miscomms + case when not v_a_own_correct then 1 else 0 end;
   v_next_b_miscomms := v_room.score_team_b_miscomms + case when not v_b_own_correct then 1 else 0 end;
 
-  v_a_win_condition := v_next_a_intercepts >= 2 or v_next_b_miscomms >= 2;
-  v_b_win_condition := v_next_b_intercepts >= 2 or v_next_a_miscomms >= 2;
+  v_a_win_condition := v_next_a_intercepts >= 2 or v_next_b_miscomms >= v_room.miscommunication_limit;
+  v_b_win_condition := v_next_b_intercepts >= 2 or v_next_a_miscomms >= v_room.miscommunication_limit;
   v_game_finished := v_a_win_condition or v_b_win_condition;
 
   if v_a_win_condition and v_b_win_condition then
@@ -2125,8 +2235,8 @@ begin
   v_next_a_miscomms := v_room.score_team_a_miscomms + case when not v_a_own_correct then 1 else 0 end;
   v_next_b_miscomms := v_room.score_team_b_miscomms + case when not v_b_own_correct then 1 else 0 end;
 
-  v_a_win_condition := v_room.score_team_a_intercepts >= 2 or v_next_b_miscomms >= 2;
-  v_b_win_condition := v_room.score_team_b_intercepts >= 2 or v_next_a_miscomms >= 2;
+  v_a_win_condition := v_room.score_team_a_intercepts >= 2 or v_next_b_miscomms >= v_room.miscommunication_limit;
+  v_b_win_condition := v_room.score_team_b_intercepts >= 2 or v_next_a_miscomms >= v_room.miscommunication_limit;
   v_game_finished := v_a_win_condition or v_b_win_condition;
 
   if v_a_win_condition and v_b_win_condition then
@@ -2885,6 +2995,7 @@ grant execute on function public.kick_player(uuid, uuid) to authenticated;
 grant execute on function public.disband_room(uuid) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer) to authenticated;
+grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
 grant execute on function public.clear_all_seats(uuid) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;

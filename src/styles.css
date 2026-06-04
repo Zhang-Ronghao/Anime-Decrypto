@@ -581,7 +581,8 @@ select:focus {
 
 .score-track-cells {
   display: grid;
-  grid-template-columns: repeat(2, 22px);
+  grid-auto-flow: column;
+  grid-auto-columns: 22px;
   gap: 4px;
 }
 
@@ -669,6 +670,17 @@ select:focus {
   background: #fff;
   color: var(--text);
   border: 1px solid var(--blue-line);
+}
+
+.button-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .repo-link-button {
@@ -1163,6 +1175,16 @@ select:focus {
   align-items: start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.lobby-extra-settings-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.54rem 0.82rem;
+  white-space: nowrap;
 }
 
 .lobby-settings {
@@ -1943,6 +1965,42 @@ select:focus {
   width: min(1120px, 100%);
 }
 
+.modal-card-settings {
+  width: min(520px, 100%);
+}
+
+.settings-select-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.settings-select-row > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-select-row strong {
+  font-size: 1rem;
+}
+
+.settings-select-row small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.settings-select-row select {
+  min-width: 96px;
+}
+
 .catalog-loading-note {
   padding: 12px 14px;
   border: 1px solid rgba(35, 89, 201, 0.18);
@@ -2059,6 +2117,14 @@ code {
 
   .lobby-settings-catalog {
     padding-top: 0;
+  }
+
+  .settings-select-row {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-select-row select {
+    width: 100%;
   }
 
   .action-header {

@@ -168,6 +168,7 @@ export async function updateRoomLobbySettings(
   seatCount: number,
   roleRotationEnabled: boolean,
   timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number },
+  miscommunicationLimit: number,
 ) {
   const client = assertSupabase();
   const { error } = await client.rpc('update_room_lobby_settings', {
@@ -177,6 +178,7 @@ export async function updateRoomLobbySettings(
     p_encrypt_phase_minutes: timers.encryptMinutes,
     p_decode_phase_minutes: timers.decodeMinutes,
     p_intercept_phase_minutes: timers.interceptMinutes,
+    p_miscommunication_limit: miscommunicationLimit,
   });
 
   if (error) {

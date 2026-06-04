@@ -71,6 +71,7 @@ interface TeamScore {
 interface ScoreTrackProps {
   count: number;
   kind: 'intercept' | 'miscomm';
+  limit: number;
   tone: 'red' | 'blue';
 }
 
@@ -119,6 +120,8 @@ const VIDEO_INTRO_URL =
 const FEEDBACK_QQ_GROUP_URL = 'https://qm.qq.com/q/bHJQIRplmg';
 const OTHER_GAME_URL: string | null = null;
 const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
+const MISCOMMUNICATION_LIMIT_OPTIONS = [2, 3, 4] as const;
+const DEFAULT_MISCOMMUNICATION_LIMIT = 2;
 const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
   encryptMinutes: 3,
   decodeMinutes: 2,
@@ -151,19 +154,20 @@ function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: 
   );
 }
 
-function ScoreTrack({ count, kind, tone }: ScoreTrackProps) {
-  const filledCount = Math.min(Math.max(count, 0), 2);
-  const label = kind === 'intercept' ? `拦截 ${filledCount}/2` : `失误 ${filledCount}/2`;
+function ScoreTrack({ count, kind, limit, tone }: ScoreTrackProps) {
+  const safeLimit = Math.max(1, limit);
+  const filledCount = Math.min(Math.max(count, 0), safeLimit);
+  const label = kind === 'intercept' ? `拦截 ${filledCount}/${safeLimit}` : `失误 ${filledCount}/${safeLimit}`;
   const text = kind === 'intercept' ? '拦截' : '失误';
 
   return (
-    <div className={cn('score-track', `score-track-${kind}`, filledCount >= 2 && 'score-track-full')} aria-label={label}>
+    <div className={cn('score-track', `score-track-${kind}`, filledCount >= safeLimit && 'score-track-full')} aria-label={label}>
       <span className="score-track-label" aria-hidden="true">
         {text}
       </span>
 
       <span className="score-track-cells" aria-hidden="true">
-        {Array.from({ length: 2 }, (_, index) => (
+        {Array.from({ length: safeLimit }, (_, index) => (
           <span
             className={cn(
               'score-track-cell',
@@ -333,6 +337,12 @@ function lobbyTimerSettingsFromRoom(room?: RoomSnapshot['room'] | null): LobbyTi
     decodeMinutes: room.decode_phase_minutes,
     interceptMinutes: room.intercept_phase_minutes,
   };
+}
+
+function miscommunicationLimitFromRoom(room?: RoomSnapshot['room'] | null): number {
+  return MISCOMMUNICATION_LIMIT_OPTIONS.includes(room?.miscommunication_limit as (typeof MISCOMMUNICATION_LIMIT_OPTIONS)[number])
+    ? room!.miscommunication_limit
+    : DEFAULT_MISCOMMUNICATION_LIMIT;
 }
 
 function formatCountdown(totalSeconds: number): string {
@@ -701,6 +711,7 @@ function App() {
   const [decodeGuess, setDecodeGuess] = useState('');
   const [interceptGuess, setInterceptGuess] = useState('');
   const [syncFallbackUntil, setSyncFallbackUntil] = useState<number | null>(null);
+  const [lobbySettingsModalOpen, setLobbySettingsModalOpen] = useState(false);
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
   const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
@@ -1062,6 +1073,7 @@ function App() {
   const currentRoundNumber = snapshot?.room.round_number ?? 0;
   const currentPhase = snapshot?.room.phase ?? null;
   const lobbyTimerSettings = lobbyTimerSettingsFromRoom(snapshot?.room);
+  const miscommunicationLimit = miscommunicationLimitFromRoom(snapshot?.room);
   const visibleMySubmissions = useMemo(
     () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
     [currentPhase, currentRoundNumber, mySubmissions, showAllRoundRecords],
@@ -1541,7 +1553,7 @@ function App() {
 
     const timers = lobbyTimerSettingsFromRoom(snapshot.room);
     await withAction('lobby-seat-count', () =>
-      updateRoomLobbySettings(snapshot.room.id, seatCount, snapshot.room.role_rotation_enabled, timers),
+      updateRoomLobbySettings(snapshot.room.id, seatCount, snapshot.room.role_rotation_enabled, timers, miscommunicationLimitFromRoom(snapshot.room)),
     );
   }
 
@@ -1552,7 +1564,7 @@ function App() {
 
     const timers = lobbyTimerSettingsFromRoom(snapshot.room);
     await withAction('lobby-rotation', () =>
-      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, enabled, timers),
+      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, enabled, timers, miscommunicationLimitFromRoom(snapshot.room)),
     );
   }
 
@@ -1578,7 +1590,24 @@ function App() {
     }
 
     await withAction(`lobby-timer-${phase}`, () =>
-      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, snapshot.room.role_rotation_enabled, nextTimers),
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        snapshot.room.role_rotation_enabled,
+        nextTimers,
+        miscommunicationLimitFromRoom(snapshot.room),
+      ),
+    );
+  }
+
+  async function handleMiscommunicationLimitChange(limit: number) {
+    if (!snapshot || !self?.is_host || limit === miscommunicationLimitFromRoom(snapshot.room)) {
+      return;
+    }
+
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
+    await withAction('lobby-miscommunication-limit', () =>
+      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, snapshot.room.role_rotation_enabled, timers, limit),
     );
   }
 
@@ -2124,8 +2153,8 @@ function App() {
                 <div className="team-score-display">
                   <strong>{displayTeamName(myTeam)}</strong>
                   <div className="team-score-tracks">
-                    <ScoreTrack count={myScore.intercepts} kind="intercept" tone={teamTone(myTeam)} />
-                    <ScoreTrack count={myScore.miscomms} kind="miscomm" tone={teamTone(myTeam)} />
+                    <ScoreTrack count={myScore.intercepts} kind="intercept" limit={2} tone={teamTone(myTeam)} />
+                    <ScoreTrack count={myScore.miscomms} kind="miscomm" limit={miscommunicationLimit} tone={teamTone(myTeam)} />
                   </div>
                 </div>
                 <div>
@@ -2141,8 +2170,13 @@ function App() {
                 <div className="team-score-display">
                   <strong>{displayTeamName(opponentTeam)}</strong>
                   <div className="team-score-tracks">
-                    <ScoreTrack count={opponentScore.intercepts} kind="intercept" tone={teamTone(opponentTeam)} />
-                    <ScoreTrack count={opponentScore.miscomms} kind="miscomm" tone={teamTone(opponentTeam)} />
+                    <ScoreTrack count={opponentScore.intercepts} kind="intercept" limit={2} tone={teamTone(opponentTeam)} />
+                    <ScoreTrack
+                      count={opponentScore.miscomms}
+                      kind="miscomm"
+                      limit={miscommunicationLimit}
+                      tone={teamTone(opponentTeam)}
+                    />
                   </div>
                 </div>
                 <div>
@@ -2182,6 +2216,20 @@ function App() {
               <div>
                 <h2>选座大厅</h2>
               </div>
+              <button
+                className="ghost-button lobby-extra-settings-button"
+                disabled={busyKey !== null}
+                onClick={() => setLobbySettingsModalOpen(true)}
+                type="button"
+              >
+                <svg aria-hidden="true" className="button-icon" viewBox="0 0 24 24">
+                  <path d="M5 7h14" />
+                  <path d="M5 17h14" />
+                  <path d="M9 7a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
+                  <path d="M15 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
+                </svg>
+                <span>其他设置</span>
+              </button>
             </div>
 
             <div className={cn('lobby-settings', !self.is_host && 'lobby-settings-readonly')}>
@@ -2926,6 +2974,55 @@ function App() {
           </section>
         </>
       )}
+
+      {lobbySettingsModalOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && busyKey !== 'lobby-miscommunication-limit') {
+              setLobbySettingsModalOpen(false);
+            }
+          }}
+          role="presentation"
+        >
+          <section aria-modal="true" className="modal-card modal-card-settings" role="dialog">
+            <div className="modal-card-head">
+              <div>
+                <h2>其他设置</h2>
+                <p className="muted">调整本局的容错规则。只有房主能在选座大厅修改。</p>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={busyKey === 'lobby-miscommunication-limit'}
+                onClick={() => setLobbySettingsModalOpen(false)}
+                type="button"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="modal-form-stack">
+              <label className="settings-select-row">
+                <span>
+                  <strong>失误上限</strong>
+                  <small>任一队失误达到该次数时，对方获胜</small>
+                </span>
+                <select
+                  disabled={!self?.is_host || busyKey !== null}
+                  onChange={(event) => void handleMiscommunicationLimitChange(Number(event.target.value))}
+                  value={miscommunicationLimit}
+                >
+                  {MISCOMMUNICATION_LIMIT_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option} 次
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {bangumiCatalogModalOpen ? (
         <div
