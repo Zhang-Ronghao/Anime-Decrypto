@@ -524,13 +524,17 @@ function isBangumiCatalogInputValid(value: string): boolean {
     return true;
   }
 
+  if (/^[A-Za-z0-9_-]+$/.test(value)) {
+    return true;
+  }
+
   try {
     const url = new URL(value);
     if (!['bangumi.tv', 'bgm.tv', 'chii.in'].includes(url.hostname)) {
       return false;
     }
 
-    return /^\/(?:anime\/list|user)\/[^/]+(?:\/[^/]+)?\/?$/.test(url.pathname);
+    return /^\/(?:anime\/list|user)\/[^/]+(?:\/[^/]+)?\/?$/.test(url.pathname) || /^\/index\/\d+\/?$/.test(url.pathname);
   } catch {
     return false;
   }
