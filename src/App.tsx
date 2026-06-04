@@ -745,6 +745,7 @@ function App() {
   const [interceptGuess, setInterceptGuess] = useState('');
   const [syncFallbackUntil, setSyncFallbackUntil] = useState<number | null>(null);
   const [lobbySettingsModalOpen, setLobbySettingsModalOpen] = useState(false);
+  const [hostTransferDialogOpen, setHostTransferDialogOpen] = useState(false);
   const [pendingMidgameJoin, setPendingMidgameJoin] = useState<RoomJoinStatus | null>(null);
   const [spectatorTeamView, setSpectatorTeamView] = useState<Team>('A');
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
@@ -1080,6 +1081,10 @@ function App() {
   }, [snapshot]);
 
   const rosterPlayers = useMemo(() => (snapshot ? getSortedRoster(snapshot.players) : []), [snapshot]);
+  const hostTransferCandidates = useMemo(
+    () => rosterPlayers.filter((player) => player.id !== self?.id),
+    [rosterPlayers, self?.id],
+  );
   const teamAPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'A') : []), [snapshot]);
   const teamBPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'B') : []), [snapshot]);
   const spectatorPlayers = useMemo(
@@ -1633,6 +1638,7 @@ function App() {
       refreshRoomId: snapshot.room.id,
     });
     if (result !== null) {
+      setHostTransferDialogOpen(false);
       beginSyncFallback();
     }
   }
@@ -2728,7 +2734,6 @@ function App() {
               <div className="spectator-panel-main">
                 <div>
                   <h3>观战区</h3>
-                  <p>不占用红蓝队席位，可在游戏中切换视角</p>
                 </div>
                 <div className="spectator-list">
                   {spectatorPlayers.length > 0 ? (
@@ -2787,7 +2792,19 @@ function App() {
             </article>
 
             <article className="panel">
-              <h2>房间玩家</h2>
+              <div className="roster-panel-head">
+                <h2>房间玩家</h2>
+                {self.is_host ? (
+                  <button
+                    className="ghost-button roster-transfer-button"
+                    disabled={hostTransferCandidates.length === 0 || busyKey !== null}
+                    onClick={() => setHostTransferDialogOpen(true)}
+                    type="button"
+                  >
+                    转让房主
+                  </button>
+                ) : null}
+              </div>
               <div className="roster-list">
                 {rosterPlayers.map((player) => (
                   <div className="roster-item" key={player.id}>
@@ -2803,26 +2820,16 @@ function App() {
                       </span>
                       </div>
                       {self.is_host && player.id !== self.id ? (
-                        <>
+                        snapshot.room.phase === 'lobby' ? (
                           <button
-                            className="ghost-button roster-kick-button"
+                            className="danger-button roster-kick-button"
                             disabled={busyKey !== null}
-                            onClick={() => void handleTransferHost(player)}
+                            onClick={() => void handleKickPlayer(player)}
                             type="button"
                           >
-                            转让房主
+                            踢出
                           </button>
-                          {snapshot.room.phase === 'lobby' ? (
-                            <button
-                              className="danger-button roster-kick-button"
-                              disabled={busyKey !== null}
-                              onClick={() => void handleKickPlayer(player)}
-                              type="button"
-                            >
-                              踢出
-                            </button>
-                          ) : null}
-                        </>
+                        ) : null
                       ) : null}
                     </div>
                   </div>
@@ -2901,7 +2908,7 @@ function App() {
                 </button>
               ) : snapshot.room.phase === 'finished' && self.is_host ? (
                 <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
-                  重新开始
+                  返回房间大厅
                 </button>
               ) : (
                 <button className="primary-button" disabled type="button">
@@ -3377,6 +3384,53 @@ function App() {
         </>
       )}
 
+      {hostTransferDialogOpen && snapshot && self?.is_host ? (
+        <div
+          className="modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && busyKey === null) {
+              setHostTransferDialogOpen(false);
+            }
+          }}
+          role="presentation"
+        >
+          <section aria-modal="true" className="modal-card modal-card-settings" role="dialog">
+            <div className="modal-card-head">
+              <div>
+                <h2>转让房主</h2>
+                <p className="muted">选择一名玩家接管房间管理权限。</p>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={busyKey !== null}
+                onClick={() => setHostTransferDialogOpen(false)}
+                type="button"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="host-transfer-list">
+              {hostTransferCandidates.map((player) => (
+                <button
+                  className="host-transfer-option"
+                  disabled={busyKey !== null}
+                  key={player.id}
+                  onClick={() => void handleTransferHost(player)}
+                  type="button"
+                >
+                  <span>
+                    <strong>{player.player_name}</strong>
+                    <small>{player.is_spectator ? '观战者' : player.role ? roleName(player.role) : '未选座位'}</small>
+                  </span>
+                  <span className="tag">{player.is_spectator ? '观战' : player.team ? displayTeamName(player.team) : '未入队'}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {lobbySettingsModalOpen ? (
         <div
           className="modal-backdrop"
@@ -3391,7 +3445,7 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>其他设置</h2>
-                <p className="muted">调整本局的容错规则。只有房主能在选座大厅修改。</p>
+                <p className="muted">调整本局的获胜规则。只有房主能在选座大厅修改。</p>
               </div>
               <button
                 className="ghost-button"
@@ -3416,7 +3470,7 @@ function App() {
                     />
                     <span>
                       <strong>经典模式</strong>
-                      <small>失误达到上限即败</small>
+                      <small>拦截2次获胜，失误达到上限则败北</small>
                     </span>
                   </label>
 
