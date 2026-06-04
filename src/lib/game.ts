@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 import type {
   BangumiCatalogEntry,
   RoomRecord,
+  RoomJoinStatus,
   PlayerRecord,
   RoomSnapshot,
   RoundCodeRecord,
@@ -120,6 +121,48 @@ export async function joinRoom(roomCode: string, playerName: string) {
   return normalizeRoomResult(data);
 }
 
+export async function getRoomJoinStatus(roomCode: string): Promise<RoomJoinStatus> {
+  const client = assertSupabase();
+  const { data, error } = await client.rpc('get_room_join_status', {
+    p_room_code: roomCode.trim().toUpperCase(),
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return expectSingle(data as RoomJoinStatus | RoomJoinStatus[] | null);
+}
+
+export async function joinMidgameRoom(roomCode: string, playerName: string, team: Team) {
+  const client = assertSupabase();
+  const { data, error } = await client.rpc('join_midgame_room', {
+    p_room_code: roomCode.trim().toUpperCase(),
+    p_player_name: playerName.trim(),
+    p_team: team,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return normalizeRoomResult(data);
+}
+
+export async function joinAsSpectator(roomCode: string, playerName: string) {
+  const client = assertSupabase();
+  const { data, error } = await client.rpc('join_as_spectator', {
+    p_room_code: roomCode.trim().toUpperCase(),
+    p_player_name: playerName.trim(),
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return normalizeRoomResult(data);
+}
+
 export async function cleanupExpiredRooms() {
   const client = assertSupabase();
   const { error } = await client.rpc('cleanup_expired_rooms');
@@ -133,6 +176,18 @@ export async function leaveRoom(roomId: string) {
   const client = assertSupabase();
   const { error } = await client.rpc('leave_room', {
     p_room_id: roomId,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function transferHost(roomId: string, playerId: string) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('transfer_host', {
+    p_room_id: roomId,
+    p_target_player_id: playerId,
   });
 
   if (error) {
@@ -169,6 +224,7 @@ export async function updateRoomLobbySettings(
   roleRotationEnabled: boolean,
   timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number },
   miscommunicationLimit: number,
+  allowMidgameJoin: boolean,
 ) {
   const client = assertSupabase();
   const { error } = await client.rpc('update_room_lobby_settings', {
@@ -179,6 +235,7 @@ export async function updateRoomLobbySettings(
     p_decode_phase_minutes: timers.decodeMinutes,
     p_intercept_phase_minutes: timers.interceptMinutes,
     p_miscommunication_limit: miscommunicationLimit,
+    p_allow_midgame_join: allowMidgameJoin,
   });
 
   if (error) {
@@ -192,6 +249,18 @@ export async function updateSelfSeat(roomId: string, team: Team | null, teamSeat
     p_room_id: roomId,
     p_team: team,
     p_team_seat: teamSeat,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function updateSelfSpectator(roomId: string, enabled: boolean) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('update_self_spectator', {
+    p_room_id: roomId,
+    p_enabled: enabled,
   });
 
   if (error) {

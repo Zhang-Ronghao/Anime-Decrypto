@@ -9,8 +9,11 @@ import {
   disbandRoom,
   extractBangumiCharacters,
   fetchRoomSnapshot,
+  getRoomJoinStatus,
   generateTeamWords,
   joinRoom,
+  joinAsSpectator,
+  joinMidgameRoom,
   kickPlayer,
   leaveRoom,
   loadBangumiCatalog,
@@ -25,7 +28,9 @@ import {
   subscribeToRoom,
   type RoomSubscriptionStatus,
   terminateGame,
+  transferHost,
   updateRoomLobbySettings,
+  updateSelfSpectator,
   updateSelfSeat,
 } from './lib/game';
 import { ensureSession, isSupabaseConfigured, supabase } from './lib/supabase';
@@ -45,6 +50,7 @@ import {
 import type {
   PlayerRecord,
   Role,
+  RoomJoinStatus,
   RoomPhase,
   RoomSnapshot,
   RoundSubmissionRecord,
@@ -712,6 +718,8 @@ function App() {
   const [interceptGuess, setInterceptGuess] = useState('');
   const [syncFallbackUntil, setSyncFallbackUntil] = useState<number | null>(null);
   const [lobbySettingsModalOpen, setLobbySettingsModalOpen] = useState(false);
+  const [pendingMidgameJoin, setPendingMidgameJoin] = useState<RoomJoinStatus | null>(null);
+  const [spectatorTeamView, setSpectatorTeamView] = useState<Team>('A');
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
   const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
@@ -756,6 +764,15 @@ function App() {
         const savedName = localStorage.getItem('decrypto-name') ?? '';
 
         if (session?.user.id && roomCodeFromUrl && savedName.trim()) {
+          const joinStatus = await getRoomJoinStatus(roomCodeFromUrl);
+          if (joinStatus.status === 'active' && !joinStatus.is_member) {
+            if (!cancelled) {
+              setJoinCode(joinStatus.room_code);
+              setPendingMidgameJoin(joinStatus);
+            }
+            return;
+          }
+
           const result = await joinRoom(roomCodeFromUrl, savedName.trim());
           if (!cancelled) {
             setRoomId(result.room_id);
@@ -1038,6 +1055,16 @@ function App() {
   const rosterPlayers = useMemo(() => (snapshot ? getSortedRoster(snapshot.players) : []), [snapshot]);
   const teamAPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'A') : []), [snapshot]);
   const teamBPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'B') : []), [snapshot]);
+  const spectatorPlayers = useMemo(
+    () =>
+      snapshot
+        ? snapshot.players
+            .filter((player) => player.is_spectator)
+            .slice()
+            .sort((left, right) => left.joined_at.localeCompare(right.joined_at))
+        : [],
+    [snapshot],
+  );
   const bangumiCatalogWords = useMemo(
     () => (snapshot?.room.bangumi_catalog_words ?? []).slice().sort((left, right) => left.localeCompare(right, 'zh-CN')),
     [snapshot],
@@ -1052,10 +1079,11 @@ function App() {
   );
   const isLoadingBangumiCatalog = busyKey === 'load-bangumi-catalog';
 
-  const myTeam = self?.team ?? 'A';
+  const isSpectator = Boolean(self?.is_spectator);
+  const myTeam = self?.team ?? spectatorTeamView;
   const opponentTeam = otherTeam(myTeam);
-  const myTeamSubmission = self?.team ? currentRoundSubmissionByTeam[self.team] : undefined;
-  const opponentSubmission = self?.team ? currentRoundSubmissionByTeam[otherTeam(self.team)] : undefined;
+  const myTeamSubmission = currentRoundSubmissionByTeam[myTeam];
+  const opponentSubmission = currentRoundSubmissionByTeam[opponentTeam];
   const myVisibleCode = self?.team ? currentRoundCodeByTeam[self.team]?.code ?? null : null;
   const myTeamWordRecord = snapshot?.teamWords.find((entry) => entry.team === myTeam);
   const opponentTeamWordRecord = snapshot?.teamWords.find((entry) => entry.team === opponentTeam);
@@ -1093,20 +1121,27 @@ function App() {
   const isInterceptPhase = snapshot?.room.phase === 'intercept';
   const isFinishedPhase = snapshot?.room.phase === 'finished';
   const isFirstRoundInterceptSkip = isInterceptPhase && snapshot?.room.round_number === 1;
-  const canLeaveCurrentRoom = snapshot ? snapshot.room.status === 'lobby' || snapshot.room.status === 'finished' : false;
+  const canLeaveCurrentRoom = snapshot
+    ? snapshot.room.status === 'active' || snapshot.room.status === 'lobby' || snapshot.room.status === 'finished'
+    : false;
   const canTerminateCurrentGame = snapshot ? self?.is_host === true && snapshot.room.status === 'active' : false;
   const currentSeatCount = snapshot?.room.seat_count ?? 4;
   const perTeamCapacity = teamCapacity(currentSeatCount);
   const allPlayersSeated = snapshot
-    ? snapshot.players.every((player) => Boolean(player.team) && player.team_seat !== null)
+    ? snapshot.players
+        .filter((player) => player.team !== null || player.team_seat !== null)
+        .every((player) => Boolean(player.team) && player.team_seat !== null)
     : false;
   const coreSeatsReady = snapshot ? teamOrder.every((team) => hasCoreSeats(snapshot.players, team)) : false;
   const seatedPlayerCount = snapshot
     ? snapshot.players.filter((player) => Boolean(player.team) && player.team_seat !== null).length
     : 0;
+  const unassignedPlayerCount = snapshot
+    ? snapshot.players.filter((player) => !player.is_spectator && (player.team === null || player.team_seat === null)).length
+    : 0;
   const hasSeatedPlayers = seatedPlayerCount > 0;
   const startGameReady = snapshot
-    ? allPlayersSeated && coreSeatsReady && (snapshot.room.seat_count > 4 || seatedPlayerCount === 4)
+    ? unassignedPlayerCount === 0 && coreSeatsReady && (snapshot.room.seat_count > 4 || seatedPlayerCount === 4)
     : false;
   const wordAssignmentCount = snapshot
     ? Number(snapshot.room.team_a_words_confirmed) + Number(snapshot.room.team_b_words_confirmed)
@@ -1132,10 +1167,10 @@ function App() {
   const canExtractTeamWordCharacters = teamWordDraftMode === 'generated';
   const shouldConfirmBeforeManualEdit = teamWordDraftMode === 'generated';
   const canReplaceGeneratedWords = teamWordDraftMode === 'generated';
-  const canSubmitClues = isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
-  const canSubmitDecode = isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
+  const canSubmitClues = !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
+  const canSubmitDecode = !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
-    isInterceptPhase && !isFirstRoundInterceptSkip && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
+    !isSpectator && isInterceptPhase && !isFirstRoundInterceptSkip && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
   const canSkipFirstIntercept = Boolean(isFirstRoundInterceptSkip && self?.is_host);
   const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
   const displayedInterceptDigits = opponentSubmission?.intercept_guess
@@ -1241,13 +1276,15 @@ function App() {
   const countdownTitle = activeTimedPhase ? `${timedPhaseLabel(activeTimedPhase)}倒计时` : '倒计时';
   const countdownText = formatCountdown(countdownSeconds);
   const lobbyStartHint = snapshot
-    ? !allPlayersSeated
-      ? '开始前，所有已加入房间的玩家都需要先入座'
+    ? unassignedPlayerCount > 0
+      ? '开始前，未入队玩家需要选择队伍或加入观战'
       : !coreSeatsReady
         ? '开始前，两队的 1 号位和 2 号位都必须有人'
         : snapshot.room.seat_count === 4 && seatedPlayerCount !== 4
           ? '4 人房需要满员开局'
-          : '已满足开局条件'
+          : spectatorPlayers.length > 0
+            ? '已满足开局条件，观战玩家不会占用席位'
+            : '已满足开局条件'
     : '';
 
   useEffect(() => {
@@ -1358,6 +1395,7 @@ function App() {
     setInterceptGuess('');
     setBangumiCatalogModalOpen(false);
     setBangumiCatalogBrowserOpen(false);
+    setPendingMidgameJoin(null);
     setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
     setBangumiCatalogTypesDraft(defaultBangumiCatalogTypes());
     setActionError(message ?? null);
@@ -1497,6 +1535,16 @@ function App() {
     }
 
     localStorage.setItem('decrypto-name', name);
+    const joinStatus = await withAction('join-room-check', () => getRoomJoinStatus(code));
+    if (!joinStatus) {
+      return;
+    }
+
+    if (joinStatus.status === 'active' && !joinStatus.is_member) {
+      setPendingMidgameJoin(joinStatus);
+      return;
+    }
+
     const result = await withAction('join-room', () => joinRoom(code, name));
     if (!result) {
       return;
@@ -1504,6 +1552,44 @@ function App() {
 
     setRoomId(result.room_id);
     setJoinCode(result.room_code);
+    window.history.replaceState({}, '', `?room=${result.room_code}`);
+  }
+
+  async function handleJoinMidgame(team: Team) {
+    const name = displayName.trim();
+    const code = joinCode.trim();
+    if (!name || !code || !pendingMidgameJoin) {
+      return;
+    }
+
+    const result = await withAction('join-midgame-room', () => joinMidgameRoom(code, name, team));
+    if (!result) {
+      return;
+    }
+
+    setPendingMidgameJoin(null);
+    setRoomId(result.room_id);
+    setJoinCode(result.room_code);
+    window.history.replaceState({}, '', `?room=${result.room_code}`);
+  }
+
+  async function handleJoinSpectatorFromHome() {
+    const name = displayName.trim();
+    const code = joinCode.trim();
+    if (!name || !code || !pendingMidgameJoin) {
+      return;
+    }
+
+    localStorage.setItem('decrypto-name', name);
+    const result = await withAction('join-spectator-room', () => joinAsSpectator(code, name));
+    if (!result) {
+      return;
+    }
+
+    setPendingMidgameJoin(null);
+    setRoomId(result.room_id);
+    setJoinCode(result.room_code);
+    setSpectatorTeamView('A');
     window.history.replaceState({}, '', `?room=${result.room_code}`);
   }
 
@@ -1520,12 +1606,40 @@ function App() {
     }
   }
 
-  async function handleStandUp() {
-    if (!snapshot || !self?.team || self.team_seat === null) {
+  async function handleJoinSpectator() {
+    if (!snapshot) {
       return;
     }
 
-    const result = await withAction('seat-clear', () => updateSelfSeat(snapshot.room.id, null, null), {
+    const result = await withAction('spectator-join', () => updateSelfSpectator(snapshot.room.id, true), {
+      refreshRoomId: snapshot.room.id,
+    });
+    if (result !== null) {
+      setSpectatorTeamView('A');
+      beginSyncFallback();
+    }
+  }
+
+  async function handleExitSpectator() {
+    if (!snapshot) {
+      return;
+    }
+
+    const result = await withAction('spectator-exit', () => updateSelfSpectator(snapshot.room.id, false), {
+      refreshRoomId: snapshot.room.id,
+    });
+    if (result !== null) {
+      beginSyncFallback();
+    }
+  }
+
+  async function handleStandUp() {
+    if (!snapshot || (!self?.team && !self?.is_spectator)) {
+      return;
+    }
+
+    const result = await withAction('seat-clear', () =>
+      self.is_spectator ? updateSelfSpectator(snapshot.room.id, false) : updateSelfSeat(snapshot.room.id, null, null), {
       refreshRoomId: snapshot.room.id,
     });
     if (result !== null) {
@@ -1553,7 +1667,14 @@ function App() {
 
     const timers = lobbyTimerSettingsFromRoom(snapshot.room);
     await withAction('lobby-seat-count', () =>
-      updateRoomLobbySettings(snapshot.room.id, seatCount, snapshot.room.role_rotation_enabled, timers, miscommunicationLimitFromRoom(snapshot.room)),
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        seatCount,
+        snapshot.room.role_rotation_enabled,
+        timers,
+        miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.allow_midgame_join,
+      ),
     );
   }
 
@@ -1564,7 +1685,14 @@ function App() {
 
     const timers = lobbyTimerSettingsFromRoom(snapshot.room);
     await withAction('lobby-rotation', () =>
-      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, enabled, timers, miscommunicationLimitFromRoom(snapshot.room)),
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        enabled,
+        timers,
+        miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.allow_midgame_join,
+      ),
     );
   }
 
@@ -1596,6 +1724,7 @@ function App() {
         snapshot.room.role_rotation_enabled,
         nextTimers,
         miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.allow_midgame_join,
       ),
     );
   }
@@ -1607,7 +1736,32 @@ function App() {
 
     const timers = lobbyTimerSettingsFromRoom(snapshot.room);
     await withAction('lobby-miscommunication-limit', () =>
-      updateRoomLobbySettings(snapshot.room.id, snapshot.room.seat_count, snapshot.room.role_rotation_enabled, timers, limit),
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        snapshot.room.role_rotation_enabled,
+        timers,
+        limit,
+        snapshot.room.allow_midgame_join,
+      ),
+    );
+  }
+
+  async function handleMidgameJoinToggle(enabled: boolean) {
+    if (!snapshot || !self?.is_host || enabled === snapshot.room.allow_midgame_join) {
+      return;
+    }
+
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
+    await withAction('lobby-midgame-join', () =>
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        snapshot.room.role_rotation_enabled,
+        timers,
+        miscommunicationLimitFromRoom(snapshot.room),
+        enabled,
+      ),
     );
   }
 
@@ -1910,13 +2064,36 @@ function App() {
   }
 
   async function handleLeaveRoom() {
-    if (!snapshot || self?.is_host) {
+    if (!snapshot || !self) {
+      return;
+    }
+
+    if (snapshot.room.status === 'active' && !self.is_spectator && self.role !== 'member') {
+      window.alert('你当前是加密/拦截者或解密者，因为有身份不能退出。');
       return;
     }
 
     const result = await withAction('leave-room', () => leaveRoom(snapshot.room.id));
     if (result !== null) {
       resetRoomState();
+    }
+  }
+
+  async function handleTransferHost(player: PlayerRecord) {
+    if (!snapshot || !self?.is_host || player.id === self.id) {
+      return;
+    }
+
+    const confirmed = window.confirm(`确定把房主转让给“${player.player_name}”吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    const result = await withAction(`transfer-host-${player.id}`, () => transferHost(snapshot.room.id, player.id), {
+      refreshRoomId: snapshot.room.id,
+    });
+    if (result !== null) {
+      beginSyncFallback();
     }
   }
 
@@ -2124,6 +2301,77 @@ function App() {
             />
           </div>
         </footer>
+
+        {pendingMidgameJoin ? (
+          <div
+            className="modal-backdrop"
+            onClick={(event) => {
+              if (event.target === event.currentTarget && busyKey !== 'join-midgame-room') {
+                setPendingMidgameJoin(null);
+              }
+            }}
+            role="presentation"
+          >
+            <section aria-modal="true" className="modal-card modal-card-compact midgame-join-modal" role="dialog">
+              <div className="modal-card-head">
+                <div>
+                  <h2>中途加入房间 {pendingMidgameJoin.room_code}</h2>
+                  <p className="muted">当前游戏正在进行，上方可选择队伍加入，下方可选择观战加入。</p>
+                </div>
+                <button
+                  className="ghost-button"
+                  disabled={busyKey === 'join-midgame-room'}
+                  onClick={() => setPendingMidgameJoin(null)}
+                  type="button"
+                >
+                  取消
+                </button>
+              </div>
+
+              <div className="midgame-team-grid">
+                {teamOrder.map((team) => {
+                  const count = team === 'A' ? pendingMidgameJoin.team_a_count : pendingMidgameJoin.team_b_count;
+                  const isFull = count >= pendingMidgameJoin.team_capacity;
+                  const teamJoinDisabled = !pendingMidgameJoin.allow_midgame_join || isFull;
+
+                  return (
+                    <article className={cn('midgame-team-card', `midgame-team-card-${teamTone(team)}`)} key={team}>
+                      <div>
+                        <strong>{displayTeamName(team)}</strong>
+                        <span>
+                          {count}/{pendingMidgameJoin.team_capacity}
+                        </span>
+                      </div>
+                      <button
+                        className="primary-button"
+                        disabled={busyKey !== null || teamJoinDisabled}
+                        onClick={() => void handleJoinMidgame(team)}
+                        type="button"
+                      >
+                        {!pendingMidgameJoin.allow_midgame_join ? '已关闭' : isFull ? '已满' : '加入空位'}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="midgame-spectator-panel">
+                <div>
+                  <strong>观战加入</strong>
+                  <p className="muted">不占用队伍席位，进入后默认红队视角，可自由切换两队视角。</p>
+                </div>
+                <button
+                  className="ghost-button"
+                  disabled={busyKey !== null}
+                  onClick={() => void handleJoinSpectatorFromHome()}
+                  type="button"
+                >
+                  加入观战
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
       </main>
     );
   }
@@ -2192,7 +2440,7 @@ function App() {
 
           {canLeaveCurrentRoom ? (
             <div className="room-actions">
-              {self.is_host ? (
+              {self.is_host && snapshot.room.status !== 'active' ? (
                 <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleDisbandRoom()} type="button">
                   解散房间
                 </button>
@@ -2372,6 +2620,35 @@ function App() {
               ))}
             </div>
 
+            <section className="spectator-panel">
+              <div className="spectator-panel-main">
+                <div>
+                  <h3>观战区</h3>
+                  <p>{spectatorPlayers.length > 0 ? `${spectatorPlayers.length} 人正在观战` : '不占用红蓝队席位，可在游戏中切换视角'}</p>
+                </div>
+                <div className="spectator-list">
+                  {spectatorPlayers.length > 0 ? (
+                    spectatorPlayers.map((player) => (
+                      <span className={cn('spectator-chip', player.id === self.id && 'spectator-chip-self')} key={player.id}>
+                        {player.player_name}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="spectator-empty">暂无观战玩家</span>
+                  )}
+                </div>
+              </div>
+              {isSpectator ? (
+                <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleExitSpectator()} type="button">
+                  退出观战
+                </button>
+              ) : (
+                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleJoinSpectator()} type="button">
+                  加入观战
+                </button>
+              )}
+            </section>
+
             <div className="seat-action-row">
               {self.team && self.team_seat ? (
                 <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleStandUp()} type="button">
@@ -2416,20 +2693,32 @@ function App() {
                     </div>
                     <div className="roster-item-side">
                       <div className="tag-row">
-                      <span className="tag">{player.team ? displayTeamName(player.team) : '未入队'}</span>
+                      <span className="tag">{player.is_spectator ? '观战' : player.team ? displayTeamName(player.team) : '未入队'}</span>
                       <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
-                        {player.role ? roleName(player.role) : '未选座位'}
+                        {player.is_spectator ? '观战者' : player.role ? roleName(player.role) : '未选座位'}
                       </span>
                       </div>
                       {self.is_host && player.id !== self.id ? (
-                        <button
-                          className="danger-button roster-kick-button"
-                          disabled={busyKey !== null}
-                          onClick={() => void handleKickPlayer(player)}
-                          type="button"
-                        >
-                          踢出
-                        </button>
+                        <>
+                          <button
+                            className="ghost-button roster-kick-button"
+                            disabled={busyKey !== null}
+                            onClick={() => void handleTransferHost(player)}
+                            type="button"
+                          >
+                            转让房主
+                          </button>
+                          {snapshot.room.phase === 'lobby' ? (
+                            <button
+                              className="danger-button roster-kick-button"
+                              disabled={busyKey !== null}
+                              onClick={() => void handleKickPlayer(player)}
+                              type="button"
+                            >
+                              踢出
+                            </button>
+                          ) : null}
+                        </>
                       ) : null}
                     </div>
                   </div>
@@ -2466,14 +2755,23 @@ function App() {
               <div className="action-header-card">
                 <div className="identity-banner">
                   <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
-                  {self.role ? <span className="identity-role">{roleName(self.role)}</span> : null}
+                  {isSpectator ? <span className="identity-role">观战视角</span> : self.role ? <span className="identity-role">{roleName(self.role)}</span> : null}
                   {self.is_host ? <span className="identity-host-badge">房主</span> : null}
                 </div>
                 <h2>{actionTitle}</h2>
                 <p className="action-hint">{effectiveActionHint}</p>
               </div>
 
-              {canEditWordAssignment ? (
+              {isSpectator ? (
+                <button
+                  className="primary-button"
+                  disabled={busyKey !== null}
+                  onClick={() => setSpectatorTeamView((current) => otherTeam(current))}
+                  type="button"
+                >
+                  切换{displayTeamName(otherTeam(spectatorTeamView))}视角
+                </button>
+              ) : canEditWordAssignment ? (
                 <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleConfirmWords()} type="button">
                   确认词语
                 </button>
@@ -3018,6 +3316,19 @@ function App() {
                     </option>
                   ))}
                 </select>
+              </label>
+
+              <label className="settings-toggle-row">
+                <input
+                  checked={snapshot.room.allow_midgame_join}
+                  disabled={!self?.is_host || busyKey !== null}
+                  onChange={(event) => void handleMidgameJoinToggle(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>允许中途加入</strong>
+                  <small>开启后，游戏中有空位的队伍允许新玩家以队员身份加入</small>
+                </span>
               </label>
             </div>
           </section>

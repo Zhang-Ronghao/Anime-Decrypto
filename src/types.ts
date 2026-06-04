@@ -30,6 +30,7 @@ export interface RoomRecord {
   decode_phase_minutes: number;
   intercept_phase_minutes: number;
   miscommunication_limit: number;
+  allow_midgame_join: boolean;
   phase_started_at: string | null;
   phase_deadline_at: string | null;
   winner: Team | null;
@@ -56,6 +57,7 @@ export interface PlayerRecord {
   team: Team | null;
   role: Role | null;
   team_seat: number | null;
+  is_spectator: boolean;
   is_host: boolean;
   connected: boolean;
   joined_at: string;
@@ -66,6 +68,7 @@ export interface TeamWordsRecord {
   room_id: string;
   team: Team;
   words: string[];
+  seen_words: string[];
   word_slots: TeamWordSlot[];
   confirmed: boolean;
   created_at: string;
@@ -103,4 +106,17 @@ export interface RoomSnapshot {
   teamWords: TeamWordsRecord[];
   roundCodes: RoundCodeRecord[];
   submissions: RoundSubmissionRecord[];
+}
+
+export interface RoomJoinStatus {
+  room_id: string;
+  room_code: string;
+  status: RoomStatus;
+  phase: RoomPhase;
+  seat_count: number;
+  allow_midgame_join: boolean;
+  team_capacity: number;
+  team_a_count: number;
+  team_b_count: number;
+  is_member: boolean;
 }

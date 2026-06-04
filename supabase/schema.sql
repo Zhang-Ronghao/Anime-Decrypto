@@ -14,6 +14,7 @@ create table if not exists public.rooms (
   decode_phase_minutes integer not null default 2 check (decode_phase_minutes between 1 and 5),
   intercept_phase_minutes integer not null default 2 check (intercept_phase_minutes between 1 and 5),
   miscommunication_limit integer not null default 2 check (miscommunication_limit in (2, 3, 4)),
+  allow_midgame_join boolean not null default true,
   phase_started_at timestamptz null default timezone('utc', now()),
   phase_deadline_at timestamptz null,
   winner text null check (winner in ('A', 'B')),
@@ -50,6 +51,9 @@ add column if not exists intercept_phase_minutes integer not null default 2;
 
 alter table public.rooms
 add column if not exists miscommunication_limit integer not null default 2;
+
+alter table public.rooms
+add column if not exists allow_midgame_join boolean not null default true;
 
 alter table public.rooms
 add column if not exists phase_started_at timestamptz null default timezone('utc', now());
@@ -128,6 +132,7 @@ create table if not exists public.room_players (
   team text null check (team in ('A', 'B')),
   role text null check (role in ('encoder', 'decoder', 'member')),
   team_seat integer null check (team_seat is null or team_seat > 0),
+  is_spectator boolean not null default false,
   is_host boolean not null default false,
   connected boolean not null default true,
   joined_at timestamptz not null default timezone('utc', now()),
@@ -137,6 +142,9 @@ create table if not exists public.room_players (
 
 alter table public.room_players
 add column if not exists team_seat integer null;
+
+alter table public.room_players
+add column if not exists is_spectator boolean not null default false;
 
 alter table public.room_players drop constraint if exists room_players_role_check;
 alter table public.room_players
@@ -168,6 +176,7 @@ create table if not exists public.team_words (
   room_id uuid not null references public.rooms(id) on delete cascade,
   team text not null check (team in ('A', 'B')),
   words text[] not null check (array_length(words, 1) = 4),
+  seen_words text[] not null default '{}',
   confirmed boolean not null default false,
   created_at timestamptz not null default timezone('utc', now()),
   unique (room_id, team)
@@ -178,6 +187,9 @@ add column if not exists confirmed boolean not null default false;
 
 alter table public.team_words
 add column if not exists word_slots jsonb not null default '[]'::jsonb;
+
+alter table public.team_words
+add column if not exists seen_words text[] not null default '{}';
 
 update public.team_words
 set confirmed = true
@@ -304,7 +316,24 @@ as $$
   from public.room_players
   where room_id = p_room_id
     and auth_user_id = auth.uid()
+    and not is_spectator
   limit 1;
+$$;
+
+create or replace function public.current_player_is_spectator(p_room_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and auth_user_id = auth.uid()
+      and is_spectator
+  );
 $$;
 
 alter table public.rooms enable row level security;
@@ -341,6 +370,10 @@ using (
       from public.rooms
       where public.rooms.id = public.team_words.room_id
         and public.rooms.phase = 'finished'
+    )
+    or (
+      public.current_player_is_spectator(room_id)
+      and confirmed
     )
     or (
       team = public.current_player_team(room_id)
@@ -688,6 +721,70 @@ $$;
 
 drop function if exists public.join_room(text, text);
 
+create or replace function public.get_room_join_status(p_room_code text)
+returns table(
+  room_id uuid,
+  room_code text,
+  status text,
+  phase text,
+  seat_count integer,
+  allow_midgame_join boolean,
+  team_capacity integer,
+  team_a_count integer,
+  team_b_count integer,
+  is_member boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms as r
+  where r.room_code = upper(trim(p_room_code))
+  limit 1;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  return query
+  select
+    v_room.id,
+    v_room.room_code,
+    v_room.status,
+    v_room.phase,
+    v_room.seat_count,
+    v_room.allow_midgame_join,
+    public.room_team_capacity(v_room.seat_count),
+    (
+      select count(*)::integer
+      from public.room_players as rp
+      where rp.room_id = v_room.id
+        and rp.team = 'A'
+        and rp.team_seat is not null
+    ),
+    (
+      select count(*)::integer
+      from public.room_players as rp
+      where rp.room_id = v_room.id
+        and rp.team = 'B'
+        and rp.team_seat is not null
+    ),
+    exists (
+      select 1
+      from public.room_players as rp
+      where rp.room_id = v_room.id
+        and rp.auth_user_id = auth.uid()
+    );
+end;
+$$;
+
 create function public.join_room(p_room_code text, p_player_name text)
 returns table(joined_room_id uuid, joined_room_code text)
 language plpgsql
@@ -733,7 +830,9 @@ begin
   select count(*)
   into v_existing_player_count
   from public.room_players as rp
-  where rp.room_id = v_room.id;
+  where rp.room_id = v_room.id
+    and rp.team in ('A', 'B')
+    and rp.team_seat is not null;
 
   if v_existing_player_count >= v_room.seat_count
      and not exists (
@@ -751,6 +850,147 @@ begin
   do update set
     player_name = excluded.player_name,
     connected = true;
+
+  return query
+  select v_room.id, v_room.room_code;
+end;
+$$;
+
+create or replace function public.join_as_spectator(p_room_code text, p_player_name text)
+returns table(joined_room_id uuid, joined_room_code text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  if coalesce(length(trim(p_player_name)), 0) = 0 then
+    raise exception '昵称不能为空。';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms as r
+  where r.room_code = upper(trim(p_room_code))
+  limit 1;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.status = 'finished' then
+    raise exception '房间已结束。';
+  end if;
+
+  insert into public.room_players (room_id, auth_user_id, player_name, team, role, team_seat, is_spectator, connected)
+  values (v_room.id, auth.uid(), trim(p_player_name), null, null, null, true, true)
+  on conflict (room_id, auth_user_id)
+  do update set
+    player_name = excluded.player_name,
+    team = null,
+    role = null,
+    team_seat = null,
+    is_spectator = true,
+    connected = true;
+
+  return query
+  select v_room.id, v_room.room_code;
+end;
+$$;
+
+create or replace function public.join_midgame_room(p_room_code text, p_player_name text, p_team text)
+returns table(joined_room_id uuid, joined_room_code text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_team_capacity integer;
+  v_team_count integer;
+  v_next_team_seat integer;
+begin
+  perform public.assert_authenticated();
+
+  if coalesce(length(trim(p_player_name)), 0) = 0 then
+    raise exception '昵称不能为空。';
+  end if;
+
+  if p_team not in ('A', 'B') then
+    raise exception '队伍无效。';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms as r
+  where r.room_code = upper(trim(p_room_code))
+  for update;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.status <> 'active' or v_room.phase in ('lobby', 'finished') then
+    raise exception '当前房间不在游戏中。';
+  end if;
+
+  if not v_room.allow_midgame_join then
+    raise exception '房主已关闭中途加入。';
+  end if;
+
+  if exists (
+    select 1
+    from public.room_players
+    where room_id = v_room.id
+      and auth_user_id = auth.uid()
+  ) then
+    update public.room_players
+    set player_name = trim(p_player_name),
+        connected = true
+    where room_id = v_room.id
+      and auth_user_id = auth.uid();
+
+    return query
+    select v_room.id, v_room.room_code;
+    return;
+  end if;
+
+  v_team_capacity := public.room_team_capacity(v_room.seat_count);
+
+  select count(*)
+  into v_team_count
+  from public.room_players
+  where room_id = v_room.id
+    and team = p_team
+    and team_seat is not null;
+
+  if v_team_count >= v_team_capacity then
+    raise exception '该队伍已满。';
+  end if;
+
+  select coalesce(max(team_seat), 0) + 1
+  into v_next_team_seat
+  from public.room_players
+  where room_id = v_room.id
+    and team = p_team
+    and team_seat is not null;
+
+  if v_next_team_seat > v_team_capacity then
+    perform public.compress_room_team_seats(v_room.id);
+
+    select coalesce(max(team_seat), 0) + 1
+    into v_next_team_seat
+    from public.room_players
+    where room_id = v_room.id
+      and team = p_team
+      and team_seat is not null;
+  end if;
+
+  insert into public.room_players (room_id, auth_user_id, player_name, team, role, team_seat, connected)
+  values (v_room.id, auth.uid(), trim(p_player_name), p_team, 'member', v_next_team_seat, true);
 
   return query
   select v_room.id, v_room.room_code;
@@ -822,6 +1062,129 @@ begin
 
   delete from public.room_players
   where id = v_self.id;
+end;
+$$;
+
+create or replace function public.leave_room(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_self public.room_players%rowtype;
+  v_next_host public.room_players%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  select *
+  into v_self
+  from public.room_players
+  where room_id = p_room_id
+    and auth_user_id = auth.uid();
+
+  if v_self.id is null then
+    raise exception '你不在该房间中。';
+  end if;
+
+  if v_room.status = 'active' then
+    if v_self.role <> 'member' then
+      raise exception '你当前有身份，不能中途退出房间。';
+    end if;
+  elsif v_self.is_host then
+    raise exception '房主需要先转让房主或解散房间。';
+  elsif v_room.status not in ('lobby', 'finished') then
+    raise exception '当前不能离开房间。';
+  end if;
+
+  delete from public.room_players
+  where id = v_self.id;
+
+  if v_room.status = 'active' then
+    perform public.compress_room_team_seats(p_room_id);
+  end if;
+
+  if v_self.is_host then
+    select *
+    into v_next_host
+    from public.room_players
+    where room_id = p_room_id
+    order by joined_at asc, id asc
+    limit 1;
+
+    if v_next_host.id is not null then
+      update public.room_players
+      set is_host = (id = v_next_host.id)
+      where room_id = p_room_id;
+
+      update public.rooms
+      set host_user_id = v_next_host.auth_user_id
+      where id = p_room_id;
+    else
+      delete from public.rooms
+      where id = p_room_id;
+    end if;
+  end if;
+end;
+$$;
+
+create or replace function public.transfer_host(p_room_id uuid, p_target_player_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_target public.room_players%rowtype;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception '只有房主可以转让房主。';
+  end if;
+
+  select *
+  into v_target
+  from public.room_players
+  where id = p_target_player_id
+    and room_id = p_room_id;
+
+  if v_target.id is null then
+    raise exception '目标玩家不存在。';
+  end if;
+
+  if v_target.auth_user_id = auth.uid() then
+    raise exception '不能转让给自己。';
+  end if;
+
+  update public.room_players
+  set is_host = (id = v_target.id)
+  where room_id = p_room_id;
+
+  update public.rooms
+  set host_user_id = v_target.auth_user_id
+  where id = p_room_id;
 end;
 $$;
 
@@ -956,7 +1319,9 @@ begin
   select count(*)
   into v_player_count
   from public.room_players
-  where room_id = p_room_id;
+  where room_id = p_room_id
+    and team in ('A', 'B')
+    and team_seat is not null;
 
   if v_player_count > p_seat_count then
     raise exception '当前房间人数已超过目标席位数。';
@@ -1045,7 +1410,9 @@ begin
   select count(*)
   into v_player_count
   from public.room_players
-  where room_id = p_room_id;
+  where room_id = p_room_id
+    and team in ('A', 'B')
+    and team_seat is not null;
 
   if v_player_count > p_seat_count then
     raise exception 'The target seat count cannot be lower than the current player count.';
@@ -1142,7 +1509,9 @@ begin
   select count(*)
   into v_player_count
   from public.room_players
-  where room_id = p_room_id;
+  where room_id = p_room_id
+    and team in ('A', 'B')
+    and team_seat is not null;
 
   if v_player_count > p_seat_count then
     raise exception 'The target seat count cannot be lower than the current player count.';
@@ -1180,6 +1549,108 @@ begin
       decode_phase_minutes = p_decode_phase_minutes,
       intercept_phase_minutes = p_intercept_phase_minutes,
       miscommunication_limit = p_miscommunication_limit
+  where id = p_room_id;
+end;
+$$;
+
+create or replace function public.update_room_lobby_settings(
+  p_room_id uuid,
+  p_seat_count integer,
+  p_role_rotation_enabled boolean,
+  p_encrypt_phase_minutes integer,
+  p_decode_phase_minutes integer,
+  p_intercept_phase_minutes integer,
+  p_miscommunication_limit integer,
+  p_allow_midgame_join boolean
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_player_count integer;
+  v_max_team_players integer;
+begin
+  perform public.assert_authenticated();
+
+  if p_seat_count not in (4, 6, 8, 10, 12, 14) then
+    raise exception 'Seat count must be one of 4, 6, 8, 10, 12, or 14.';
+  end if;
+
+  if p_encrypt_phase_minutes not between 1 and 5
+     or p_decode_phase_minutes not between 1 and 5
+     or p_intercept_phase_minutes not between 1 and 5 then
+    raise exception 'Phase timers must be between 1 and 5 minutes.';
+  end if;
+
+  if p_miscommunication_limit not in (2, 3, 4) then
+    raise exception 'Miscommunication limit must be 2, 3, or 4.';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.id is null then
+    raise exception 'Room not found.';
+  end if;
+
+  if v_room.host_user_id <> auth.uid() then
+    raise exception 'Only the host can update lobby settings.';
+  end if;
+
+  if v_room.status <> 'lobby' or v_room.phase <> 'lobby' then
+    raise exception 'Lobby settings can only be changed in the lobby.';
+  end if;
+
+  select count(*)
+  into v_player_count
+  from public.room_players
+  where room_id = p_room_id
+    and team in ('A', 'B')
+    and team_seat is not null;
+
+  if v_player_count > p_seat_count then
+    raise exception 'The target seat count cannot be lower than the current player count.';
+  end if;
+
+  select coalesce(max(team_count), 0)
+  into v_max_team_players
+  from (
+    select count(*) as team_count
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+    group by team
+  ) teams;
+
+  if v_max_team_players > public.room_team_capacity(p_seat_count) then
+    raise exception 'Cannot shrink seats below the current team occupancy.';
+  end if;
+
+  if exists (
+    select 1
+    from public.room_players
+    where room_id = p_room_id
+      and team in ('A', 'B')
+      and team_seat is not null
+      and team_seat > public.room_team_capacity(p_seat_count)
+  ) then
+    raise exception 'Cannot shrink seats while occupied seats exceed the new team capacity.';
+  end if;
+
+  update public.rooms
+  set seat_count = p_seat_count,
+      role_rotation_enabled = p_role_rotation_enabled,
+      encrypt_phase_minutes = p_encrypt_phase_minutes,
+      decode_phase_minutes = p_decode_phase_minutes,
+      intercept_phase_minutes = p_intercept_phase_minutes,
+      miscommunication_limit = p_miscommunication_limit,
+      allow_midgame_join = p_allow_midgame_join
   where id = p_room_id;
 end;
 $$;
@@ -1254,10 +1725,59 @@ begin
   update public.room_players
   set team = p_team,
       team_seat = p_team_seat,
+      is_spectator = false,
       role = case
         when p_team is null or p_team_seat is null then null
         else public.role_for_team_seat(p_team_seat)
       end
+  where id = v_self_id;
+end;
+$$;
+
+create or replace function public.update_self_spectator(p_room_id uuid, p_enabled boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_self_id uuid;
+begin
+  perform public.assert_authenticated();
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.id is null then
+    raise exception '房间不存在。';
+  end if;
+
+  if v_room.status = 'finished' then
+    raise exception '房间已结束。';
+  end if;
+
+  select id
+  into v_self_id
+  from public.room_players
+  where room_id = p_room_id
+    and auth_user_id = auth.uid();
+
+  if v_self_id is null then
+    raise exception '你不在该房间中。';
+  end if;
+
+  if v_room.status <> 'lobby' and not p_enabled then
+    raise exception '游戏开始后，请使用离开房间退出观战。';
+  end if;
+
+  update public.room_players
+  set team = null,
+      team_seat = null,
+      role = null,
+      is_spectator = p_enabled
   where id = v_self_id;
 end;
 $$;
@@ -1294,7 +1814,8 @@ begin
   update public.room_players
   set team = null,
       team_seat = null,
-      role = null
+      role = null,
+      is_spectator = false
   where room_id = p_room_id
     and team is not null;
 end;
@@ -1330,6 +1851,7 @@ begin
     from public.room_players
     where room_id = p_room_id
       and team is null
+      and not is_spectator
   ) then
     raise exception '开始游戏前，所有已加入玩家都需要先入座。';
   end if;
@@ -2580,6 +3102,134 @@ set word_slots = public.coerce_team_word_slots_from_words(words)
 where jsonb_typeof(coalesce(word_slots, 'null'::jsonb)) <> 'array'
    or jsonb_array_length(coalesce(word_slots, '[]'::jsonb)) <> 4;
 
+create or replace function public.draw_bangumi_word_slots(
+  p_room public.rooms,
+  p_team_words public.team_words,
+  p_count integer,
+  p_blocked_words text[] default array[]::text[]
+)
+returns table(slots jsonb, words text[], seen_words text[])
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_slots jsonb := '[]'::jsonb;
+  v_words text[] := array[]::text[];
+  v_seen_words text[] := array[]::text[];
+  v_blocked_words text[] := array[]::text[];
+  v_pick_title text;
+  v_pick_subject_id integer;
+  v_index integer;
+begin
+  if p_count < 1 then
+    raise exception 'Invalid draw count.';
+  end if;
+
+  if jsonb_array_length(coalesce(p_room.bangumi_catalog_entries, '[]'::jsonb)) = 0 then
+    raise exception 'Bangumi catalog metadata is missing.';
+  end if;
+
+  select coalesce(array_agg(word order by first_ord), array[]::text[])
+  into v_seen_words
+  from (
+    select word, min(ord) as first_ord
+    from (
+      select trim(value) as word, ordinality as ord
+      from unnest(coalesce(p_team_words.seen_words, array[]::text[])) with ordinality as items(value, ordinality)
+    ) normalized_seen
+    where word <> ''
+    group by word
+  ) deduped_seen;
+
+  select coalesce(array_agg(word order by first_ord), array[]::text[])
+  into v_blocked_words
+  from (
+    select word, min(ord) as first_ord
+    from (
+      select trim(value) as word, ordinality as ord
+      from unnest(coalesce(p_blocked_words, array[]::text[])) with ordinality as items(value, ordinality)
+    ) normalized_blocked
+    where word <> ''
+    group by word
+  ) deduped_blocked;
+
+  for v_index in 1..p_count
+  loop
+    v_pick_title := null;
+    v_pick_subject_id := null;
+
+    select entries.title, entries.subject_id
+    into v_pick_title, v_pick_subject_id
+    from (
+      select min(subject_id) as subject_id, title
+      from (
+        select
+          case
+            when jsonb_typeof(entry->'subjectId') = 'number' then (entry->>'subjectId')::integer
+            else null
+          end as subject_id,
+          trim(coalesce(entry->>'title', '')) as title
+        from jsonb_array_elements(coalesce(p_room.bangumi_catalog_entries, '[]'::jsonb)) as items(entry)
+      ) catalog_items
+      where title <> ''
+        and not (title = any(v_blocked_words))
+        and not (title = any(v_words))
+      group by title
+    ) entries
+    where not (entries.title = any(v_seen_words))
+    order by random()
+    limit 1;
+
+    if v_pick_title is null then
+      v_seen_words := array[]::text[];
+
+      select entries.title, entries.subject_id
+      into v_pick_title, v_pick_subject_id
+      from (
+        select min(subject_id) as subject_id, title
+        from (
+          select
+            case
+              when jsonb_typeof(entry->'subjectId') = 'number' then (entry->>'subjectId')::integer
+              else null
+            end as subject_id,
+            trim(coalesce(entry->>'title', '')) as title
+          from jsonb_array_elements(coalesce(p_room.bangumi_catalog_entries, '[]'::jsonb)) as items(entry)
+        ) catalog_items
+        where title <> ''
+          and not (title = any(v_blocked_words))
+          and not (title = any(v_words))
+        group by title
+      ) entries
+      order by random()
+      limit 1;
+    end if;
+
+    if v_pick_title is null then
+      raise exception 'Not enough available Bangumi words.';
+    end if;
+
+    v_words := array_append(v_words, v_pick_title);
+    v_seen_words := array_append(v_seen_words, v_pick_title);
+    v_slots := v_slots || jsonb_build_array(
+      jsonb_build_object(
+        'text', v_pick_title,
+        'subjectId', v_pick_subject_id,
+        'sourceTitle', v_pick_title,
+        'showSourceTitle', false,
+        'characterOptions', '[]'::jsonb
+      )
+    );
+  end loop;
+
+  slots := public.normalize_team_word_slots(v_slots, true);
+  words := public.team_word_slots_to_words(slots);
+  seen_words := v_seen_words;
+  return next;
+end;
+$$;
+
 drop function if exists public.generate_team_words(uuid, text);
 
 create function public.generate_team_words(p_room_id uuid, p_team text)
@@ -2590,10 +3240,12 @@ set search_path = public
 as $$
 declare
   v_room public.rooms%rowtype;
+  v_team_words public.team_words%rowtype;
   v_other_team text;
   v_other_team_words text[];
   v_slots jsonb := '[]'::jsonb;
   v_words text[];
+  v_seen_words text[];
 begin
   perform public.assert_authenticated();
 
@@ -2639,6 +3291,26 @@ begin
   from public.team_words
   where room_id = p_room_id
     and team = v_other_team;
+
+  select *
+  into v_team_words
+  from public.team_words
+  where room_id = p_room_id
+    and team = p_team
+  for update;
+
+  select draw.slots, draw.words, draw.seen_words
+  into v_slots, v_words, v_seen_words
+  from public.draw_bangumi_word_slots(v_room, v_team_words, 4, coalesce(v_other_team_words, array[]::text[])) as draw;
+
+  update public.team_words
+  set words = v_words,
+      word_slots = v_slots,
+      seen_words = v_seen_words
+  where room_id = p_room_id
+    and team = p_team;
+
+  return v_slots;
 
   if jsonb_array_length(coalesce(v_room.bangumi_catalog_entries, '[]'::jsonb)) = 0 then
     raise exception '当前词库缺少动画元信息，请先回大厅重新载入 Bangumi 词库。';
@@ -2710,6 +3382,9 @@ declare
   v_current_words text[];
   v_current_word text;
   v_replacement jsonb;
+  v_replacement_slots jsonb;
+  v_replacement_words text[];
+  v_seen_words text[];
 begin
   perform public.assert_authenticated();
 
@@ -2768,6 +3443,29 @@ begin
   from public.team_words
   where room_id = p_room_id
     and team = v_other_team;
+
+  select draw.slots, draw.words, draw.seen_words
+  into v_replacement_slots, v_replacement_words, v_seen_words
+  from public.draw_bangumi_word_slots(
+    v_room,
+    v_team_words,
+    1,
+    coalesce(v_other_team_words, array[]::text[]) || coalesce(v_current_words, array[]::text[])
+  ) as draw;
+
+  v_replacement := v_replacement_slots->0;
+  v_current_slots := jsonb_set(v_current_slots, array[p_index::text], v_replacement, false);
+  v_current_slots := public.normalize_team_word_slots(v_current_slots, false);
+  v_current_words := public.team_word_slots_to_words(v_current_slots);
+
+  update public.team_words
+  set words = v_current_words,
+      word_slots = v_current_slots,
+      seen_words = v_seen_words
+  where room_id = p_room_id
+    and team = p_team;
+
+  return v_current_slots;
 
   if jsonb_array_length(coalesce(v_room.bangumi_catalog_entries, '[]'::jsonb)) = 0 then
     raise exception '当前词库缺少动画元信息，请先回大厅重新载入 Bangumi 词库。';
@@ -2988,17 +3686,24 @@ $$;
 grant usage on schema public to authenticated;
 grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
+grant execute on function public.get_room_join_status(text) to authenticated;
 grant execute on function public.join_room(text, text) to authenticated;
+grant execute on function public.join_as_spectator(text, text) to authenticated;
+grant execute on function public.join_midgame_room(text, text, text) to authenticated;
 grant execute on function public.cleanup_expired_rooms() to authenticated;
 grant execute on function public.leave_room(uuid) to authenticated;
+grant execute on function public.transfer_host(uuid, uuid) to authenticated;
 grant execute on function public.kick_player(uuid, uuid) to authenticated;
 grant execute on function public.disband_room(uuid) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer) to authenticated;
+grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer, boolean) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
+grant execute on function public.update_self_spectator(uuid, boolean) to authenticated;
 grant execute on function public.clear_all_seats(uuid) to authenticated;
 grant execute on function public.start_game(uuid) to authenticated;
+grant execute on function public.draw_bangumi_word_slots(public.rooms, public.team_words, integer, text[]) to authenticated;
 grant execute on function public.generate_team_words(uuid, text) to authenticated;
 grant execute on function public.replace_team_word_slot(uuid, text, integer) to authenticated;
 grant execute on function public.save_team_words(uuid, text, text[]) to authenticated;
