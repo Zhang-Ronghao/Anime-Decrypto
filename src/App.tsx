@@ -1054,6 +1054,16 @@ function App() {
     return snapshot.players.find((player) => player.auth_user_id === sessionUserId) ?? null;
   }, [sessionUserId, snapshot]);
 
+  useEffect(() => {
+    if (!hostTransferDialogOpen) {
+      return;
+    }
+
+    if (!snapshot || snapshot.room.phase !== 'lobby' || !self?.is_host) {
+      setHostTransferDialogOpen(false);
+    }
+  }, [hostTransferDialogOpen, self?.is_host, snapshot]);
+
   const currentRoundSubmissions = useMemo(() => {
     if (!snapshot) {
       return [];
@@ -2176,6 +2186,7 @@ function App() {
       return;
     }
 
+    setHostTransferDialogOpen(false);
     const result = await withAction(`transfer-host-${player.id}`, () => transferHost(snapshot.room.id, player.id), {
       refreshRoomId: snapshot.room.id,
     });
@@ -2794,7 +2805,7 @@ function App() {
             <article className="panel">
               <div className="roster-panel-head">
                 <h2>房间玩家</h2>
-                {self.is_host ? (
+                {self.is_host && snapshot.room.phase === 'lobby' ? (
                   <button
                     className="ghost-button roster-transfer-button"
                     disabled={hostTransferCandidates.length === 0 || busyKey !== null}
@@ -3384,7 +3395,7 @@ function App() {
         </>
       )}
 
-      {hostTransferDialogOpen && snapshot && self?.is_host ? (
+      {hostTransferDialogOpen && snapshot?.room.phase === 'lobby' && self?.is_host ? (
         <div
           className="modal-backdrop"
           onClick={(event) => {
