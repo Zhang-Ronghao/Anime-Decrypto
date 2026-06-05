@@ -91,6 +91,77 @@ update public.rooms
 set bangumi_catalog_word_count = coalesce(array_length(bangumi_catalog_words, 1), 0)
 where bangumi_catalog_word_count <> coalesce(array_length(bangumi_catalog_words, 1), 0);
 
+create table if not exists public.room_bangumi_catalog_entries (
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  subject_id integer not null,
+  title text not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  primary key (room_id, subject_id)
+);
+
+insert into public.room_bangumi_catalog_entries (room_id, subject_id, title)
+select room_id, subject_id, title
+from (
+  select
+    rooms.id as room_id,
+    case
+      when jsonb_typeof(entry->'subjectId') = 'number' then (entry->>'subjectId')::integer
+      else null
+    end as subject_id,
+    trim(coalesce(entry->>'title', '')) as title
+  from public.rooms
+  cross join lateral jsonb_array_elements(coalesce(public.rooms.bangumi_catalog_entries, '[]'::jsonb)) as items(entry)
+) migrated_entries
+where subject_id is not null
+  and title <> ''
+on conflict (room_id, subject_id)
+do update set title = excluded.title;
+
+insert into public.room_bangumi_catalog_entries (room_id, subject_id, title)
+select room_id, subject_id, title
+from (
+  select
+    rooms.id as room_id,
+    -(ordinality::integer) as subject_id,
+    trim(value) as title
+  from public.rooms
+  cross join lateral unnest(coalesce(public.rooms.bangumi_catalog_words, array[]::text[])) with ordinality as items(value, ordinality)
+) migrated_words
+where title <> ''
+  and not exists (
+    select 1
+    from public.room_bangumi_catalog_entries existing
+    where existing.room_id = migrated_words.room_id
+      and existing.title = migrated_words.title
+  )
+on conflict (room_id, subject_id)
+do update set title = excluded.title;
+
+update public.rooms
+set bangumi_catalog_word_count = catalog_counts.word_count
+from (
+  select room_id, count(*)::integer as word_count
+  from public.room_bangumi_catalog_entries
+  group by room_id
+) catalog_counts
+where public.rooms.id = catalog_counts.room_id
+  and public.rooms.bangumi_catalog_word_count <> catalog_counts.word_count;
+
+update public.rooms
+set bangumi_catalog_word_count = 0
+where bangumi_catalog_word_count <> 0
+  and not exists (
+    select 1
+    from public.room_bangumi_catalog_entries
+    where room_bangumi_catalog_entries.room_id = public.rooms.id
+  );
+
+update public.rooms
+set bangumi_catalog_entries = '[]'::jsonb,
+    bangumi_catalog_words = array[]::text[]
+where jsonb_array_length(coalesce(bangumi_catalog_entries, '[]'::jsonb)) > 0
+   or coalesce(array_length(bangumi_catalog_words, 1), 0) > 0;
+
 alter table public.rooms drop constraint if exists rooms_seat_count_check;
 alter table public.rooms
 add constraint rooms_seat_count_check
@@ -407,6 +478,7 @@ alter table public.round_submissions enable row level security;
 alter table public.player_notifications enable row level security;
 alter table public.team_word_feedback_requests enable row level security;
 alter table public.team_word_feedback_responses enable row level security;
+alter table public.room_bangumi_catalog_entries enable row level security;
 
 drop policy if exists "rooms_select_member" on public.rooms;
 create policy "rooms_select_member"
@@ -503,6 +575,13 @@ on public.player_notifications
 for select
 to authenticated
 using (auth_user_id = auth.uid());
+
+drop policy if exists "room_bangumi_catalog_entries_select_member" on public.room_bangumi_catalog_entries;
+create policy "room_bangumi_catalog_entries_select_member"
+on public.room_bangumi_catalog_entries
+for select
+to authenticated
+using (public.is_room_member(room_id));
 
 create or replace function public.generate_room_code()
 returns text
@@ -3300,7 +3379,11 @@ begin
     raise exception 'Invalid draw count.';
   end if;
 
-  if jsonb_array_length(coalesce(p_room.bangumi_catalog_entries, '[]'::jsonb)) = 0 then
+  if not exists (
+    select 1
+    from public.room_bangumi_catalog_entries
+    where room_id = p_room.id
+  ) then
     raise exception '当前房间没有加入 Bangumi 词库，请先在大厅载入词库，或手动填写词语。';
   end if;
 
@@ -3338,13 +3421,9 @@ begin
     from (
       select min(subject_id) as subject_id, title
       from (
-        select
-          case
-            when jsonb_typeof(entry->'subjectId') = 'number' then (entry->>'subjectId')::integer
-            else null
-          end as subject_id,
-          trim(coalesce(entry->>'title', '')) as title
-        from jsonb_array_elements(coalesce(p_room.bangumi_catalog_entries, '[]'::jsonb)) as items(entry)
+        select subject_id, trim(title) as title
+        from public.room_bangumi_catalog_entries
+        where room_id = p_room.id
       ) catalog_items
       where title <> ''
         and not (title = any(v_blocked_words))
@@ -3363,13 +3442,9 @@ begin
       from (
         select min(subject_id) as subject_id, title
         from (
-          select
-            case
-              when jsonb_typeof(entry->'subjectId') = 'number' then (entry->>'subjectId')::integer
-              else null
-            end as subject_id,
-            trim(coalesce(entry->>'title', '')) as title
-          from jsonb_array_elements(coalesce(p_room.bangumi_catalog_entries, '[]'::jsonb)) as items(entry)
+          select subject_id, trim(title) as title
+          from public.room_bangumi_catalog_entries
+          where room_id = p_room.id
         ) catalog_items
         where title <> ''
           and not (title = any(v_blocked_words))
@@ -4108,7 +4183,7 @@ end;
 $$;
 
 grant usage on schema public to authenticated;
-grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications, public.team_word_feedback_requests, public.team_word_feedback_responses to authenticated;
+grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications, public.team_word_feedback_requests, public.team_word_feedback_responses, public.room_bangumi_catalog_entries to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
 grant execute on function public.get_room_join_status(text) to authenticated;
 grant execute on function public.join_room(text, text) to authenticated;

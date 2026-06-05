@@ -8,6 +8,7 @@ const corsHeaders = {
 const USER_AGENT = 'Zhang-Ronghao/Anime-Decrypto (https://github.com/Zhang-Ronghao/Anime-Decrypto)';
 const BANGUMI_API_BASE = 'https://api.bgm.tv/v0';
 const PAGE_SIZE = 50;
+const CATALOG_INSERT_CHUNK_SIZE = 500;
 const ALLOWED_COLLECTION_TYPES = [1, 2, 3, 4, 5] as const;
 
 interface RequestBody {
@@ -384,13 +385,38 @@ Deno.serve(async (request) => {
     }
 
     const updatedAt = new Date().toISOString();
+    const { error: deleteCatalogError } = await supabase
+      .from('room_bangumi_catalog_entries')
+      .delete()
+      .eq('room_id', body.roomId);
+
+    if (deleteCatalogError) {
+      throw deleteCatalogError;
+    }
+
+    const catalogRows = entries.map((entry) => ({
+      room_id: body.roomId,
+      subject_id: entry.subjectId,
+      title: entry.title,
+    }));
+
+    for (let index = 0; index < catalogRows.length; index += CATALOG_INSERT_CHUNK_SIZE) {
+      const { error: insertCatalogError } = await supabase
+        .from('room_bangumi_catalog_entries')
+        .insert(catalogRows.slice(index, index + CATALOG_INSERT_CHUNK_SIZE));
+
+      if (insertCatalogError) {
+        throw insertCatalogError;
+      }
+    }
+
     const { error: updateError } = await supabase
       .from('rooms')
       .update({
         bangumi_catalog_inputs: normalizedInputs,
         bangumi_catalog_types: normalizedCollectionTypes,
-        bangumi_catalog_entries: entries,
-        bangumi_catalog_words: entries.map((entry) => entry.title),
+        bangumi_catalog_entries: [],
+        bangumi_catalog_words: [],
         bangumi_catalog_word_count: entries.length,
         bangumi_catalog_updated_at: updatedAt,
       })

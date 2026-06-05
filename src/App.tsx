@@ -9,7 +9,14 @@ import {
   disbandRoom,
   extractBangumiCharacters,
   fetchBangumiCatalogWords,
+  fetchRoomCore,
   fetchRoomSnapshot,
+  fetchRoomPlayers,
+  fetchRoundCodes,
+  fetchRoundSubmissions,
+  fetchTeamWordFeedbackRequests,
+  fetchTeamWordFeedbackResponses,
+  fetchTeamWords,
   getRoomJoinStatus,
   generateTeamWords,
   joinRoom,
@@ -29,6 +36,7 @@ import {
   submitTeamWordFeedbackBatch,
   subscribeToSelfNotifications,
   subscribeToRoom,
+  type RoomSubscriptionTable,
   type RoomSubscriptionStatus,
   terminateGame,
   transferHost,
@@ -146,6 +154,8 @@ const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
   decodeMinutes: 2,
   interceptMinutes: 2,
 };
+const FULL_REFRESH_MIN_INTERVAL_MS = 800;
+const REALTIME_REFRESH_DEBOUNCE_MS = 400;
 
 interface HomeFooterLinkItemProps {
   label: string;
@@ -754,7 +764,12 @@ function isRoomMembershipLostError(error: unknown): boolean {
 
 function App() {
   const snapshotRequestIdRef = useRef(0);
+  const snapshotRef = useRef<RoomSnapshot | null>(null);
   const realtimeRefreshTimerRef = useRef<number | null>(null);
+  const refreshInFlightRef = useRef<Promise<boolean> | null>(null);
+  const lastFullRefreshAtRef = useRef(0);
+  const pendingRealtimeTablesRef = useRef<Set<RoomSubscriptionTable>>(new Set());
+  const showAllRoundRecordsRef = useRef(false);
   const teamWordDraftRevisionRef = useRef(0);
   const teamWordServerSyncFreezeUntilRef = useRef(0);
   const [booting, setBooting] = useState(true);
@@ -792,6 +807,14 @@ function App() {
     requestId: string | null;
     values: TeamWordFeedbackDraftValue[];
   }>(() => ({ requestId: null, values: emptyTeamWordFeedbackDraft() }));
+
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  useEffect(() => {
+    showAllRoundRecordsRef.current = showAllRoundRecords;
+  }, [showAllRoundRecords]);
 
   function invalidateTeamWordDraftAsyncResults() {
     teamWordDraftRevisionRef.current += 1;
@@ -869,15 +892,19 @@ function App() {
       return;
     }
 
-    const scheduleRealtimeRefresh = () => {
+    const scheduleRealtimeRefresh = (table: RoomSubscriptionTable) => {
+      pendingRealtimeTablesRef.current.add(table);
+
       if (realtimeRefreshTimerRef.current !== null) {
         window.clearTimeout(realtimeRefreshTimerRef.current);
       }
 
       realtimeRefreshTimerRef.current = window.setTimeout(() => {
         realtimeRefreshTimerRef.current = null;
-        void refreshRoomSnapshot(roomId, { silentError: true });
-      }, 100);
+        const tables = Array.from(pendingRealtimeTablesRef.current);
+        pendingRealtimeTablesRef.current.clear();
+        void refreshRoomParts(roomId, tables, { silentError: true });
+      }, REALTIME_REFRESH_DEBOUNCE_MS);
     };
 
     const handleSubscriptionStatus = (status: RoomSubscriptionStatus) => {
@@ -901,6 +928,7 @@ function App() {
         window.clearTimeout(realtimeRefreshTimerRef.current);
         realtimeRefreshTimerRef.current = null;
       }
+      pendingRealtimeTablesRef.current.clear();
       void channel.unsubscribe();
     };
   }, [roomId, sessionUserId]);
@@ -965,22 +993,125 @@ function App() {
     };
   }, [roomId, sessionUserId]);
 
-  async function refreshRoomSnapshot(nextRoomId: string, options?: { silentError?: boolean }) {
+  async function refreshRoomSnapshot(nextRoomId: string, options?: { silentError?: boolean; force?: boolean }) {
+    if (!options?.force && refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const refreshPromise = (async () => {
+      const elapsedSinceLastRefresh = Date.now() - lastFullRefreshAtRef.current;
+      if (!options?.force && elapsedSinceLastRefresh < FULL_REFRESH_MIN_INTERVAL_MS) {
+        await new Promise((resolve) => window.setTimeout(resolve, FULL_REFRESH_MIN_INTERVAL_MS - elapsedSinceLastRefresh));
+      }
+
+      const requestId = snapshotRequestIdRef.current + 1;
+      snapshotRequestIdRef.current = requestId;
+      lastFullRefreshAtRef.current = Date.now();
+
+      try {
+        const nextSnapshot = await fetchRoomSnapshot(nextRoomId, {
+          fullRoundHistory: showAllRoundRecordsRef.current,
+        });
+        if (snapshotRequestIdRef.current !== requestId) {
+          return true;
+        }
+
+        if (sessionUserId && !nextSnapshot.players.some((player) => player.auth_user_id === sessionUserId)) {
+          resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+          return false;
+        }
+
+        setSnapshot(nextSnapshot);
+        return true;
+      } catch (error) {
+        if (snapshotRequestIdRef.current !== requestId) {
+          return true;
+        }
+
+        if (isRoomMembershipLostError(error)) {
+          resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+        } else if (!options?.silentError) {
+          setActionError(getErrorMessage(error, '读取房间失败'));
+        }
+
+        return false;
+      }
+    })();
+
+    refreshInFlightRef.current = refreshPromise;
+
+    try {
+      return await refreshPromise;
+    } finally {
+      if (refreshInFlightRef.current === refreshPromise) {
+        refreshInFlightRef.current = null;
+      }
+    }
+  }
+
+  async function refreshRoomParts(
+    nextRoomId: string,
+    tables: RoomSubscriptionTable[],
+    options?: { silentError?: boolean },
+  ) {
+    if (tables.length === 0) {
+      return true;
+    }
+
+    if (!snapshotRef.current) {
+      return refreshRoomSnapshot(nextRoomId, { silentError: options?.silentError });
+    }
+
+    const tableSet = new Set(tables);
     const requestId = snapshotRequestIdRef.current + 1;
     snapshotRequestIdRef.current = requestId;
 
     try {
-      const nextSnapshot = await fetchRoomSnapshot(nextRoomId);
+      const [
+        room,
+        players,
+        teamWords,
+        roundCodes,
+        submissions,
+        teamWordFeedbackRequests,
+        teamWordFeedbackResponses,
+      ] = await Promise.all([
+        tableSet.has('rooms') ? fetchRoomCore(nextRoomId) : Promise.resolve(null),
+        tableSet.has('room_players') ? fetchRoomPlayers(nextRoomId) : Promise.resolve(null),
+        tableSet.has('rooms') || tableSet.has('team_words') ? fetchTeamWords(nextRoomId) : Promise.resolve(null),
+        tableSet.has('round_codes') ? fetchRoundCodes(nextRoomId) : Promise.resolve(null),
+        tableSet.has('round_submissions')
+          ? fetchRoundSubmissions(nextRoomId, { full: showAllRoundRecordsRef.current })
+          : Promise.resolve(null),
+        tableSet.has('team_word_feedback_requests') ? fetchTeamWordFeedbackRequests(nextRoomId) : Promise.resolve(null),
+        tableSet.has('team_word_feedback_responses') ? fetchTeamWordFeedbackResponses(nextRoomId) : Promise.resolve(null),
+      ]);
+
       if (snapshotRequestIdRef.current !== requestId) {
         return true;
       }
 
-      if (sessionUserId && !nextSnapshot.players.some((player) => player.auth_user_id === sessionUserId)) {
+      if (sessionUserId && players && !players.some((player) => player.auth_user_id === sessionUserId)) {
         resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
         return false;
       }
 
-      setSnapshot(nextSnapshot);
+      setSnapshot((current) => {
+        if (!current || current.room.id !== nextRoomId) {
+          return current;
+        }
+
+        return {
+          room: room ?? current.room,
+          players: players ?? current.players,
+          teamWords: teamWords ?? current.teamWords,
+          roundCodes: roundCodes ?? current.roundCodes,
+          submissions: submissions ?? current.submissions,
+          teamWordFeedbackRequests: teamWordFeedbackRequests ?? current.teamWordFeedbackRequests,
+          teamWordFeedbackResponses: teamWordFeedbackResponses ?? current.teamWordFeedbackResponses,
+        };
+      });
+
       return true;
     } catch (error) {
       if (snapshotRequestIdRef.current !== requestId) {
@@ -1533,7 +1664,7 @@ function App() {
       const result = await action();
 
       if (options?.refreshRoomId) {
-        const refreshed = await refreshRoomSnapshot(options.refreshRoomId);
+        const refreshed = await refreshRoomSnapshot(options.refreshRoomId, { force: true });
         if (!refreshed) {
           return null;
         }
@@ -1554,6 +1685,9 @@ function App() {
 
   function resetRoomState(message?: string) {
     snapshotRequestIdRef.current += 1;
+    snapshotRef.current = null;
+    refreshInFlightRef.current = null;
+    pendingRealtimeTablesRef.current.clear();
     if (realtimeRefreshTimerRef.current !== null) {
       window.clearTimeout(realtimeRefreshTimerRef.current);
       realtimeRefreshTimerRef.current = null;
@@ -1574,7 +1708,10 @@ function App() {
     setInterceptGuess('');
     setBangumiCatalogModalOpen(false);
     setBangumiCatalogBrowserOpen(false);
+    setBangumiCatalogBrowserWords([]);
     setPendingMidgameJoin(null);
+    showAllRoundRecordsRef.current = false;
+    setShowAllRoundRecords(false);
     setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
     setBangumiCatalogTypesDraft(defaultBangumiCatalogTypes());
     setActionError(message ?? null);
@@ -1671,6 +1808,27 @@ function App() {
   function closeBangumiCatalogBrowser() {
     setBangumiCatalogBrowserOpen(false);
     setBangumiCatalogBrowserWords([]);
+  }
+
+  async function handleRoundRecordsToggle() {
+    if (!snapshot) {
+      return;
+    }
+
+    if (showAllRoundRecords) {
+      setShowAllRoundRecords(false);
+      return;
+    }
+
+    const submissions = await withAction('load-round-records', () =>
+      fetchRoundSubmissions(snapshot.room.id, { full: true }),
+    );
+    if (submissions === null) {
+      return;
+    }
+
+    setSnapshot((current) => (current && current.room.id === snapshot.room.id ? { ...current, submissions } : current));
+    setShowAllRoundRecords(true);
   }
 
   function updateBangumiCatalogInput(index: number, value: string) {
@@ -3617,7 +3775,8 @@ function App() {
                     <h3>我方轮次记录</h3>
                     <button
                       className="ghost-button record-toggle-button"
-                      onClick={() => setShowAllRoundRecords((current) => !current)}
+                      disabled={busyKey !== null}
+                      onClick={() => void handleRoundRecordsToggle()}
                       type="button"
                     >
                       {showAllRoundRecords ? '隐藏信息' : '显示全部'}
@@ -3696,7 +3855,8 @@ function App() {
                     <h3>对方轮次记录</h3>
                     <button
                       className="ghost-button record-toggle-button"
-                      onClick={() => setShowAllRoundRecords((current) => !current)}
+                      disabled={busyKey !== null}
+                      onClick={() => void handleRoundRecordsToggle()}
                       type="button"
                     >
                       {showAllRoundRecords ? '隐藏信息' : '显示全部'}

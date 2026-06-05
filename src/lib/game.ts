@@ -197,6 +197,22 @@ const TEAM_WORD_FEEDBACK_RESPONSES_SNAPSHOT_COLUMNS = compactSelectColumns(`
   updated_at
 `);
 
+const DEFAULT_ROUND_HISTORY_ROW_LIMIT = 16;
+
+function normalizeTeamWordsRecords(records: TeamWordsRecord[]): TeamWordsRecord[] {
+  return records.map((entry) => ({
+    ...entry,
+    word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
+  }));
+}
+
+function normalizeFeedbackRequestRecords(records: TeamWordFeedbackRequestRecord[]): TeamWordFeedbackRequestRecord[] {
+  return records.map((entry) => ({
+    ...entry,
+    word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
+  }));
+}
+
 export async function createRoom(playerName: string, desiredRoomCode?: string) {
   const client = assertSupabase();
   const { data, error } = await client.rpc('create_room', {
@@ -673,107 +689,190 @@ export async function terminateGame(roomId: string) {
   }
 }
 
-export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
+export async function fetchRoomSnapshot(
+  roomId: string,
+  options: { fullRoundHistory?: boolean } = {},
+): Promise<RoomSnapshot> {
+  const [
+    room,
+    players,
+    teamWords,
+    roundCodes,
+    submissions,
+    teamWordFeedbackRequests,
+    teamWordFeedbackResponses,
+  ] = await Promise.all([
+    fetchRoomCore(roomId),
+    fetchRoomPlayers(roomId),
+    fetchTeamWords(roomId),
+    fetchRoundCodes(roomId),
+    fetchRoundSubmissions(roomId, { full: options.fullRoundHistory }),
+    fetchTeamWordFeedbackRequests(roomId),
+    fetchTeamWordFeedbackResponses(roomId),
+  ]);
+
+  return {
+    room,
+    players,
+    teamWords,
+    teamWordFeedbackRequests,
+    teamWordFeedbackResponses,
+    roundCodes,
+    submissions,
+  };
+}
+
+export async function fetchRoomCore(roomId: string): Promise<RoomRecord> {
   const client = assertSupabase();
-  const roomQuery = client.from('rooms').select(ROOM_SNAPSHOT_COLUMNS).eq('id', roomId).single();
-  const playersQuery = client
+  const { data, error } = await client.from('rooms').select(ROOM_SNAPSHOT_COLUMNS).eq('id', roomId).single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as unknown as RoomRecord;
+}
+
+export async function fetchRoomPlayers(roomId: string): Promise<PlayerRecord[]> {
+  const client = assertSupabase();
+  const { data, error } = await client
     .from('room_players')
     .select(PLAYER_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('team', { ascending: true })
     .order('team_seat', { ascending: true, nullsFirst: false })
     .order('joined_at', { ascending: true });
-  const wordsQuery = client
+
+  if (error) {
+    throw error;
+  }
+
+  return ((data ?? []) as unknown) as PlayerRecord[];
+}
+
+export async function fetchTeamWords(roomId: string): Promise<TeamWordsRecord[]> {
+  const client = assertSupabase();
+  const { data, error } = await client
     .from('team_words')
     .select(TEAM_WORDS_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('team', { ascending: true });
-  const codesQuery = client
+
+  if (error) {
+    throw error;
+  }
+
+  return normalizeTeamWordsRecords(((data ?? []) as unknown) as TeamWordsRecord[]);
+}
+
+export async function fetchRoundCodes(roomId: string): Promise<RoundCodeRecord[]> {
+  const client = assertSupabase();
+  const { data, error } = await client
     .from('round_codes')
     .select(ROUND_CODES_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('round_number', { ascending: true });
-  const submissionsQuery = client
+
+  if (error) {
+    throw error;
+  }
+
+  return ((data ?? []) as unknown) as RoundCodeRecord[];
+}
+
+export async function fetchRoundSubmissions(
+  roomId: string,
+  options: { full?: boolean } = {},
+): Promise<RoundSubmissionRecord[]> {
+  const client = assertSupabase();
+  let query = client
     .from('round_submissions')
     .select(ROUND_SUBMISSIONS_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('round_number', { ascending: false })
     .order('team', { ascending: true });
-  const feedbackRequestsQuery = client
+
+  if (!options.full) {
+    query = query.limit(DEFAULT_ROUND_HISTORY_ROW_LIMIT);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return (((data ?? []) as unknown) as RoundSubmissionRecord[]).sort((a, b) => {
+    if (a.round_number !== b.round_number) {
+      return b.round_number - a.round_number;
+    }
+
+    return a.team.localeCompare(b.team);
+  });
+}
+
+export async function fetchTeamWordFeedbackRequests(roomId: string): Promise<TeamWordFeedbackRequestRecord[]> {
+  const client = assertSupabase();
+  const { data, error } = await client
     .from('team_word_feedback_requests')
     .select(TEAM_WORD_FEEDBACK_REQUESTS_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('request_number', { ascending: false });
-  const feedbackResponsesQuery = client
+
+  if (error) {
+    throw error;
+  }
+
+  return normalizeFeedbackRequestRecords(((data ?? []) as unknown) as TeamWordFeedbackRequestRecord[]);
+}
+
+export async function fetchTeamWordFeedbackResponses(roomId: string): Promise<TeamWordFeedbackResponseRecord[]> {
+  const client = assertSupabase();
+  const { data, error } = await client
     .from('team_word_feedback_responses')
     .select(TEAM_WORD_FEEDBACK_RESPONSES_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('slot_index', { ascending: true })
     .order('created_at', { ascending: true });
 
-  const [
-    roomResult,
-    playersResult,
-    wordsResult,
-    codesResult,
-    submissionsResult,
-    feedbackRequestsResult,
-    feedbackResponsesResult,
-  ] = await Promise.all([
-    roomQuery,
-    playersQuery,
-    wordsQuery,
-    codesQuery,
-    submissionsQuery,
-    feedbackRequestsQuery,
-    feedbackResponsesQuery,
-  ]);
+  if (error) {
+    throw error;
+  }
 
-  if (roomResult.error) throw roomResult.error;
-  if (playersResult.error) throw playersResult.error;
-  if (wordsResult.error) throw wordsResult.error;
-  if (codesResult.error) throw codesResult.error;
-  if (submissionsResult.error) throw submissionsResult.error;
-  if (feedbackRequestsResult.error) throw feedbackRequestsResult.error;
-  if (feedbackResponsesResult.error) throw feedbackResponsesResult.error;
-
-  return {
-    room: roomResult.data as unknown as RoomRecord,
-    players: ((playersResult.data ?? []) as unknown) as PlayerRecord[],
-    teamWords: (((wordsResult.data ?? []) as unknown) as TeamWordsRecord[]).map((entry) => ({
-      ...entry,
-      word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
-    })),
-    teamWordFeedbackRequests: (((feedbackRequestsResult.data ?? []) as unknown) as TeamWordFeedbackRequestRecord[]).map((entry) => ({
-      ...entry,
-      word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
-    })),
-    teamWordFeedbackResponses: ((feedbackResponsesResult.data ?? []) as unknown) as TeamWordFeedbackResponseRecord[],
-    roundCodes: ((codesResult.data ?? []) as unknown) as RoundCodeRecord[],
-    submissions: ((submissionsResult.data ?? []) as unknown) as RoundSubmissionRecord[],
-  };
+  return ((data ?? []) as unknown) as TeamWordFeedbackResponseRecord[];
 }
 
 export async function fetchBangumiCatalogWords(roomId: string): Promise<string[]> {
   const client = assertSupabase();
-  const { data, error } = await client.from('rooms').select('bangumi_catalog_words').eq('id', roomId).single();
+  const { data, error } = await client
+    .from('room_bangumi_catalog_entries')
+    .select('title')
+    .eq('room_id', roomId)
+    .order('title', { ascending: true });
 
   if (error) {
     throw error;
   }
 
-  const value = data as { bangumi_catalog_words?: unknown } | null;
-  return Array.isArray(value?.bangumi_catalog_words)
-    ? value.bangumi_catalog_words.filter((item): item is string => typeof item === 'string')
-    : [];
+  return (((data ?? []) as unknown) as Array<{ title?: unknown }>)
+    .map((entry) => (typeof entry.title === 'string' ? entry.title : ''))
+    .filter((title) => title.length > 0);
 }
 
 export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
+export type RoomSubscriptionTable =
+  | 'rooms'
+  | 'room_players'
+  | 'team_words'
+  | 'round_codes'
+  | 'round_submissions'
+  | 'team_word_feedback_requests'
+  | 'team_word_feedback_responses';
 export type SelfNotificationKind = 'kicked';
 
 export function subscribeToRoom(
   roomId: string,
-  onChange: () => void,
+  onChange: (table: RoomSubscriptionTable) => void,
   onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
 ): RealtimeChannel {
   const client = assertSupabase();
@@ -782,37 +881,37 @@ export function subscribeToRoom(
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
-      onChange,
+      () => onChange('rooms'),
     )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` },
-      onChange,
+      () => onChange('room_players'),
     )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'team_words', filter: `room_id=eq.${roomId}` },
-      onChange,
+      () => onChange('team_words'),
     )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'round_codes', filter: `room_id=eq.${roomId}` },
-      onChange,
+      () => onChange('round_codes'),
     )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'round_submissions', filter: `room_id=eq.${roomId}` },
-      onChange,
+      () => onChange('round_submissions'),
     )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'team_word_feedback_requests', filter: `room_id=eq.${roomId}` },
-      onChange,
+      () => onChange('team_word_feedback_requests'),
     )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'team_word_feedback_responses', filter: `room_id=eq.${roomId}` },
-      onChange,
+      () => onChange('team_word_feedback_responses'),
     )
     .subscribe((status, error) => {
       onStatus?.(status as RoomSubscriptionStatus, error);
