@@ -3769,11 +3769,14 @@ function App() {
                       <span className="action-line-head-cell">本轮线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
                       {!isGuessFeedbackInputMode ? (
-                        <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
-                          {[1, 2, 3, 4].map((digit) => (
-                            <span key={digit}>词语{digit}</span>
-                          ))}
-                        </span>
+                        <div className="guess-feedback-head">
+                          <span className="guess-feedback-title">队友建议</span>
+                          <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
+                            {[1, 2, 3, 4].map((digit) => (
+                              <span key={digit}>词语{digit}</span>
+                            ))}
+                          </span>
+                        </div>
                       ) : null}
                     </div>
                     {(myTeamSubmission?.clues ?? []).map((clue, index) => {
@@ -3837,8 +3840,9 @@ function App() {
                     })}
                     {canSubmitDecodeFeedback ? (
                       <div className="guess-feedback-toolbar">
+                        <span aria-hidden="true" />
                         <button
-                          className="primary-button word-feedback-submit-button"
+                          className="primary-button guess-feedback-submit-button"
                           disabled={busyKey !== null || !canSubmitGuessFeedbackDraft}
                           onClick={() => void handleRoundGuessFeedbackSubmit()}
                           type="button"
@@ -3854,11 +3858,14 @@ function App() {
                       <span className="action-line-head-cell">对方线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
                       {!isGuessFeedbackInputMode ? (
-                        <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
-                          {[1, 2, 3, 4].map((digit) => (
-                            <span key={digit}>词语{digit}</span>
-                          ))}
-                        </span>
+                        <div className="guess-feedback-head">
+                          <span className="guess-feedback-title">队友建议</span>
+                          <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
+                            {[1, 2, 3, 4].map((digit) => (
+                              <span key={digit}>词语{digit}</span>
+                            ))}
+                          </span>
+                        </div>
                       ) : null}
                     </div>
                     {(opponentSubmission?.clues ?? []).map((clue, index) => {
@@ -3922,8 +3929,9 @@ function App() {
                     })}
                     {canSubmitInterceptFeedback ? (
                       <div className="guess-feedback-toolbar">
+                        <span aria-hidden="true" />
                         <button
-                          className="primary-button word-feedback-submit-button"
+                          className="primary-button guess-feedback-submit-button"
                           disabled={busyKey !== null || !canSubmitGuessFeedbackDraft}
                           onClick={() => void handleRoundGuessFeedbackSubmit()}
                           type="button"
