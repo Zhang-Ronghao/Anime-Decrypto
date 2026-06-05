@@ -884,7 +884,12 @@ select:focus {
 
 .action-line-guess,
 .action-line-head-guess {
-  grid-template-columns: minmax(190px, 1fr) 92px minmax(150px, 0.68fr);
+  grid-template-columns: minmax(190px, 1fr) minmax(96px, 0.28fr) minmax(260px, 0.9fr);
+}
+
+.action-line-guess-input,
+.action-line-head-guess-input {
+  grid-template-columns: minmax(190px, 0.72fr) minmax(260px, 1fr);
 }
 
 .action-line-word-assignment {
@@ -971,10 +976,15 @@ select:focus {
 
 .action-line .guess-digit-select,
 .action-line .guess-feedback-select {
-  width: 72px;
-  max-width: 72px;
+  width: 100%;
+  max-width: 140px;
   justify-self: center;
   text-align: center;
+}
+
+.action-line .guess-feedback-select-wide {
+  max-width: none;
+  justify-self: stretch;
 }
 
 .action-line input,
@@ -1148,6 +1158,48 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.guess-feedback-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center;
+  gap: 6px;
+}
+
+.guess-feedback-grid-head {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.guess-feedback-grid-head span {
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.guess-feedback-cell {
+  min-width: 0;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid rgba(176, 188, 204, 0.76);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.guess-feedback-cell-active {
+  border-color: rgba(91, 166, 105, 0.48);
+  background: #eef9f0;
+  color: #177a32;
 }
 
 .guess-feedback-summary {
@@ -2639,19 +2691,32 @@ code {
   }
 
   .action-line-guess {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(84px, 0.42fr) minmax(0, 1fr);
   }
 
   .action-line-head-guess {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(84px, 0.42fr) minmax(0, 1fr);
+  }
+
+  .action-line-guess-input,
+  .action-line-head-guess-input {
+    grid-template-columns: 1fr;
   }
 
   .action-line-head-guess > :first-child {
     display: none;
   }
 
+  .action-line-head-guess-input > :first-child {
+    display: none;
+  }
+
   .action-line-guess .line-clue {
     grid-column: 1 / -1;
+  }
+
+  .action-line-guess-input .line-clue {
+    grid-column: auto;
   }
 
   .guess-feedback-inline {
