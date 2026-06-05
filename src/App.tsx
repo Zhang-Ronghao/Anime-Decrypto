@@ -3112,15 +3112,6 @@ function App() {
                     确认词语
                   </button>
                 </div>
-              ) : canSubmitTeamWordFeedback ? (
-                <button
-                  className="primary-button"
-                  disabled={busyKey !== null || !canSubmitTeamWordFeedbackDraft}
-                  onClick={() => void handleSubmitTeamWordFeedbackDraft()}
-                  type="button"
-                >
-                  提交反馈
-                </button>
               ) : canSubmitClues ? (
                 <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleClueSubmit()} type="button">
                   提交线索
@@ -3157,7 +3148,7 @@ function App() {
                 {canViewWordAssignment ? (
                   <div className="action-lines">
                     <div className="action-line-head action-line-word-assignment">
-                      <div className="action-line-head-cell">位</div>
+                      <div className="action-line-head-cell">词语</div>
                       {showsDualWordColumns ? (
                         <div className="action-line-head-word-pair">
                           <div className="action-line-head-cell">动画名</div>
@@ -3350,6 +3341,19 @@ function App() {
                       );
                     })}
 
+                    {canSubmitTeamWordFeedback ? (
+                      <div className="word-feedback-submit-row">
+                        <button
+                          className="primary-button word-feedback-submit-button"
+                          disabled={busyKey !== null || !canSubmitTeamWordFeedbackDraft}
+                          onClick={() => void handleSubmitTeamWordFeedbackDraft()}
+                          type="button"
+                        >
+                          提交反馈
+                        </button>
+                      </div>
+                    ) : null}
+
                     <div className="assignment-toolbar">
                       <button
                         className="ghost-button"
@@ -3383,7 +3387,6 @@ function App() {
                       >
                         手动编辑
                       </button>
-                      <span className="assignment-tip">若词语过长可能显示不全，建议手动编辑</span>
                     </div>
                     {wordAssignmentNotice ? <p className="muted assignment-note">{wordAssignmentNotice}</p> : null}
                   </div>
