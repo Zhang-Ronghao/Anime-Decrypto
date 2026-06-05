@@ -3074,8 +3074,8 @@ function App() {
               <div className="action-body-main">
                 {canViewWordAssignment ? (
                   <div className="action-lines">
-                    <div className="action-line-head">
-                      <div className="action-line-head-cell">本队词位</div>
+                    <div className="action-line-head action-line-word-assignment">
+                      <div className="action-line-head-cell">位</div>
                       {showsDualWordColumns ? (
                         <div className="action-line-head-word-pair">
                           <div className="action-line-head-cell">动画名</div>
@@ -3084,44 +3084,107 @@ function App() {
                       ) : (
                         <div className="action-line-head-cell">填写词语</div>
                       )}
+                      <div className="action-line-head-cell">
+                        {latestTeamWordFeedbackRequest
+                          ? isLatestTeamWordFeedbackCurrent
+                            ? `反馈 ${latestTeamWordFeedbackRequest.request_number}`
+                            : '反馈已过期'
+                          : '反馈'}
+                      </div>
                     </div>
 
-                    {teamWordSlotsDraft.map((slot, index) => (
-                      <div className="action-line" key={`team-word-${index}`}>
-                        <span className={cn('code-word', `code-word-${teamTone(myTeam)}`)}>
-                          <b>{index + 1}</b>
-                          <span>{`位置 ${index + 1}`}</span>
-                        </span>
-                        <div
-                          className={cn('team-word-control', canReplaceGeneratedWords && 'team-word-control-with-replace')}
-                          key={`team-word-control-${teamWordDraftMode}-${index}`}
-                        >
-                          {teamWordDraftMode === 'characters' && slotShowsSourceTitle(slot) ? (
-                            <div className="team-word-pair">
-                              <input
-                                key={`team-word-title-${teamWordDraftMode}-${index}`}
-                                disabled={isWordAssignmentReadOnly || teamWordDraftMode === 'characters'}
-                                maxLength={48}
-                                onChange={(event) => updateTeamWordTitle(index, event.target.value)}
-                                placeholder={`动画名 ${index + 1}`}
-                                title={slot.sourceTitle ?? ''}
-                                value={slot.sourceTitle ?? ''}
-                              />
-                              {teamWordDraftMode === 'characters' ? (
-                                <select
-                                  key={`team-word-select-${index}`}
+                    {teamWordSlotsDraft.map((slot, index) => {
+                      const slotResponses = teamWordFeedbackResponses.filter((entry) => entry.slot_index === index);
+                      const responseByPlayerId = Object.fromEntries(
+                        slotResponses.map((entry) => [entry.player_id, entry]),
+                      ) as Record<string, TeamWordFeedbackResponseRecord>;
+                      const acceptedNames = slotResponses
+                        .filter((entry) => entry.accepted)
+                        .map((entry) => teamWordFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+                      const rejectedNames = slotResponses
+                        .filter((entry) => !entry.accepted)
+                        .map((entry) => teamWordFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+                      const pendingNames = myTeamFeedbackPlayers
+                        .filter((player) => !responseByPlayerId[player.id])
+                        .map((player) => player.player_name);
+                      const myFeedback =
+                        self && latestTeamWordFeedbackRequest
+                          ? teamWordFeedbackResponseByPlayerSlot[
+                              feedbackResponseKey(latestTeamWordFeedbackRequest.id, self.id, index)
+                            ]
+                          : undefined;
+
+                      return (
+                        <div className="action-line action-line-word-assignment" key={`team-word-${index}`}>
+                          <span className={cn('code-word', 'code-word-compact', `code-word-${teamTone(myTeam)}`)}>
+                            <b>{index + 1}</b>
+                          </span>
+                          <div
+                            className={cn('team-word-control', canReplaceGeneratedWords && 'team-word-control-with-replace')}
+                            key={`team-word-control-${teamWordDraftMode}-${index}`}
+                          >
+                            {teamWordDraftMode === 'characters' && slotShowsSourceTitle(slot) ? (
+                              <div className="team-word-pair">
+                                <input
+                                  key={`team-word-title-${teamWordDraftMode}-${index}`}
+                                  disabled={isWordAssignmentReadOnly || teamWordDraftMode === 'characters'}
+                                  maxLength={48}
+                                  onChange={(event) => updateTeamWordTitle(index, event.target.value)}
+                                  placeholder={`动画名 ${index + 1}`}
+                                  title={slot.sourceTitle ?? ''}
+                                  value={slot.sourceTitle ?? ''}
+                                />
+                                {teamWordDraftMode === 'characters' ? (
+                                  <select
+                                    key={`team-word-select-${index}`}
+                                    disabled={isWordAssignmentReadOnly}
+                                    onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
+                                    title={slot.text}
+                                    value={slot.text}
+                                  >
+                                    {slot.characterOptions.map((option) => (
+                                      <option key={option} value={option}>
+                                        {option}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
+                                    disabled={isWordAssignmentReadOnly}
+                                    maxLength={24}
+                                    onChange={(event) => updateTeamWord(index, event.target.value)}
+                                    placeholder={`角色名 ${index + 1}`}
+                                    title={slot.text}
+                                    value={slot.text}
+                                  />
+                                )}
+                              </div>
+                            ) : teamWordDraftMode === 'characters' && slot.characterOptions.length > 0 ? (
+                              <select
+                                key={`team-word-select-single-${index}`}
+                                disabled={isWordAssignmentReadOnly}
+                                onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
+                                title={slot.text}
+                                value={slot.text}
+                              >
+                                {slot.characterOptions.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : slotShowsSourceTitle(slot) ? (
+                              <div className="team-word-pair">
+                                <input
+                                  key={`team-word-title-${teamWordDraftMode}-${index}`}
                                   disabled={isWordAssignmentReadOnly}
-                                  onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
-                                  title={slot.text}
-                                  value={slot.text}
-                                >
-                                  {slot.characterOptions.map((option) => (
-                                    <option key={option} value={option}>
-                                      {option}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
+                                  maxLength={48}
+                                  onChange={(event) => updateTeamWordTitle(index, event.target.value)}
+                                  placeholder={`动画名 ${index + 1}`}
+                                  title={slot.sourceTitle ?? ''}
+                                  value={slot.sourceTitle ?? ''}
+                                />
                                 <input
                                   key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
                                   disabled={isWordAssignmentReadOnly}
@@ -3131,69 +3194,84 @@ function App() {
                                   title={slot.text}
                                   value={slot.text}
                                 />
-                              )}
-                            </div>
-                          ) : teamWordDraftMode === 'characters' && slot.characterOptions.length > 0 ? (
-                            <select
-                              key={`team-word-select-single-${index}`}
-                              disabled={isWordAssignmentReadOnly}
-                              onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
-                              title={slot.text}
-                              value={slot.text}
-                            >
-                              {slot.characterOptions.map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
-                          ) : slotShowsSourceTitle(slot) ? (
-                            <div className="team-word-pair">
+                              </div>
+                            ) : (
                               <input
-                                key={`team-word-title-${teamWordDraftMode}-${index}`}
-                                disabled={isWordAssignmentReadOnly}
-                                maxLength={48}
-                                onChange={(event) => updateTeamWordTitle(index, event.target.value)}
-                                placeholder={`动画名 ${index + 1}`}
-                                title={slot.sourceTitle ?? ''}
-                                value={slot.sourceTitle ?? ''}
-                              />
-                              <input
-                                key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
-                                disabled={isWordAssignmentReadOnly}
+                                key={`team-word-input-${teamWordDraftMode}-${index}`}
                                 maxLength={24}
+                                disabled={
+                                  isWordAssignmentReadOnly || teamWordDraftMode === 'generated' || teamWordDraftMode === 'characters'
+                                }
                                 onChange={(event) => updateTeamWord(index, event.target.value)}
-                                placeholder={`角色名 ${index + 1}`}
+                                placeholder={`填写第 ${index + 1} 个词语`}
                                 title={slot.text}
                                 value={slot.text}
                               />
-                            </div>
-                          ) : (
-                            <input
-                              key={`team-word-input-${teamWordDraftMode}-${index}`}
-                              maxLength={24}
-                              disabled={
-                                isWordAssignmentReadOnly || teamWordDraftMode === 'generated' || teamWordDraftMode === 'characters'
-                              }
-                              onChange={(event) => updateTeamWord(index, event.target.value)}
-                              placeholder={`填写第 ${index + 1} 个词语`}
-                              title={slot.text}
-                              value={slot.text}
-                            />
-                          )}
-                          {canReplaceGeneratedWords ? (
-                            <button
-                              className="ghost-button team-word-replace-button"
-                              disabled={isWordAssignmentReadOnly || busyKey !== null}
-                              onClick={() => void handleReplaceTeamWord(index)}
-                              type="button"
-                            >
-                              更换
-                            </button>
-                          ) : null}
+                            )}
+                            {canReplaceGeneratedWords ? (
+                              <button
+                                className="ghost-button team-word-replace-button"
+                                disabled={isWordAssignmentReadOnly || busyKey !== null}
+                                onClick={() => void handleReplaceTeamWord(index)}
+                                type="button"
+                              >
+                                更换
+                              </button>
+                            ) : null}
+                          </div>
+                          <div className="word-feedback-inline">
+                            {latestTeamWordFeedbackRequest && isLatestTeamWordFeedbackCurrent ? (
+                              canSubmitTeamWordFeedback ? (
+                                <div className="word-feedback-choice" role="group" aria-label={`第 ${index + 1} 个词反馈`}>
+                                  <button
+                                    className={cn(
+                                      'word-feedback-choice-button',
+                                      'word-feedback-choice-yes',
+                                      myFeedback?.accepted === true && 'word-feedback-choice-selected',
+                                    )}
+                                    disabled={busyKey !== null}
+                                    onClick={() => void handleSubmitTeamWordFeedback(index, true)}
+                                    title="这个词能用"
+                                    type="button"
+                                  >
+                                    ✓
+                                  </button>
+                                  <button
+                                    className={cn(
+                                      'word-feedback-choice-button',
+                                      'word-feedback-choice-no',
+                                      myFeedback?.accepted === false && 'word-feedback-choice-selected',
+                                    )}
+                                    disabled={busyKey !== null}
+                                    onClick={() => void handleSubmitTeamWordFeedback(index, false)}
+                                    title="这个词不合适"
+                                    type="button"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="word-feedback-summary">
+                                  <span className="word-feedback-badge word-feedback-badge-yes" title={acceptedNames.join('、')}>
+                                    ✓ {acceptedNames.length}
+                                  </span>
+                                  <span className="word-feedback-badge word-feedback-badge-no" title={rejectedNames.join('、')}>
+                                    × {rejectedNames.length}
+                                  </span>
+                                  <span className="word-feedback-badge word-feedback-badge-pending" title={pendingNames.join('、')}>
+                                    待 {pendingNames.length}
+                                  </span>
+                                </div>
+                              )
+                            ) : (
+                              <span className="word-feedback-inline-empty">
+                                {latestTeamWordFeedbackRequest ? '已过期' : canEditWordAssignment ? '未询问' : '待询问'}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     <div className="assignment-toolbar">
                       <button
@@ -3231,102 +3309,6 @@ function App() {
                       <span className="assignment-tip">若词语过长可能显示不全，建议手动编辑</span>
                     </div>
                     {wordAssignmentNotice ? <p className="muted assignment-note">{wordAssignmentNotice}</p> : null}
-                    <section className="word-feedback-panel">
-                      <div className="word-feedback-head">
-                        <strong>{canEditWordAssignment ? '队友反馈' : '词语反馈'}</strong>
-                        <small>
-                          {latestTeamWordFeedbackRequest
-                            ? isLatestTeamWordFeedbackCurrent
-                              ? `第 ${latestTeamWordFeedbackRequest.request_number} 次询问`
-                              : '当前词语已变更'
-                            : canEditWordAssignment
-                              ? '尚未询问'
-                              : '等待加密者询问'}
-                        </small>
-                      </div>
-
-                      {latestTeamWordFeedbackRequest && isLatestTeamWordFeedbackCurrent ? (
-                        <div className="word-feedback-grid">
-                          {[0, 1, 2, 3].map((slotIndex) => {
-                            const slotResponses = teamWordFeedbackResponses.filter((entry) => entry.slot_index === slotIndex);
-                            const responseByPlayerId = Object.fromEntries(
-                              slotResponses.map((entry) => [entry.player_id, entry]),
-                            ) as Record<string, TeamWordFeedbackResponseRecord>;
-                            const acceptedNames = slotResponses
-                              .filter((entry) => entry.accepted)
-                              .map((entry) => teamWordFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
-                            const rejectedNames = slotResponses
-                              .filter((entry) => !entry.accepted)
-                              .map((entry) => teamWordFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
-                            const pendingNames = myTeamFeedbackPlayers
-                              .filter((player) => !responseByPlayerId[player.id])
-                              .map((player) => player.player_name);
-                            const myFeedback =
-                              self && latestTeamWordFeedbackRequest
-                                ? teamWordFeedbackResponseByPlayerSlot[
-                                    feedbackResponseKey(latestTeamWordFeedbackRequest.id, self.id, slotIndex)
-                                  ]
-                                : undefined;
-
-                            return (
-                              <div className="word-feedback-row" key={`word-feedback-${slotIndex}`}>
-                                <span className="word-feedback-index">{slotIndex + 1}</span>
-                                {canSubmitTeamWordFeedback ? (
-                                  <div className="word-feedback-choice" role="group" aria-label={`第 ${slotIndex + 1} 个词反馈`}>
-                                    <button
-                                      className={cn(
-                                        'word-feedback-choice-button',
-                                        'word-feedback-choice-yes',
-                                        myFeedback?.accepted === true && 'word-feedback-choice-selected',
-                                      )}
-                                      disabled={busyKey !== null}
-                                      onClick={() => void handleSubmitTeamWordFeedback(slotIndex, true)}
-                                      title="这个词能用"
-                                      type="button"
-                                    >
-                                      ✓
-                                    </button>
-                                    <button
-                                      className={cn(
-                                        'word-feedback-choice-button',
-                                        'word-feedback-choice-no',
-                                        myFeedback?.accepted === false && 'word-feedback-choice-selected',
-                                      )}
-                                      disabled={busyKey !== null}
-                                      onClick={() => void handleSubmitTeamWordFeedback(slotIndex, false)}
-                                      title="这个词不合适"
-                                      type="button"
-                                    >
-                                      ×
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div className="word-feedback-summary">
-                                    <span className="word-feedback-badge word-feedback-badge-yes" title={acceptedNames.join('、')}>
-                                      ✓ {acceptedNames.length}
-                                    </span>
-                                    <span className="word-feedback-badge word-feedback-badge-no" title={rejectedNames.join('、')}>
-                                      × {rejectedNames.length}
-                                    </span>
-                                    <span className="word-feedback-badge word-feedback-badge-pending" title={pendingNames.join('、')}>
-                                      待 {pendingNames.length}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="muted word-feedback-empty">
-                          {latestTeamWordFeedbackRequest
-                            ? '词语已经调整，请加密者重新询问队友。'
-                            : canEditWordAssignment
-                              ? '点击上方“询问队友”后，队友可以对每个词打勾或打叉。'
-                              : '加密者发起询问后，你可以对每个词打勾或打叉。'}
-                        </p>
-                      )}
-                    </section>
                   </div>
                 ) : isWordAssignmentPhase ? (
                   <div className="wait-card">

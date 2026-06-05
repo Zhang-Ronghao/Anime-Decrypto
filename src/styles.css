@@ -882,6 +882,11 @@ select:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.action-line-word-assignment {
+  grid-template-columns: 46px minmax(180px, 1fr) minmax(132px, auto);
+  gap: 10px;
+}
+
 .code-word {
   min-height: 44px;
   display: grid;
@@ -907,6 +912,12 @@ select:focus {
   padding: 0 12px;
   color: var(--text);
   word-break: break-word;
+}
+
+.code-word-compact {
+  width: 44px;
+  grid-template-columns: 44px;
+  justify-self: center;
 }
 
 .code-word-red {
@@ -1014,61 +1025,11 @@ select:focus {
   margin-top: 2px;
 }
 
-.word-feedback-panel {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--soft);
-}
-
-.word-feedback-head {
+.word-feedback-inline {
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.word-feedback-head strong {
-  color: var(--text);
-  font-size: 0.95rem;
-}
-
-.word-feedback-head small,
-.word-feedback-empty {
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.word-feedback-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.word-feedback-row {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 7px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.word-feedback-index {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--text);
-  color: #fff;
-  font-weight: 900;
-  font-size: 0.82rem;
+  justify-content: center;
 }
 
 .word-feedback-choice,
@@ -1133,6 +1094,13 @@ select:focus {
 
 .word-feedback-badge-pending {
   color: var(--muted);
+}
+
+.word-feedback-inline-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .action-progress {
@@ -2604,6 +2572,23 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .action-line-word-assignment {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .action-line-head.action-line-word-assignment {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .action-line-head.action-line-word-assignment > :last-child {
+    display: none;
+  }
+
+  .word-feedback-inline {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
   .action-body {
     grid-template-columns: 1fr;
   }
@@ -2633,10 +2618,6 @@ code {
   .assignment-toolbar {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .word-feedback-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .team-word-control {
