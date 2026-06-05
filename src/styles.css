@@ -892,6 +892,17 @@ select:focus {
   grid-template-columns: minmax(190px, 0.72fr) minmax(260px, 1fr);
 }
 
+.guess-empty-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(112px, 0.32fr) minmax(178px, 0.5fr);
+  gap: 10px 12px;
+  align-items: stretch;
+}
+
+.guess-empty-row {
+  display: contents;
+}
+
 .action-line-word-assignment {
   grid-template-columns: 56px minmax(180px, 1fr) minmax(132px, auto);
   gap: 10px;
@@ -1219,7 +1230,8 @@ select:focus {
 
 .guess-feedback-empty-panel {
   min-height: 152px;
-  grid-row: span 3;
+  grid-column: 3;
+  grid-row: 1 / span 3;
   display: grid;
   place-items: center;
   padding: 0.8rem;
@@ -2741,6 +2753,16 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .guess-empty-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .guess-empty-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
   .action-line-head-guess > :first-child {
     display: none;
   }
@@ -2772,6 +2794,7 @@ code {
 
   .guess-feedback-empty-panel {
     min-height: 72px;
+    grid-column: auto;
     grid-row: auto;
   }
 

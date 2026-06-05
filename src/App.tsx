@@ -3773,33 +3773,56 @@ function App() {
                         <span className="action-line-head-cell">队友建议</span>
                       ) : null}
                     </div>
-                    {(myTeamSubmission?.clues ?? []).map((clue, index) => {
-                      const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
+                    {!isGuessFeedbackInputMode && !hasActiveGuessFeedback ? (
+                      <div className="guess-empty-layout">
+                        <div className="guess-feedback-empty-panel">等待队友建议</div>
+                        {(myTeamSubmission?.clues ?? []).map((clue, index) => (
+                          <div className="guess-empty-row" key={`${clue}-${index}`}>
+                            <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
+                            <select
+                              className="guess-digit-select"
+                              disabled={!canSubmitDecode}
+                              onChange={(event) => updateGuessDigit('decode', index, event.target.value)}
+                              value={displayedDecodeDigits[index] ?? ''}
+                            >
+                              <option value="">-</option>
+                              {[1, 2, 3, 4].map((option) => (
+                                <option key={option} value={String(option)}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      (myTeamSubmission?.clues ?? []).map((clue, index) => {
+                        const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
 
-                      return (
-                        <div className={cn('action-line', isGuessFeedbackInputMode ? 'action-line-guess-input' : 'action-line-guess')} key={`${clue}-${index}`}>
-                          <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
-                          {canSubmitDecodeFeedback ? (
-                            <div className="guess-feedback-inline">
-                              <select
-                                className="guess-feedback-select guess-feedback-select-wide"
-                                disabled={busyKey !== null}
-                                onChange={(event) => updateGuessDigit('decode-feedback', index, event.target.value)}
-                                value={currentDecodeFeedbackDraft[index] ?? ''}
-                              >
-                                <option value="">-</option>
-                                {[1, 2, 3, 4].map((option) => (
-                                  <option key={option} value={String(option)}>
-                                    {option}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ) : (
-                            <>
-                              <select
-                                className="guess-digit-select"
-                                disabled={!canSubmitDecode}
+                        return (
+                          <div className={cn('action-line', isGuessFeedbackInputMode ? 'action-line-guess-input' : 'action-line-guess')} key={`${clue}-${index}`}>
+                            <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
+                            {canSubmitDecodeFeedback ? (
+                              <div className="guess-feedback-inline">
+                                <select
+                                  className="guess-feedback-select guess-feedback-select-wide"
+                                  disabled={busyKey !== null}
+                                  onChange={(event) => updateGuessDigit('decode-feedback', index, event.target.value)}
+                                  value={currentDecodeFeedbackDraft[index] ?? ''}
+                                >
+                                  <option value="">-</option>
+                                  {[1, 2, 3, 4].map((option) => (
+                                    <option key={option} value={String(option)}>
+                                      {option}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : (
+                              <>
+                                <select
+                                  className="guess-digit-select"
+                                  disabled={!canSubmitDecode}
                                 onChange={(event) => updateGuessDigit('decode', index, event.target.value)}
                                 value={displayedDecodeDigits[index] ?? ''}
                               >
@@ -3824,18 +3847,17 @@ function App() {
                                         title={names.join('、')}
                                       >
                                         {names.length > 0 ? `${names.length}票` : ''}
-                                      </span>
-                                    );
-                                  })}
+                                    </span>
+                                  );
+                                })}
                                 </div>
-                              ) : index === 0 ? (
-                                <div className="guess-feedback-empty-panel">等待队友建议</div>
                               ) : null}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                     {canSubmitDecodeFeedback ? (
                       <div className="guess-feedback-toolbar">
                         <span aria-hidden="true" />
@@ -3859,33 +3881,56 @@ function App() {
                         <span className="action-line-head-cell">队友建议</span>
                       ) : null}
                     </div>
-                    {(opponentSubmission?.clues ?? []).map((clue, index) => {
-                      const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
+                    {!isGuessFeedbackInputMode && !hasActiveGuessFeedback ? (
+                      <div className="guess-empty-layout">
+                        <div className="guess-feedback-empty-panel">等待队友建议</div>
+                        {(opponentSubmission?.clues ?? []).map((clue, index) => (
+                          <div className="guess-empty-row" key={`${clue}-${index}`}>
+                            <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
+                            <select
+                              className="guess-digit-select"
+                              disabled={!canSubmitIntercept}
+                              onChange={(event) => updateGuessDigit('intercept', index, event.target.value)}
+                              value={displayedInterceptDigits[index] ?? ''}
+                            >
+                              <option value="">-</option>
+                              {[1, 2, 3, 4].map((option) => (
+                                <option key={option} value={String(option)}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      (opponentSubmission?.clues ?? []).map((clue, index) => {
+                        const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
 
-                      return (
-                        <div className={cn('action-line', isGuessFeedbackInputMode ? 'action-line-guess-input' : 'action-line-guess')} key={`${clue}-${index}`}>
-                          <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
-                          {canSubmitInterceptFeedback ? (
-                            <div className="guess-feedback-inline">
-                              <select
-                                className="guess-feedback-select guess-feedback-select-wide"
-                                disabled={busyKey !== null}
-                                onChange={(event) => updateGuessDigit('intercept-feedback', index, event.target.value)}
-                                value={currentInterceptFeedbackDraft[index] ?? ''}
-                              >
-                                <option value="">-</option>
-                                {[1, 2, 3, 4].map((option) => (
-                                  <option key={option} value={String(option)}>
-                                    {option}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ) : (
-                            <>
-                              <select
-                                className="guess-digit-select"
-                                disabled={!canSubmitIntercept}
+                        return (
+                          <div className={cn('action-line', isGuessFeedbackInputMode ? 'action-line-guess-input' : 'action-line-guess')} key={`${clue}-${index}`}>
+                            <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
+                            {canSubmitInterceptFeedback ? (
+                              <div className="guess-feedback-inline">
+                                <select
+                                  className="guess-feedback-select guess-feedback-select-wide"
+                                  disabled={busyKey !== null}
+                                  onChange={(event) => updateGuessDigit('intercept-feedback', index, event.target.value)}
+                                  value={currentInterceptFeedbackDraft[index] ?? ''}
+                                >
+                                  <option value="">-</option>
+                                  {[1, 2, 3, 4].map((option) => (
+                                    <option key={option} value={String(option)}>
+                                      {option}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : (
+                              <>
+                                <select
+                                  className="guess-digit-select"
+                                  disabled={!canSubmitIntercept}
                                 onChange={(event) => updateGuessDigit('intercept', index, event.target.value)}
                                 value={displayedInterceptDigits[index] ?? ''}
                               >
@@ -3910,18 +3955,17 @@ function App() {
                                         title={names.join('、')}
                                       >
                                         {names.length > 0 ? `${names.length}票` : ''}
-                                      </span>
-                                    );
-                                  })}
+                                    </span>
+                                  );
+                                })}
                                 </div>
-                              ) : index === 0 ? (
-                                <div className="guess-feedback-empty-panel">等待队友建议</div>
                               ) : null}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                     {canSubmitInterceptFeedback ? (
                       <div className="guess-feedback-toolbar">
                         <span aria-hidden="true" />
