@@ -3770,7 +3770,11 @@ function App() {
                       <span className="action-line-head-cell">本轮线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
                       {!isGuessFeedbackInputMode ? (
-                        <span className="action-line-head-cell">队友建议</span>
+                        <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
+                          {[1, 2, 3, 4].map((digit) => (
+                            <span key={digit}>词语{digit}</span>
+                          ))}
+                        </span>
                       ) : null}
                     </div>
                     {!isGuessFeedbackInputMode && !hasActiveGuessFeedback ? (
@@ -3878,7 +3882,11 @@ function App() {
                       <span className="action-line-head-cell">对方线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
                       {!isGuessFeedbackInputMode ? (
-                        <span className="action-line-head-cell">队友建议</span>
+                        <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
+                          {[1, 2, 3, 4].map((digit) => (
+                            <span key={digit}>词语{digit}</span>
+                          ))}
+                        </span>
                       ) : null}
                     </div>
                     {!isGuessFeedbackInputMode && !hasActiveGuessFeedback ? (
