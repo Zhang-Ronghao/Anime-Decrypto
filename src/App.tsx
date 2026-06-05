@@ -3171,7 +3171,7 @@ function App() {
               <div className="action-body-main">
                 {canViewWordAssignment ? (
                   <div className="action-lines">
-                    <div className={cn('action-line-head action-line-word-assignment', teamWordFeedbackAllSubmitted && 'word-feedback-head-complete')}>
+                    <div className="action-line-head action-line-word-assignment">
                       <div className="action-line-head-cell">词语</div>
                       {showsDualWordColumns ? (
                         <div className="action-line-head-word-pair">
@@ -3184,9 +3184,7 @@ function App() {
                       <div className="action-line-head-cell">
                         {latestTeamWordFeedbackRequest
                           ? isLatestTeamWordFeedbackCurrent
-                            ? teamWordFeedbackAllSubmitted
-                              ? '反馈完成'
-                              : `反馈 ${latestTeamWordFeedbackRequest.request_number}`
+                            ? `反馈 ${latestTeamWordFeedbackRequest.request_number}`
                             : '反馈已过期'
                           : '反馈'}
                       </div>
@@ -3313,7 +3311,7 @@ function App() {
                               </button>
                             ) : null}
                           </div>
-                          <div className={cn('word-feedback-inline', teamWordFeedbackAllSubmitted && 'word-feedback-inline-complete')}>
+                          <div className="word-feedback-inline">
                             {latestTeamWordFeedbackRequest && isLatestTeamWordFeedbackCurrent ? (
                               canSubmitTeamWordFeedback ? (
                                 <div className="word-feedback-choice" role="group" aria-label={`第 ${index + 1} 个词反馈`}>
@@ -3373,19 +3371,7 @@ function App() {
                       );
                     })}
 
-                    <div className={cn('assignment-toolbar', canSubmitTeamWordFeedback && 'assignment-toolbar-feedback')}>
-                      {canSubmitTeamWordFeedback ? <span aria-hidden="true" /> : null}
-                      {canSubmitTeamWordFeedback ? <span aria-hidden="true" /> : null}
-                      {canSubmitTeamWordFeedback ? (
-                        <button
-                          className="primary-button word-feedback-submit-button"
-                          disabled={busyKey !== null || !canSubmitTeamWordFeedbackDraft}
-                          onClick={() => void handleSubmitTeamWordFeedbackDraft()}
-                          type="button"
-                        >
-                          提交反馈
-                        </button>
-                      ) : null}
+                    <div className="assignment-toolbar">
                       <button
                         className="ghost-button"
                         disabled={isWordAssignmentReadOnly || busyKey !== null}
@@ -3418,6 +3404,16 @@ function App() {
                       >
                         手动编辑
                       </button>
+                      {canSubmitTeamWordFeedback ? (
+                        <button
+                          className="primary-button word-feedback-submit-button"
+                          disabled={busyKey !== null || !canSubmitTeamWordFeedbackDraft}
+                          onClick={() => void handleSubmitTeamWordFeedbackDraft()}
+                          type="button"
+                        >
+                          提交反馈
+                        </button>
+                      ) : null}
                     </div>
                     {wordAssignmentNotice ? <p className="muted assignment-note">{wordAssignmentNotice}</p> : null}
                   </div>
