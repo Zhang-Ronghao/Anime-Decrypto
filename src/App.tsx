@@ -441,10 +441,6 @@ function guessDigits(value: string): string[] {
   return [digits[0] ?? '', digits[1] ?? '', digits[2] ?? ''];
 }
 
-function formatGuessDigitsForDisplay(digits: string[]): string {
-  return [digits[0], digits[1], digits[2]].map((digit) => digit || '?').join('-');
-}
-
 function emptyWordForm(): string[] {
   return ['', '', '', ''];
 }
@@ -1620,10 +1616,6 @@ function App() {
   const displayedInterceptDigits = opponentSubmission?.intercept_guess
     ? guessDigits(opponentSubmission.intercept_guess)
     : interceptDigits;
-  const displayedDecodeGuess = formatGuessDigitsForDisplay(displayedDecodeDigits);
-  const displayedInterceptGuess = formatGuessDigitsForDisplay(displayedInterceptDigits);
-  const displayedDecodeFeedbackGuess = formatGuessDigitsForDisplay(currentDecodeFeedbackDraft);
-  const displayedInterceptFeedbackGuess = formatGuessDigitsForDisplay(currentInterceptFeedbackDraft);
   const myTeamCluesSubmitted = Boolean(myTeamSubmission?.clues);
   const opponentCluesSubmitted = Boolean(opponentSubmission?.clues);
   const myTeamDecodeSubmitted = Boolean(myTeamSubmission?.own_guess);
@@ -2972,8 +2964,8 @@ function App() {
           <div className="home-footer-grid">
             <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
             <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
-            <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="GitHub 仓库" />
-            <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈 Q 群" />
+            <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
+            <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
             <HomeFooterLinkItem
               href={OTHER_GAME_URL}
               icon="spark"
@@ -2994,10 +2986,10 @@ function App() {
             }}
             role="presentation"
           >
-            <section aria-labelledby="midgame-join-title" aria-modal="true" className="modal-card modal-card-compact midgame-join-modal" role="dialog">
+            <section aria-modal="true" className="modal-card modal-card-compact midgame-join-modal" role="dialog">
               <div className="modal-card-head">
                 <div>
-                  <h2 id="midgame-join-title">中途加入房间 {pendingMidgameJoin.room_code}</h2>
+                  <h2>中途加入房间 {pendingMidgameJoin.room_code}</h2>
                   <p className="muted">当前游戏正在进行，上方可选择队伍加入，下方可选择观战加入。</p>
                 </div>
                 <button
@@ -3442,8 +3434,8 @@ function App() {
             <div className="home-footer-grid">
               <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
               <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
-              <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="GitHub 仓库" />
-              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈 Q 群" />
+              <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
+              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
               <HomeFooterLinkItem
                 href={OTHER_GAME_URL}
                 icon="spark"
@@ -3798,10 +3790,6 @@ function App() {
                   </div>
                 ) : isDecodePhase && (myTeamSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
-                    <p className="guess-choice-note">
-                      每条线索选一个对应词号，当前{canSubmitDecodeFeedback ? '建议' : '选择'}：
-                      <strong>{canSubmitDecodeFeedback ? displayedDecodeFeedbackGuess : displayedDecodeGuess}</strong>
-                    </p>
                     <div className={cn('action-line-head', isGuessFeedbackInputMode ? 'action-line-head-guess-input' : 'action-line-head-guess')}>
                       <span className="action-line-head-cell">本轮线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
@@ -3820,7 +3808,6 @@ function App() {
                           <div className="guess-empty-row" key={`${clue}-${index}`}>
                             <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
                             <select
-                              aria-label={`第 ${index + 1} 条线索选择词号`}
                               className="guess-digit-select"
                               disabled={!canSubmitDecode}
                               onChange={(event) => updateGuessDigit('decode', index, event.target.value)}
@@ -3846,7 +3833,6 @@ function App() {
                             {canSubmitDecodeFeedback ? (
                               <div className="guess-feedback-inline">
                                 <select
-                                  aria-label={`第 ${index + 1} 条线索建议词号`}
                                   className="guess-feedback-select guess-feedback-select-wide"
                                   disabled={busyKey !== null}
                                   onChange={(event) => updateGuessDigit('decode-feedback', index, event.target.value)}
@@ -3863,7 +3849,6 @@ function App() {
                             ) : (
                               <>
                                 <select
-                                  aria-label={`第 ${index + 1} 条线索选择词号`}
                                   className="guess-digit-select"
                                   disabled={!canSubmitDecode}
                                 onChange={(event) => updateGuessDigit('decode', index, event.target.value)}
@@ -3917,10 +3902,6 @@ function App() {
                   </div>
                 ) : isInterceptPhase && !isFirstRoundInterceptSkip && (opponentSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
-                    <p className="guess-choice-note">
-                      每条对方线索选一个可能词号，当前{canSubmitInterceptFeedback ? '建议' : '选择'}：
-                      <strong>{canSubmitInterceptFeedback ? displayedInterceptFeedbackGuess : displayedInterceptGuess}</strong>
-                    </p>
                     <div className={cn('action-line-head', isGuessFeedbackInputMode ? 'action-line-head-guess-input' : 'action-line-head-guess')}>
                       <span className="action-line-head-cell">对方线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
@@ -3939,7 +3920,6 @@ function App() {
                           <div className="guess-empty-row" key={`${clue}-${index}`}>
                             <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
                             <select
-                              aria-label={`第 ${index + 1} 条对方线索选择词号`}
                               className="guess-digit-select"
                               disabled={!canSubmitIntercept}
                               onChange={(event) => updateGuessDigit('intercept', index, event.target.value)}
@@ -3965,7 +3945,6 @@ function App() {
                             {canSubmitInterceptFeedback ? (
                               <div className="guess-feedback-inline">
                                 <select
-                                  aria-label={`第 ${index + 1} 条对方线索建议词号`}
                                   className="guess-feedback-select guess-feedback-select-wide"
                                   disabled={busyKey !== null}
                                   onChange={(event) => updateGuessDigit('intercept-feedback', index, event.target.value)}
@@ -3982,7 +3961,6 @@ function App() {
                             ) : (
                               <>
                                 <select
-                                  aria-label={`第 ${index + 1} 条对方线索选择词号`}
                                   className="guess-digit-select"
                                   disabled={!canSubmitIntercept}
                                 onChange={(event) => updateGuessDigit('intercept', index, event.target.value)}
@@ -4307,10 +4285,10 @@ function App() {
           }}
           role="presentation"
         >
-          <section aria-labelledby="host-transfer-title" aria-modal="true" className="modal-card modal-card-settings" role="dialog">
+          <section aria-modal="true" className="modal-card modal-card-settings" role="dialog">
             <div className="modal-card-head">
               <div>
-                <h2 id="host-transfer-title">转让房主</h2>
+                <h2>转让房主</h2>
                 <p className="muted">选择一名玩家接管房间管理权限。</p>
               </div>
               <button
@@ -4354,10 +4332,10 @@ function App() {
           }}
           role="presentation"
         >
-          <section aria-labelledby="lobby-settings-title" aria-modal="true" className="modal-card modal-card-settings" role="dialog">
+          <section aria-modal="true" className="modal-card modal-card-settings" role="dialog">
             <div className="modal-card-head">
               <div>
-                <h2 id="lobby-settings-title">其他设置</h2>
+                <h2>其他设置</h2>
                 <p className="muted">调整本局的获胜规则。只有房主能在选座大厅修改。</p>
               </div>
               <button
@@ -4462,10 +4440,10 @@ function App() {
           }}
           role="presentation"
         >
-          <section aria-labelledby="bangumi-catalog-title" aria-modal="true" className="modal-card" role="dialog">
+          <section aria-modal="true" className="modal-card" role="dialog">
             <div className="modal-card-head">
               <div>
-                <h2 id="bangumi-catalog-title">载入 Bangumi 动画词库</h2>
+                <h2>载入 Bangumi 动画词库</h2>
                 <p className="muted">填写<strong>用户 ID</strong>（推荐）或<strong>收藏夹链接</strong>或<strong>目录链接</strong></p>
                 <p className="muted">支持填写多个用户/目录，词库将取<strong>交集</strong></p>
                 <p className="muted">用户收藏夹可按如下按钮进行过滤</p>
@@ -4553,10 +4531,10 @@ function App() {
           }}
           role="presentation"
         >
-          <section aria-labelledby="bangumi-browser-title" aria-modal="true" className="modal-card modal-card-compact" role="dialog">
+          <section aria-modal="true" className="modal-card modal-card-compact" role="dialog">
             <div className="modal-card-head">
               <div>
-                <h2 id="bangumi-browser-title">Bangumi 词库</h2>
+                <h2>Bangumi 词库</h2>
                 <p className="muted">当前房间已保存的动画词条，所有人都可以浏览。</p>
               </div>
               <button className="ghost-button" onClick={closeBangumiCatalogBrowser} type="button">
