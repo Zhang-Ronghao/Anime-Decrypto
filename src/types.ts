@@ -98,6 +98,22 @@ export interface TeamWordFeedbackResponseRecord {
   updated_at: string;
 }
 
+export type RoundGuessFeedbackPhase = 'decode' | 'intercept';
+
+export interface RoundGuessFeedbackResponseRecord {
+  id: string;
+  room_id: string;
+  round_number: number;
+  phase: RoundGuessFeedbackPhase;
+  team: Team;
+  target_team: Team;
+  player_id: string;
+  clue_index: number;
+  guess_digit: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RoundCodeRecord {
   id: string;
   room_id: string;
@@ -130,6 +146,7 @@ export interface RoomSnapshot {
   teamWords: TeamWordsRecord[];
   teamWordFeedbackRequests: TeamWordFeedbackRequestRecord[];
   teamWordFeedbackResponses: TeamWordFeedbackResponseRecord[];
+  roundGuessFeedbackResponses: RoundGuessFeedbackResponseRecord[];
   roundCodes: RoundCodeRecord[];
   submissions: RoundSubmissionRecord[];
 }

@@ -5,6 +5,7 @@ import type {
   RoomJoinStatus,
   PlayerRecord,
   RoomSnapshot,
+  RoundGuessFeedbackResponseRecord,
   RoundCodeRecord,
   RoundSubmissionRecord,
   Team,
@@ -193,6 +194,20 @@ const TEAM_WORD_FEEDBACK_RESPONSES_SNAPSHOT_COLUMNS = compactSelectColumns(`
   player_id,
   slot_index,
   accepted,
+  created_at,
+  updated_at
+`);
+
+const ROUND_GUESS_FEEDBACK_RESPONSES_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  room_id,
+  round_number,
+  phase,
+  team,
+  target_team,
+  player_id,
+  clue_index,
+  guess_digit,
   created_at,
   updated_at
 `);
@@ -656,6 +671,25 @@ export async function submitOwnGuess(roomId: string, team: Team, guess: string) 
   }
 }
 
+export async function submitRoundGuessFeedbackBatch(
+  roomId: string,
+  phase: 'decode' | 'intercept',
+  team: Team,
+  guessDigits: string[],
+) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('submit_round_guess_feedback_batch', {
+    p_room_id: roomId,
+    p_phase: phase,
+    p_team: team,
+    p_guess_digits: guessDigits,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function advanceRound(roomId: string) {
   const client = assertSupabase();
   const { error } = await client.rpc('advance_round', {
@@ -701,6 +735,7 @@ export async function fetchRoomSnapshot(
     submissions,
     teamWordFeedbackRequests,
     teamWordFeedbackResponses,
+    roundGuessFeedbackResponses,
   ] = await Promise.all([
     fetchRoomCore(roomId),
     fetchRoomPlayers(roomId),
@@ -709,6 +744,7 @@ export async function fetchRoomSnapshot(
     fetchRoundSubmissions(roomId, { full: options.fullRoundHistory }),
     fetchTeamWordFeedbackRequests(roomId),
     fetchTeamWordFeedbackResponses(roomId),
+    fetchRoundGuessFeedbackResponses(roomId),
   ]);
 
   return {
@@ -717,6 +753,7 @@ export async function fetchRoomSnapshot(
     teamWords,
     teamWordFeedbackRequests,
     teamWordFeedbackResponses,
+    roundGuessFeedbackResponses,
     roundCodes,
     submissions,
   };
@@ -842,6 +879,25 @@ export async function fetchTeamWordFeedbackResponses(roomId: string): Promise<Te
   return ((data ?? []) as unknown) as TeamWordFeedbackResponseRecord[];
 }
 
+export async function fetchRoundGuessFeedbackResponses(roomId: string): Promise<RoundGuessFeedbackResponseRecord[]> {
+  const client = assertSupabase();
+  const { data, error } = await client
+    .from('round_guess_feedback_responses')
+    .select(ROUND_GUESS_FEEDBACK_RESPONSES_SNAPSHOT_COLUMNS)
+    .eq('room_id', roomId)
+    .order('round_number', { ascending: false })
+    .order('phase', { ascending: true })
+    .order('team', { ascending: true })
+    .order('clue_index', { ascending: true })
+    .order('updated_at', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return ((data ?? []) as unknown) as RoundGuessFeedbackResponseRecord[];
+}
+
 export async function fetchBangumiCatalogWords(roomId: string): Promise<string[]> {
   const client = assertSupabase();
   const { data, error } = await client
@@ -867,7 +923,8 @@ export type RoomSubscriptionTable =
   | 'round_codes'
   | 'round_submissions'
   | 'team_word_feedback_requests'
-  | 'team_word_feedback_responses';
+  | 'team_word_feedback_responses'
+  | 'round_guess_feedback_responses';
 export type SelfNotificationKind = 'kicked';
 
 export function subscribeToRoom(
@@ -912,6 +969,11 @@ export function subscribeToRoom(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'team_word_feedback_responses', filter: `room_id=eq.${roomId}` },
       () => onChange('team_word_feedback_responses'),
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'round_guess_feedback_responses', filter: `room_id=eq.${roomId}` },
+      () => onChange('round_guess_feedback_responses'),
     )
     .subscribe((status, error) => {
       onStatus?.(status as RoomSubscriptionStatus, error);

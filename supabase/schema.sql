@@ -375,6 +375,21 @@ create table if not exists public.team_word_feedback_responses (
   unique (request_id, player_id, slot_index)
 );
 
+create table if not exists public.round_guess_feedback_responses (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  round_number integer not null check (round_number > 0),
+  phase text not null check (phase in ('decode', 'intercept')),
+  team text not null check (team in ('A', 'B')),
+  target_team text not null check (target_team in ('A', 'B')),
+  player_id uuid not null references public.room_players(id) on delete cascade,
+  clue_index integer not null check (clue_index between 0 and 2),
+  guess_digit text not null check (guess_digit in ('1', '2', '3', '4')),
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (room_id, round_number, phase, team, player_id, clue_index)
+);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -415,6 +430,12 @@ execute function public.set_updated_at();
 drop trigger if exists trg_team_word_feedback_responses_updated_at on public.team_word_feedback_responses;
 create trigger trg_team_word_feedback_responses_updated_at
 before update on public.team_word_feedback_responses
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists trg_round_guess_feedback_responses_updated_at on public.round_guess_feedback_responses;
+create trigger trg_round_guess_feedback_responses_updated_at
+before update on public.round_guess_feedback_responses
 for each row
 execute function public.set_updated_at();
 
@@ -478,6 +499,7 @@ alter table public.round_submissions enable row level security;
 alter table public.player_notifications enable row level security;
 alter table public.team_word_feedback_requests enable row level security;
 alter table public.team_word_feedback_responses enable row level security;
+alter table public.round_guess_feedback_responses enable row level security;
 alter table public.room_bangumi_catalog_entries enable row level security;
 
 drop policy if exists "rooms_select_member" on public.rooms;
@@ -562,6 +584,16 @@ using (
 drop policy if exists "team_word_feedback_responses_select_same_team" on public.team_word_feedback_responses;
 create policy "team_word_feedback_responses_select_same_team"
 on public.team_word_feedback_responses
+for select
+to authenticated
+using (
+  public.is_room_member(room_id)
+  and team = public.current_player_team(room_id)
+);
+
+drop policy if exists "round_guess_feedback_responses_select_same_team" on public.round_guess_feedback_responses;
+create policy "round_guess_feedback_responses_select_same_team"
+on public.round_guess_feedback_responses
 for select
 to authenticated
 using (
@@ -2369,6 +2401,7 @@ begin
 
   delete from public.round_submissions where room_id = p_room_id;
   delete from public.round_codes where room_id = p_room_id;
+  delete from public.round_guess_feedback_responses where room_id = p_room_id;
 
   insert into public.round_codes (room_id, team, round_number, encoder_player_id, code)
   values
@@ -3041,6 +3074,115 @@ begin
 end;
 $$;
 
+create or replace function public.submit_round_guess_feedback_batch(
+  p_room_id uuid,
+  p_phase text,
+  p_team text,
+  p_guess_digits text[]
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_player_id uuid;
+  v_target_team text;
+  v_blocked_role text;
+begin
+  perform public.assert_authenticated();
+
+  if p_phase not in ('decode', 'intercept') then
+    raise exception 'Invalid feedback phase.';
+  end if;
+
+  if p_team not in ('A', 'B') then
+    raise exception 'Invalid team.';
+  end if;
+
+  if coalesce(array_length(p_guess_digits, 1), 0) <> 3 then
+    raise exception 'Feedback must include 3 clue slots.';
+  end if;
+
+  if exists (
+    select 1
+    from unnest(p_guess_digits) as items(value)
+    where nullif(trim(coalesce(value, '')), '') is not null
+      and trim(coalesce(value, '')) not in ('1', '2', '3', '4')
+  ) then
+    raise exception 'Feedback digits must be 1, 2, 3, or 4.';
+  end if;
+
+  if not exists (
+    select 1
+    from unnest(p_guess_digits) as items(value)
+    where trim(coalesce(value, '')) in ('1', '2', '3', '4')
+  ) then
+    raise exception 'Choose at least one feedback digit.';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id;
+
+  if v_room.id is null then
+    raise exception 'Room not found.';
+  end if;
+
+  if v_room.phase <> p_phase then
+    raise exception 'Current phase does not accept this feedback.';
+  end if;
+
+  v_target_team := case
+    when p_phase = 'decode' then p_team
+    when p_team = 'A' then 'B'
+    else 'A'
+  end;
+  v_blocked_role := case when p_phase = 'decode' then 'decoder' else 'encoder' end;
+
+  select id
+  into v_player_id
+  from public.room_players
+  where room_id = p_room_id
+    and auth_user_id = auth.uid()
+    and team = p_team
+    and coalesce(role, '') <> v_blocked_role
+    and not is_spectator
+  limit 1;
+
+  if v_player_id is null then
+    raise exception 'Only same-team non-operators can submit feedback.';
+  end if;
+
+  insert into public.round_guess_feedback_responses (
+    room_id,
+    round_number,
+    phase,
+    team,
+    target_team,
+    player_id,
+    clue_index,
+    guess_digit
+  )
+  select
+    p_room_id,
+    v_room.round_number,
+    p_phase,
+    p_team,
+    v_target_team,
+    v_player_id,
+    ordinality::integer - 1,
+    trim(value)
+  from unnest(p_guess_digits) with ordinality as items(value, ordinality)
+  where trim(coalesce(value, '')) in ('1', '2', '3', '4')
+  on conflict (room_id, round_number, phase, team, player_id, clue_index)
+  do update
+  set guess_digit = excluded.guess_digit;
+end;
+$$;
+
 create or replace function public.advance_round(p_room_id uuid)
 returns void
 language plpgsql
@@ -3131,6 +3273,7 @@ begin
 
   delete from public.round_submissions where room_id = p_room_id;
   delete from public.round_codes where room_id = p_room_id;
+  delete from public.round_guess_feedback_responses where room_id = p_room_id;
   delete from public.team_word_feedback_requests where room_id = p_room_id;
   delete from public.team_words where room_id = p_room_id;
 
@@ -3188,6 +3331,7 @@ begin
 
   delete from public.round_submissions where room_id = p_room_id;
   delete from public.round_codes where room_id = p_room_id;
+  delete from public.round_guess_feedback_responses where room_id = p_room_id;
   delete from public.team_word_feedback_requests where room_id = p_room_id;
   delete from public.team_words where room_id = p_room_id;
 
@@ -4183,7 +4327,7 @@ end;
 $$;
 
 grant usage on schema public to authenticated;
-grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications, public.team_word_feedback_requests, public.team_word_feedback_responses, public.room_bangumi_catalog_entries to authenticated;
+grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications, public.team_word_feedback_requests, public.team_word_feedback_responses, public.round_guess_feedback_responses, public.room_bangumi_catalog_entries to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
 grant execute on function public.get_room_join_status(text) to authenticated;
 grant execute on function public.join_room(text, text) to authenticated;
@@ -4216,6 +4360,7 @@ grant execute on function public.submit_clues(uuid, text, text[]) to authenticat
 grant execute on function public.submit_intercept_guess(uuid, text, text) to authenticated;
 grant execute on function public.skip_first_intercept(uuid) to authenticated;
 grant execute on function public.submit_own_guess(uuid, text, text) to authenticated;
+grant execute on function public.submit_round_guess_feedback_batch(uuid, text, text, text[]) to authenticated;
 grant execute on function public.advance_round(uuid) to authenticated;
 grant execute on function public.restart_room(uuid) to authenticated;
 grant execute on function public.terminate_game(uuid) to authenticated;
@@ -4279,6 +4424,14 @@ $$;
 do $$
 begin
   alter publication supabase_realtime add table public.team_word_feedback_responses;
+exception
+  when duplicate_object then null;
+end;
+$$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.round_guess_feedback_responses;
 exception
   when duplicate_object then null;
 end;

@@ -882,6 +882,11 @@ select:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.action-line-guess,
+.action-line-head-guess {
+  grid-template-columns: minmax(190px, 1fr) 92px minmax(150px, 0.68fr);
+}
+
 .action-line-word-assignment {
   grid-template-columns: 56px minmax(180px, 1fr) minmax(132px, auto);
   gap: 10px;
@@ -962,6 +967,14 @@ select:focus {
 .action-line select {
   max-width: none;
   justify-self: stretch;
+}
+
+.action-line .guess-digit-select,
+.action-line .guess-feedback-select {
+  width: 72px;
+  max-width: 72px;
+  justify-self: center;
+  text-align: center;
 }
 
 .action-line input,
@@ -1128,6 +1141,32 @@ select:focus {
   font-size: 0.8rem;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.guess-feedback-inline {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.guess-feedback-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.guess-feedback-badge {
+  border-color: rgba(70, 102, 174, 0.26);
+  color: #254274;
+}
+
+.guess-feedback-toolbar {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .action-progress {
@@ -2599,6 +2638,26 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .action-line-guess {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .action-line-head-guess {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .action-line-head-guess > :first-child {
+    display: none;
+  }
+
+  .action-line-guess .line-clue {
+    grid-column: 1 / -1;
+  }
+
+  .guess-feedback-inline {
+    justify-content: center;
+  }
+
   .action-line-word-assignment {
     grid-template-columns: 56px minmax(0, 1fr);
   }
@@ -2640,6 +2699,13 @@ code {
   .action-line select {
     max-width: none;
     justify-self: stretch;
+  }
+
+  .action-line .guess-digit-select,
+  .action-line .guess-feedback-select {
+    justify-self: stretch;
+    width: 100%;
+    max-width: none;
   }
 
   .assignment-toolbar {

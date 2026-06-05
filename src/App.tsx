@@ -14,6 +14,7 @@ import {
   fetchRoomPlayers,
   fetchRoundCodes,
   fetchRoundSubmissions,
+  fetchRoundGuessFeedbackResponses,
   fetchTeamWordFeedbackRequests,
   fetchTeamWordFeedbackResponses,
   fetchTeamWords,
@@ -33,6 +34,7 @@ import {
   submitInterceptGuess,
   skipFirstIntercept,
   submitOwnGuess,
+  submitRoundGuessFeedbackBatch,
   submitTeamWordFeedbackBatch,
   subscribeToSelfNotifications,
   subscribeToRoom,
@@ -64,6 +66,7 @@ import type {
   RoomJoinStatus,
   RoomPhase,
   RoomSnapshot,
+  RoundGuessFeedbackResponseRecord,
   RoundSubmissionRecord,
   Team,
   TeamWordFeedbackRequestRecord,
@@ -459,6 +462,10 @@ function emptyTeamWordFeedbackDraft(): TeamWordFeedbackDraftValue[] {
   return [null, null, null, null];
 }
 
+function emptyRoundGuessFeedbackDraft(): string[] {
+  return ['', '', ''];
+}
+
 function normalizeTeamWordSlot(slot: Partial<TeamWordSlot> | null | undefined): TeamWordSlot {
   return {
     text: (slot?.text ?? '').trim(),
@@ -672,6 +679,10 @@ function feedbackResponseKey(requestId: string, playerId: string, slotIndex: num
   return `${requestId}:${playerId}:${slotIndex}`;
 }
 
+function roundGuessFeedbackKey(playerId: string, clueIndex: number): string {
+  return `${playerId}:${clueIndex}`;
+}
+
 function filterVisibleRoundRecords(
   submissions: RoundSubmissionRecord[],
   currentRoundNumber: number,
@@ -790,6 +801,8 @@ function App() {
   const [pendingConfirmedTeamWordSlots, setPendingConfirmedTeamWordSlots] = useState<TeamWordSlot[] | null>(null);
   const [decodeGuess, setDecodeGuess] = useState('');
   const [interceptGuess, setInterceptGuess] = useState('');
+  const [decodeFeedbackGuess, setDecodeFeedbackGuess] = useState('');
+  const [interceptFeedbackGuess, setInterceptFeedbackGuess] = useState('');
   const [syncFallbackUntil, setSyncFallbackUntil] = useState<number | null>(null);
   const [lobbySettingsModalOpen, setLobbySettingsModalOpen] = useState(false);
   const [hostTransferDialogOpen, setHostTransferDialogOpen] = useState(false);
@@ -1075,6 +1088,7 @@ function App() {
         submissions,
         teamWordFeedbackRequests,
         teamWordFeedbackResponses,
+        roundGuessFeedbackResponses,
       ] = await Promise.all([
         tableSet.has('rooms') ? fetchRoomCore(nextRoomId) : Promise.resolve(null),
         tableSet.has('room_players') ? fetchRoomPlayers(nextRoomId) : Promise.resolve(null),
@@ -1085,6 +1099,9 @@ function App() {
           : Promise.resolve(null),
         tableSet.has('team_word_feedback_requests') ? fetchTeamWordFeedbackRequests(nextRoomId) : Promise.resolve(null),
         tableSet.has('team_word_feedback_responses') ? fetchTeamWordFeedbackResponses(nextRoomId) : Promise.resolve(null),
+        tableSet.has('round_guess_feedback_responses')
+          ? fetchRoundGuessFeedbackResponses(nextRoomId)
+          : Promise.resolve(null),
       ]);
 
       if (snapshotRequestIdRef.current !== requestId) {
@@ -1109,6 +1126,7 @@ function App() {
           submissions: submissions ?? current.submissions,
           teamWordFeedbackRequests: teamWordFeedbackRequests ?? current.teamWordFeedbackRequests,
           teamWordFeedbackResponses: teamWordFeedbackResponses ?? current.teamWordFeedbackResponses,
+          roundGuessFeedbackResponses: roundGuessFeedbackResponses ?? current.roundGuessFeedbackResponses,
         };
       });
 
@@ -1308,6 +1326,7 @@ function App() {
   const opponentSubmissions = snapshot ? getTeamSubmissions(snapshot, opponentTeam) : [];
   const currentRoundNumber = snapshot?.room.round_number ?? 0;
   const currentPhase = snapshot?.room.phase ?? null;
+  const myTeamPlayers = myTeam === 'A' ? teamAPlayers : teamBPlayers;
   const lobbyTimerSettings = lobbyTimerSettingsFromRoom(snapshot?.room);
   const miscommunicationLimit = miscommunicationLimitFromRoom(snapshot?.room);
   const lifeModeEnabled = snapshot?.room.life_mode_enabled === true;
@@ -1359,6 +1378,13 @@ function App() {
   const clueSubmitCount = currentRoundSubmissions.filter((entry) => entry.clues?.length === 3).length;
   const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
   const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
+  const currentRoundGuessFeedbackResponses = useMemo(
+    () =>
+      snapshot
+        ? snapshot.roundGuessFeedbackResponses.filter((entry) => entry.round_number === currentRoundNumber)
+        : [],
+    [currentRoundNumber, snapshot],
+  );
   const teamWordServerSlots = useMemo(() => teamWordSlotsFromRecord(myTeamWordRecord), [myTeamWordRecord]);
   const opponentTeamWordSlots = useMemo(() => teamWordSlotsFromRecord(opponentTeamWordRecord), [opponentTeamWordRecord]);
   const displayedMyTeamWordSlots =
@@ -1462,6 +1488,97 @@ function App() {
   const canSubmitDecode = !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
     !isSpectator && isInterceptPhase && !isFirstRoundInterceptSkip && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
+  const decodeFeedbackResponses = useMemo(
+    () =>
+      currentRoundGuessFeedbackResponses.filter(
+        (entry) => entry.phase === 'decode' && entry.team === myTeam && entry.target_team === myTeam,
+      ),
+    [currentRoundGuessFeedbackResponses, myTeam],
+  );
+  const interceptFeedbackResponses = useMemo(
+    () =>
+      currentRoundGuessFeedbackResponses.filter(
+        (entry) => entry.phase === 'intercept' && entry.team === myTeam && entry.target_team === opponentTeam,
+      ),
+    [currentRoundGuessFeedbackResponses, myTeam, opponentTeam],
+  );
+  const activeGuessFeedbackResponses = isDecodePhase
+    ? decodeFeedbackResponses
+    : isInterceptPhase
+      ? interceptFeedbackResponses
+      : [];
+  const guessFeedbackPlayers = useMemo(
+    () =>
+      myTeamPlayers.filter((player) => {
+        if (player.is_spectator) {
+          return false;
+        }
+
+        if (isDecodePhase) {
+          return player.role !== 'decoder';
+        }
+
+        if (isInterceptPhase) {
+          return player.role !== 'encoder';
+        }
+
+        return false;
+      }),
+    [isDecodePhase, isInterceptPhase, myTeamPlayers],
+  );
+  const guessFeedbackPlayerById = useMemo(
+    () => Object.fromEntries(guessFeedbackPlayers.map((player) => [player.id, player])) as Record<string, PlayerRecord>,
+    [guessFeedbackPlayers],
+  );
+  const activeGuessFeedbackByPlayerClue = useMemo(() => {
+    return Object.fromEntries(
+      activeGuessFeedbackResponses.map((entry) => [roundGuessFeedbackKey(entry.player_id, entry.clue_index), entry]),
+    ) as Record<string, RoundGuessFeedbackResponseRecord>;
+  }, [activeGuessFeedbackResponses]);
+  const submittedDecodeFeedbackDraft = useMemo(
+    () =>
+      self
+        ? [0, 1, 2].map(
+            (clueIndex) => activeGuessFeedbackByPlayerClue[roundGuessFeedbackKey(self.id, clueIndex)]?.guess_digit ?? '',
+          )
+        : emptyRoundGuessFeedbackDraft(),
+    [activeGuessFeedbackByPlayerClue, self],
+  );
+  const canSubmitDecodeFeedback = Boolean(
+    !isSpectator &&
+      isDecodePhase &&
+      self?.team &&
+      self.role !== 'decoder' &&
+      !myTeamSubmission?.own_guess &&
+      (myTeamSubmission?.clues?.length ?? 0) > 0,
+  );
+  const canSubmitInterceptFeedback = Boolean(
+    !isSpectator &&
+      isInterceptPhase &&
+      !isFirstRoundInterceptSkip &&
+      self?.team &&
+      self.role !== 'encoder' &&
+      !opponentSubmission?.intercept_guess &&
+      (opponentSubmission?.clues?.length ?? 0) > 0,
+  );
+  const currentDecodeFeedbackDraft = canSubmitDecodeFeedback
+    ? decodeFeedbackGuess
+      ? guessDigits(decodeFeedbackGuess)
+      : submittedDecodeFeedbackDraft
+    : submittedDecodeFeedbackDraft;
+  const currentInterceptFeedbackDraft = canSubmitInterceptFeedback
+    ? interceptFeedbackGuess
+      ? guessDigits(interceptFeedbackGuess)
+      : submittedDecodeFeedbackDraft
+    : submittedDecodeFeedbackDraft;
+  const currentGuessFeedbackDraft = isDecodePhase ? currentDecodeFeedbackDraft : currentInterceptFeedbackDraft;
+  const submittedGuessFeedbackDraft = submittedDecodeFeedbackDraft;
+  const guessFeedbackDraftHasValue = currentGuessFeedbackDraft.some((value) => ['1', '2', '3', '4'].includes(value));
+  const guessFeedbackDraftChanged = currentGuessFeedbackDraft.some(
+    (value, index) => value !== '' && value !== submittedGuessFeedbackDraft[index],
+  );
+  const canSubmitGuessFeedbackDraft =
+    (canSubmitDecodeFeedback || canSubmitInterceptFeedback) && guessFeedbackDraftHasValue && guessFeedbackDraftChanged;
   const canSkipFirstIntercept = Boolean(isFirstRoundInterceptSkip && self?.is_host);
   const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
   const displayedInterceptDigits = opponentSubmission?.intercept_guess
@@ -1514,14 +1631,18 @@ function App() {
           : '等待本队加密者提交线索'
       : canSubmitDecode
         ? '根据线索选择 3 位解码'
+        : canSubmitDecodeFeedback
+          ? '可选择任意线索数字给解码者参考'
         : isDecodePhase
           ? myTeamDecodeSubmitted
             ? opponentDecodeSubmitted
               ? '双方解码已提交，等待进入截码阶段'
               : '本队解码已提交，等待另一队解码者提交'
-            : '等待本队解码者提交'
+                : '等待本队解码者提交'
           : canSubmitIntercept
             ? '根据对方线索进行拦截'
+            : canSubmitInterceptFeedback
+              ? '可选择任意线索数字给拦截者参考'
             : isInterceptPhase
               ? myTeamInterceptSubmitted
                 ? opponentInterceptSubmitted
@@ -1652,6 +1773,11 @@ function App() {
     );
   }, [canSubmitTeamWordFeedback, latestTeamWordFeedbackRequest, submittedTeamWordFeedbackDraft]);
 
+  useEffect(() => {
+    setDecodeFeedbackGuess('');
+    setInterceptFeedbackGuess('');
+  }, [currentPhase, currentRoundNumber, myTeam]);
+
   async function withAction<T>(
     key: string,
     action: () => Promise<T>,
@@ -1718,15 +1844,26 @@ function App() {
     window.history.replaceState({}, '', window.location.pathname);
   }
 
-  function updateGuessDigit(kind: 'decode' | 'intercept', index: number, digit: string) {
-    const current = kind === 'decode' ? decodeDigits : interceptDigits;
+  function updateGuessDigit(kind: 'decode' | 'intercept' | 'decode-feedback' | 'intercept-feedback', index: number, digit: string) {
+    const current =
+      kind === 'decode'
+        ? decodeDigits
+        : kind === 'intercept'
+          ? interceptDigits
+          : kind === 'decode-feedback'
+            ? currentDecodeFeedbackDraft
+            : currentInterceptFeedbackDraft;
     const next = current.map((item, itemIndex) => (itemIndex === index ? digit : item));
     const nextValue = next.join('-');
 
     if (kind === 'decode') {
       setDecodeGuess(nextValue);
-    } else {
+    } else if (kind === 'intercept') {
       setInterceptGuess(nextValue);
+    } else if (kind === 'decode-feedback') {
+      setDecodeFeedbackGuess(nextValue);
+    } else {
+      setInterceptFeedbackGuess(nextValue);
     }
   }
 
@@ -2529,6 +2666,27 @@ function App() {
       refreshRoomId: snapshot.room.id,
     });
     setInterceptGuess('');
+  }
+
+  async function handleRoundGuessFeedbackSubmit() {
+    if (!snapshot || !self?.team) {
+      return;
+    }
+
+    const phase = isDecodePhase ? 'decode' : isInterceptPhase ? 'intercept' : null;
+    if (!phase) {
+      return;
+    }
+
+    const feedback = phase === 'decode' ? currentDecodeFeedbackDraft : currentInterceptFeedbackDraft;
+    if (!feedback.some((value) => ['1', '2', '3', '4'].includes(value))) {
+      setActionError('至少选择 1 条线索的反馈数字');
+      return;
+    }
+
+    await withAction(`submit-${phase}-feedback`, () => submitRoundGuessFeedbackBatch(snapshot.room.id, phase, self.team!, feedback), {
+      refreshRoomId: snapshot.room.id,
+    });
   }
 
   async function handleSkipFirstIntercept() {
@@ -3604,51 +3762,153 @@ function App() {
                   </div>
                 ) : isDecodePhase && (myTeamSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
-                    <div className="action-line-head action-line-head-balanced">
+                    <div className="action-line-head action-line-head-guess">
                       <span className="action-line-head-cell">本轮线索</span>
                       <span className="action-line-head-cell">选择解码</span>
+                      <span className="action-line-head-cell">队友反馈</span>
                     </div>
-                    {(myTeamSubmission?.clues ?? []).map((clue, index) => (
-                      <label className="action-line action-line-balanced" key={`${clue}-${index}`}>
-                        <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
-                        <select
-                          disabled={!canSubmitDecode}
-                          onChange={(event) => updateGuessDigit('decode', index, event.target.value)}
-                          value={displayedDecodeDigits[index] ?? ''}
+                    {(myTeamSubmission?.clues ?? []).map((clue, index) => {
+                      const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
+
+                      return (
+                        <div className="action-line action-line-guess" key={`${clue}-${index}`}>
+                          <span className={cn('line-clue', `line-clue-${teamTone(myTeam)}`)}>{clue}</span>
+                          <select
+                            className="guess-digit-select"
+                            disabled={!canSubmitDecode}
+                            onChange={(event) => updateGuessDigit('decode', index, event.target.value)}
+                            value={displayedDecodeDigits[index] ?? ''}
+                          >
+                            <option value="">-</option>
+                            {[1, 2, 3, 4].map((option) => (
+                              <option key={option} value={String(option)}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="guess-feedback-inline">
+                            {canSubmitDecodeFeedback ? (
+                              <select
+                                className="guess-feedback-select"
+                                disabled={busyKey !== null}
+                                onChange={(event) => updateGuessDigit('decode-feedback', index, event.target.value)}
+                                value={currentDecodeFeedbackDraft[index] ?? ''}
+                              >
+                                <option value="">-</option>
+                                {[1, 2, 3, 4].map((option) => (
+                                  <option key={option} value={String(option)}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : clueFeedbackResponses.length > 0 ? (
+                              <div className="guess-feedback-summary">
+                                {[1, 2, 3, 4].map((digit) => {
+                                  const names = clueFeedbackResponses
+                                    .filter((entry) => entry.guess_digit === String(digit))
+                                    .map((entry) => guessFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+
+                                  return names.length > 0 ? (
+                                    <span className="word-feedback-badge guess-feedback-badge" key={digit} title={names.join('、')}>
+                                      {digit}: {names.length}
+                                    </span>
+                                  ) : null;
+                                })}
+                              </div>
+                            ) : (
+                              <span className="word-feedback-inline-empty">暂无</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {canSubmitDecodeFeedback ? (
+                      <div className="guess-feedback-toolbar">
+                        <button
+                          className="primary-button word-feedback-submit-button"
+                          disabled={busyKey !== null || !canSubmitGuessFeedbackDraft}
+                          onClick={() => void handleRoundGuessFeedbackSubmit()}
+                          type="button"
                         >
-                          <option value="">-</option>
-                          {[1, 2, 3, 4].map((option) => (
-                            <option key={option} value={String(option)}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ))}
+                          提交反馈
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : isInterceptPhase && !isFirstRoundInterceptSkip && (opponentSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
-                    <div className="action-line-head action-line-head-balanced">
+                    <div className="action-line-head action-line-head-guess">
                       <span className="action-line-head-cell">对方线索</span>
                       <span className="action-line-head-cell">选择截码</span>
+                      <span className="action-line-head-cell">队友反馈</span>
                     </div>
-                    {(opponentSubmission?.clues ?? []).map((clue, index) => (
-                      <label className="action-line action-line-balanced" key={`${clue}-${index}`}>
-                        <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
-                        <select
-                          disabled={!canSubmitIntercept}
-                          onChange={(event) => updateGuessDigit('intercept', index, event.target.value)}
-                          value={displayedInterceptDigits[index] ?? ''}
+                    {(opponentSubmission?.clues ?? []).map((clue, index) => {
+                      const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
+
+                      return (
+                        <div className="action-line action-line-guess" key={`${clue}-${index}`}>
+                          <span className={cn('line-clue', `line-clue-${teamTone(opponentTeam)}`)}>{clue}</span>
+                          <select
+                            className="guess-digit-select"
+                            disabled={!canSubmitIntercept}
+                            onChange={(event) => updateGuessDigit('intercept', index, event.target.value)}
+                            value={displayedInterceptDigits[index] ?? ''}
+                          >
+                            <option value="">-</option>
+                            {[1, 2, 3, 4].map((option) => (
+                              <option key={option} value={String(option)}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="guess-feedback-inline">
+                            {canSubmitInterceptFeedback ? (
+                              <select
+                                className="guess-feedback-select"
+                                disabled={busyKey !== null}
+                                onChange={(event) => updateGuessDigit('intercept-feedback', index, event.target.value)}
+                                value={currentInterceptFeedbackDraft[index] ?? ''}
+                              >
+                                <option value="">-</option>
+                                {[1, 2, 3, 4].map((option) => (
+                                  <option key={option} value={String(option)}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : clueFeedbackResponses.length > 0 ? (
+                              <div className="guess-feedback-summary">
+                                {[1, 2, 3, 4].map((digit) => {
+                                  const names = clueFeedbackResponses
+                                    .filter((entry) => entry.guess_digit === String(digit))
+                                    .map((entry) => guessFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+
+                                  return names.length > 0 ? (
+                                    <span className="word-feedback-badge guess-feedback-badge" key={digit} title={names.join('、')}>
+                                      {digit}: {names.length}
+                                    </span>
+                                  ) : null;
+                                })}
+                              </div>
+                            ) : (
+                              <span className="word-feedback-inline-empty">暂无</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {canSubmitInterceptFeedback ? (
+                      <div className="guess-feedback-toolbar">
+                        <button
+                          className="primary-button word-feedback-submit-button"
+                          disabled={busyKey !== null || !canSubmitGuessFeedbackDraft}
+                          onClick={() => void handleRoundGuessFeedbackSubmit()}
+                          type="button"
                         >
-                          <option value="">-</option>
-                          {[1, 2, 3, 4].map((option) => (
-                            <option key={option} value={String(option)}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ))}
+                          提交反馈
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : isFirstRoundInterceptSkip ? (
                   <div className="wait-card">
