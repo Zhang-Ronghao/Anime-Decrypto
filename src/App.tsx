@@ -1195,12 +1195,15 @@ function App() {
   const clueSubmitCount = currentRoundSubmissions.filter((entry) => entry.clues?.length === 3).length;
   const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
   const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
-  const teamWordServerSlots = teamWordSlotsFromRecord(myTeamWordRecord);
-  const opponentTeamWordSlots = teamWordSlotsFromRecord(opponentTeamWordRecord);
+  const teamWordServerSlots = useMemo(() => teamWordSlotsFromRecord(myTeamWordRecord), [myTeamWordRecord]);
+  const opponentTeamWordSlots = useMemo(() => teamWordSlotsFromRecord(opponentTeamWordRecord), [opponentTeamWordRecord]);
   const displayedMyTeamWordSlots =
     isWordAssignmentPhase && pendingConfirmedTeamWordSlots && !myTeamConfirmed
       ? pendingConfirmedTeamWordSlots
       : teamWordServerSlots;
+  const hasMyTeamWordPreview = displayedMyTeamWordSlots.some(
+    (slot) => slot.text.trim().length > 0 || (slot.sourceTitle?.trim().length ?? 0) > 0,
+  );
   const hasCharacterDerivedWords = teamWordSlotsDraft.some((slot) => slot.characterOptions.length > 0);
   const canOmitSourceTitles = teamWordSlotsDraft.some((slot) => slotShowsSourceTitle(slot));
   const canRestoreSourceTitles =
@@ -1210,6 +1213,8 @@ function App() {
   const canEditWordAssignment = Boolean(
     isWordAssignmentPhase && self?.team && self.role === 'encoder' && myTeamWordRecord && !myTeamWordRecord.confirmed,
   );
+  const canViewWordAssignment = Boolean(isWordAssignmentPhase && self?.team && myTeamWordRecord);
+  const isWordAssignmentReadOnly = canViewWordAssignment && !canEditWordAssignment;
   const canExtractTeamWordCharacters = teamWordDraftMode === 'generated';
   const shouldConfirmBeforeManualEdit = teamWordDraftMode === 'generated';
   const canReplaceGeneratedWords = teamWordDraftMode === 'generated';
@@ -1256,7 +1261,9 @@ function App() {
       ? '填好 4 个词语后确认'
       : myTeamConfirmed
         ? '本队已确认，等待另一队加密者确认词语'
-        : '等待本队加密者确认词语'
+        : canViewWordAssignment
+          ? '实时查看本队加密者正在设置的词语'
+          : '等待本队加密者确认词语'
     : canSubmitClues
       ? '按密码顺序填写 3 条线索'
       : snapshot?.room.phase === 'encrypt'
@@ -1345,7 +1352,7 @@ function App() {
       return;
     }
 
-    if (self?.role !== 'encoder' || !self.team) {
+    if (!self?.team) {
       invalidateTeamWordDraftAsyncResults();
       setTeamWordSlotsDraft(emptyTeamWordSlots());
       setTeamWordDraftMode('manual');
@@ -1355,22 +1362,24 @@ function App() {
       setWordAssignmentNotice(null);
       return;
     }
-  }, [isWordAssignmentPhase, self?.role, self?.team]);
+  }, [isWordAssignmentPhase, self?.team]);
 
   useEffect(() => {
-    if (!isWordAssignmentPhase || self?.role !== 'encoder' || !self.team || !myTeamWordRecord) {
+    if (!isWordAssignmentPhase || !self?.team || !myTeamWordRecord) {
       return;
     }
 
-    if (Date.now() < teamWordServerSyncFreezeUntilRef.current) {
+    const isEditingWordAssignment = self.role === 'encoder' && !myTeamWordRecord.confirmed;
+
+    if (isEditingWordAssignment && Date.now() < teamWordServerSyncFreezeUntilRef.current) {
       return;
     }
 
-    if (teamWordManualModePinned && !myTeamWordRecord.confirmed) {
+    if (isEditingWordAssignment && teamWordManualModePinned) {
       return;
     }
 
-    if (myTeamWordRecord.confirmed || !teamWordFormDirty) {
+    if (!isEditingWordAssignment || myTeamWordRecord.confirmed || !teamWordFormDirty) {
       setTeamWordSlotsDraft(teamWordServerSlots);
       setTeamWordDraftMode(inferTeamWordDraftMode(teamWordServerSlots));
       setTeamWordFormDirty(false);
@@ -2930,7 +2939,7 @@ function App() {
 
             <div className="action-body">
               <div className="action-body-main">
-                {canEditWordAssignment ? (
+                {canViewWordAssignment ? (
                   <div className="action-lines">
                     <div className="action-line-head">
                       <div className="action-line-head-cell">本队词位</div>
@@ -2958,7 +2967,7 @@ function App() {
                             <div className="team-word-pair">
                               <input
                                 key={`team-word-title-${teamWordDraftMode}-${index}`}
-                                disabled={teamWordDraftMode === 'characters'}
+                                disabled={isWordAssignmentReadOnly || teamWordDraftMode === 'characters'}
                                 maxLength={48}
                                 onChange={(event) => updateTeamWordTitle(index, event.target.value)}
                                 placeholder={`动画名 ${index + 1}`}
@@ -2968,6 +2977,7 @@ function App() {
                               {teamWordDraftMode === 'characters' ? (
                                 <select
                                   key={`team-word-select-${index}`}
+                                  disabled={isWordAssignmentReadOnly}
                                   onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
                                   title={slot.text}
                                   value={slot.text}
@@ -2981,6 +2991,7 @@ function App() {
                               ) : (
                                 <input
                                   key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
+                                  disabled={isWordAssignmentReadOnly}
                                   maxLength={24}
                                   onChange={(event) => updateTeamWord(index, event.target.value)}
                                   placeholder={`角色名 ${index + 1}`}
@@ -2992,6 +3003,7 @@ function App() {
                           ) : teamWordDraftMode === 'characters' && slot.characterOptions.length > 0 ? (
                             <select
                               key={`team-word-select-single-${index}`}
+                              disabled={isWordAssignmentReadOnly}
                               onChange={(event) => updateTeamWordCharacter(index, event.target.value)}
                               title={slot.text}
                               value={slot.text}
@@ -3006,6 +3018,7 @@ function App() {
                             <div className="team-word-pair">
                               <input
                                 key={`team-word-title-${teamWordDraftMode}-${index}`}
+                                disabled={isWordAssignmentReadOnly}
                                 maxLength={48}
                                 onChange={(event) => updateTeamWordTitle(index, event.target.value)}
                                 placeholder={`动画名 ${index + 1}`}
@@ -3014,6 +3027,7 @@ function App() {
                               />
                               <input
                                 key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
+                                disabled={isWordAssignmentReadOnly}
                                 maxLength={24}
                                 onChange={(event) => updateTeamWord(index, event.target.value)}
                                 placeholder={`角色名 ${index + 1}`}
@@ -3025,7 +3039,9 @@ function App() {
                             <input
                               key={`team-word-input-${teamWordDraftMode}-${index}`}
                               maxLength={24}
-                              disabled={teamWordDraftMode === 'generated' || teamWordDraftMode === 'characters'}
+                              disabled={
+                                isWordAssignmentReadOnly || teamWordDraftMode === 'generated' || teamWordDraftMode === 'characters'
+                              }
                               onChange={(event) => updateTeamWord(index, event.target.value)}
                               placeholder={`填写第 ${index + 1} 个词语`}
                               title={slot.text}
@@ -3035,7 +3051,7 @@ function App() {
                           {canReplaceGeneratedWords ? (
                             <button
                               className="ghost-button team-word-replace-button"
-                              disabled={busyKey !== null}
+                              disabled={isWordAssignmentReadOnly || busyKey !== null}
                               onClick={() => void handleReplaceTeamWord(index)}
                               type="button"
                             >
@@ -3049,7 +3065,7 @@ function App() {
                     <div className="assignment-toolbar">
                       <button
                         className="ghost-button"
-                        disabled={busyKey !== null}
+                        disabled={isWordAssignmentReadOnly || busyKey !== null}
                         onClick={() => void handleGenerateWords()}
                         type="button"
                       >
@@ -3057,7 +3073,7 @@ function App() {
                       </button>
                       <button
                         className="ghost-button"
-                        disabled={busyKey !== null || !canExtractTeamWordCharacters}
+                        disabled={isWordAssignmentReadOnly || busyKey !== null || !canExtractTeamWordCharacters}
                         onClick={() => void handleExtractCharacters()}
                         type="button"
                       >
@@ -3065,7 +3081,7 @@ function App() {
                       </button>
                       <button
                         className="ghost-button"
-                        disabled={busyKey !== null || !canToggleSourceTitles}
+                        disabled={isWordAssignmentReadOnly || busyKey !== null || !canToggleSourceTitles}
                         onClick={handleToggleSourceTitles}
                         type="button"
                       >
@@ -3073,7 +3089,7 @@ function App() {
                       </button>
                       <button
                         className="ghost-button"
-                        disabled={busyKey !== null}
+                        disabled={isWordAssignmentReadOnly || busyKey !== null}
                         onClick={handleManualEdit}
                         type="button"
                       >
@@ -3221,7 +3237,9 @@ function App() {
                         ? '本队词语已确认'
                         : self.role === 'encoder'
                           ? '由你负责设置本队词语'
-                          : '待本队加密者确认词语'}
+                          : hasMyTeamWordPreview
+                            ? '本队词语实时预览'
+                            : '待本队加密者生成词语'}
                     </small>
                   ) : null}
                 </div>
@@ -3240,7 +3258,7 @@ function App() {
                 <div className="matrix-row matrix-head">
                   {[0, 1, 2, 3].map((index) => (
                     <div key={index}>
-                      {isWordAssignmentPhase && !myTeamConfirmed && !pendingConfirmedTeamWordSlots
+                      {isWordAssignmentPhase && !myTeamConfirmed && !hasMyTeamWordPreview
                         ? index + 1
                         : renderTeamWordDisplay(
                             displayedMyTeamWordSlots[index] ?? emptyTeamWordSlot(),
@@ -3261,9 +3279,9 @@ function App() {
                 ) : (
                   <div className="matrix-empty">
                     {isWordAssignmentPhase
-                      ? myTeamConfirmed || canEditWordAssignment
+                      ? myTeamConfirmed || canViewWordAssignment
                         ? '词语确认后，将从这里开始积累我方线索记录'
-                        : '待本队加密者确认词语'
+                        : '待本队加密者生成词语'
                       : '结算后会按轮次对齐显示我方线索'}
                   </div>
                 )}
