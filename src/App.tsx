@@ -157,6 +157,7 @@ const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
   decodeMinutes: 2,
   interceptMinutes: 2,
 };
+const GUESS_NUMBER_NOTE = '括号表示队友猜测的数字，只有猜错时才显示';
 const FULL_REFRESH_MIN_INTERVAL_MS = 800;
 const REALTIME_REFRESH_DEBOUNCE_MS = 400;
 
@@ -1339,7 +1340,7 @@ function App() {
     () => filterVisibleRoundRecords(opponentSubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
     [currentPhase, currentRoundNumber, opponentSubmissions, showAllRoundRecords],
   );
-  const myClueRows = buildClueMatrixRows(mySubmissions);
+  const myClueRows = buildClueMatrixRows(mySubmissions, { showGuessNumbers: true });
   const opponentClueRows = buildClueMatrixRows(opponentSubmissions, { showGuessNumbers: true });
   const decodeDigits = guessDigits(decodeGuess);
   const interceptDigits = guessDigits(interceptGuess);
@@ -4090,7 +4091,9 @@ function App() {
                             ? '本队词语实时预览'
                             : '待本队加密者生成词语'}
                     </small>
-                  ) : null}
+                  ) : (
+                    <small className="header-note">{GUESS_NUMBER_NOTE}</small>
+                  )}
                 </div>
                 <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
                 <div className="mini-stats">
@@ -4174,8 +4177,8 @@ function App() {
             <article className={cn('info-panel', `info-panel-${teamTone(opponentTeam)}`)}>
               <header className="info-header">
                 <div className="info-header-copy">
-                  <small className="header-note">鎷彿琛ㄧず瀵规柟鐚滄祴鐨勬暟瀛楋紝鍙湁鐚滈敊鏃舵墠鏄剧ず</small>
                   <h2>对方信息区</h2>
+                  <small className="header-note">{GUESS_NUMBER_NOTE}</small>
                 </div>
                 <span className={cn('team-badge', `team-badge-${teamTone(opponentTeam)}`)}>{displayTeamName(opponentTeam)}</span>
                 <div className="mini-stats">
@@ -4229,7 +4232,7 @@ function App() {
                       {showAllRoundRecords ? '隐藏信息' : '显示全部'}
                     </button>
                   </div>
-                  <small className="record-note">括号表示对方猜测的数字，只有猜错时才显示</small>
+                  <small className="record-note">{GUESS_NUMBER_NOTE}</small>
                 </div>
                 <div className="record-table">
                   <div className="record-row record-head">

@@ -1957,19 +1957,6 @@ select:focus {
   font-weight: 600;
 }
 
-.main-info-grid > .info-panel:last-child .info-header-copy > .header-note:first-child {
-  display: none;
-}
-
-.main-info-grid > .info-panel:last-child .info-header-copy h2::after {
-  content: "括号表示对方猜测的数字，只有猜错时才显示";
-  display: block;
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 0.875rem;
-  line-height: 1.35;
-  font-weight: 600;
-}
 
 .team-badge {
   display: inline-flex;
