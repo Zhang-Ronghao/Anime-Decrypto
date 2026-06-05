@@ -2336,8 +2336,22 @@ function App() {
           ) as BangumiCollectionType[])
         : defaultBangumiCatalogTypes(),
     );
+    setSnapshot((current) =>
+      current && current.room.id === snapshot.room.id
+        ? {
+            ...current,
+            room: {
+              ...current.room,
+              bangumi_catalog_inputs: result.inputs,
+              bangumi_catalog_types: result.collectionTypes,
+              bangumi_catalog_word_count: result.wordCount,
+              bangumi_catalog_updated_at: result.updatedAt,
+            },
+          }
+        : current,
+    );
     setBangumiCatalogModalOpen(false);
-    await refreshRoomSnapshot(snapshot.room.id, { silentError: true });
+    await refreshRoomSnapshot(snapshot.room.id, { silentError: true, force: true });
   }
 
   async function handleConfirmWords() {
