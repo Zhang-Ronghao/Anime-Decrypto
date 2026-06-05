@@ -725,18 +725,30 @@ select:focus {
 
 .action-panel-red {
   border-color: var(--red-line);
-  background: linear-gradient(180deg, var(--red-soft), #fff 140px);
+  background: linear-gradient(180deg, rgba(200, 41, 41, 0.035), rgba(255, 255, 255, 0) 170px), var(--panel);
   box-shadow:
-    0 18px 48px rgba(200, 41, 41, 0.12),
-    inset 0 0 0 1px rgba(200, 41, 41, 0.08);
+    0 18px 48px rgba(200, 41, 41, 0.1),
+    inset 0 0 0 1px rgba(200, 41, 41, 0.05);
 }
 
 .action-panel-blue {
   border-color: var(--blue-line);
-  background: linear-gradient(180deg, var(--blue-soft), #fff 140px);
+  background: linear-gradient(180deg, rgba(35, 89, 201, 0.035), rgba(255, 255, 255, 0) 170px), var(--panel);
   box-shadow:
-    0 18px 48px rgba(35, 89, 201, 0.12),
-    inset 0 0 0 1px rgba(35, 89, 201, 0.08);
+    0 18px 48px rgba(35, 89, 201, 0.1),
+    inset 0 0 0 1px rgba(35, 89, 201, 0.05);
+}
+
+.action-panel-red .action-header {
+  background:
+    linear-gradient(180deg, rgba(200, 41, 41, 0.035), rgba(255, 255, 255, 0.96)),
+    linear-gradient(135deg, rgba(200, 41, 41, 0.025), rgba(255, 255, 255, 0));
+}
+
+.action-panel-blue .action-header {
+  background:
+    linear-gradient(180deg, rgba(35, 89, 201, 0.035), rgba(255, 255, 255, 0.96)),
+    linear-gradient(135deg, rgba(35, 89, 201, 0.025), rgba(255, 255, 255, 0));
 }
 
 .action-header {
