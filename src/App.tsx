@@ -1328,6 +1328,7 @@ function App() {
   const currentRoundNumber = snapshot?.room.round_number ?? 0;
   const currentPhase = snapshot?.room.phase ?? null;
   const myTeamPlayers = myTeam === 'A' ? teamAPlayers : teamBPlayers;
+  const roleStripTeams: Team[] = [myTeam, opponentTeam];
   const lobbyTimerSettings = lobbyTimerSettingsFromRoom(snapshot?.room);
   const miscommunicationLimit = miscommunicationLimitFromRoom(snapshot?.room);
   const lifeModeEnabled = snapshot?.room.life_mode_enabled === true;
@@ -1351,6 +1352,12 @@ function App() {
   const isInterceptPhase = snapshot?.room.phase === 'intercept';
   const isFinishedPhase = snapshot?.room.phase === 'finished';
   const isFirstRoundInterceptSkip = isInterceptPhase && snapshot?.room.round_number === 1;
+  const actionPanelTone =
+    isInterceptPhase
+      ? teamTone(opponentTeam)
+      : isWordAssignmentPhase || isCurrentEncryptPhase || isDecodePhase
+        ? teamTone(myTeam)
+        : null;
   const canLeaveCurrentRoom = snapshot
     ? snapshot.room.status === 'active' || snapshot.room.status === 'lobby' || snapshot.room.status === 'finished'
     : false;
@@ -3442,11 +3449,12 @@ function App() {
       ) : (
         <>
           <section className="role-strip">
-            <RoleGroup players={teamAPlayers} selfId={self.id} team="A" />
-            <RoleGroup players={teamBPlayers} selfId={self.id} team="B" />
+            {roleStripTeams.map((team) => (
+              <RoleGroup players={team === 'A' ? teamAPlayers : teamBPlayers} selfId={self.id} team={team} key={team} />
+            ))}
           </section>
 
-          <section className="action-panel">
+          <section className={cn('action-panel', actionPanelTone && `action-panel-${actionPanelTone}`)}>
             <div className="action-header">
               <div className="action-header-card">
                 <div className="identity-banner">
