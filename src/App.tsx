@@ -1608,7 +1608,7 @@ function App() {
   const canSubmitGuessFeedbackDraft =
     (canSubmitDecodeFeedback || canSubmitInterceptFeedback) && (!hasSubmittedGuessFeedback || guessFeedbackDraftChanged);
   const isGuessFeedbackInputMode = canSubmitDecodeFeedback || canSubmitInterceptFeedback;
-  const guessChoiceLabel = isDecodePhase ? '选择解码' : '选择截码';
+  const guessChoiceLabel = isDecodePhase ? '选择线索对应词语' : '猜测线索对应词语';
   const guessFeedbackButtonLabel = isDecodePhase ? '发送解密建议' : '发送拦截建议';
   const hasActiveGuessFeedback = activeGuessVoteResponses.length > 0;
   const canSkipFirstIntercept = Boolean(isFirstRoundInterceptSkip && self?.is_host);
