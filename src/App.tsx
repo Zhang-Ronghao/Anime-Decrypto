@@ -1573,12 +1573,11 @@ function App() {
     : submittedDecodeFeedbackDraft;
   const currentGuessFeedbackDraft = isDecodePhase ? currentDecodeFeedbackDraft : currentInterceptFeedbackDraft;
   const submittedGuessFeedbackDraft = submittedDecodeFeedbackDraft;
-  const guessFeedbackDraftHasValue = currentGuessFeedbackDraft.some((value) => ['1', '2', '3', '4'].includes(value));
   const guessFeedbackDraftChanged = currentGuessFeedbackDraft.some(
-    (value, index) => value !== '' && value !== submittedGuessFeedbackDraft[index],
+    (value, index) => value !== submittedGuessFeedbackDraft[index],
   );
   const canSubmitGuessFeedbackDraft =
-    (canSubmitDecodeFeedback || canSubmitInterceptFeedback) && guessFeedbackDraftHasValue && guessFeedbackDraftChanged;
+    (canSubmitDecodeFeedback || canSubmitInterceptFeedback) && guessFeedbackDraftChanged;
   const isGuessFeedbackInputMode = canSubmitDecodeFeedback || canSubmitInterceptFeedback;
   const guessChoiceLabel = isDecodePhase ? '选择解码' : '选择截码';
   const guessFeedbackButtonLabel = isDecodePhase ? '发送解密建议' : '发送拦截建议';
@@ -2683,11 +2682,6 @@ function App() {
     }
 
     const feedback = phase === 'decode' ? currentDecodeFeedbackDraft : currentInterceptFeedbackDraft;
-    if (!feedback.some((value) => ['1', '2', '3', '4'].includes(value))) {
-      setActionError('至少选择 1 条线索的反馈数字');
-      return;
-    }
-
     await withAction(`submit-${phase}-feedback`, () => submitRoundGuessFeedbackBatch(snapshot.room.id, phase, self.team!, feedback), {
       refreshRoomId: snapshot.room.id,
     });

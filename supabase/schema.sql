@@ -3114,14 +3114,6 @@ begin
     raise exception 'Feedback digits must be 1, 2, 3, or 4.';
   end if;
 
-  if not exists (
-    select 1
-    from unnest(p_guess_digits) as items(value)
-    where trim(coalesce(value, '')) in ('1', '2', '3', '4')
-  ) then
-    raise exception 'Choose at least one feedback digit.';
-  end if;
-
   select *
   into v_room
   from public.rooms
@@ -3155,6 +3147,16 @@ begin
   if v_player_id is null then
     raise exception 'Only same-team non-operators can submit feedback.';
   end if;
+
+  delete from public.round_guess_feedback_responses
+  using unnest(p_guess_digits) with ordinality as items(value, ordinality)
+  where public.round_guess_feedback_responses.room_id = p_room_id
+    and public.round_guess_feedback_responses.round_number = v_room.round_number
+    and public.round_guess_feedback_responses.phase = p_phase
+    and public.round_guess_feedback_responses.team = p_team
+    and public.round_guess_feedback_responses.player_id = v_player_id
+    and public.round_guess_feedback_responses.clue_index = ordinality::integer - 1
+    and trim(coalesce(value, '')) = '';
 
   insert into public.round_guess_feedback_responses (
     room_id,
