@@ -1,7 +1,6 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type {
-  BangumiCatalogEntry,
   RoomRecord,
   RoomJoinStatus,
   PlayerRecord,
@@ -78,15 +77,6 @@ function isTeamWordSlot(value: unknown): value is TeamWordSlot {
   );
 }
 
-function isBangumiCatalogEntry(value: unknown): value is BangumiCatalogEntry {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  return typeof record.subjectId === 'number' && typeof record.title === 'string';
-}
-
 function parseTeamWordSlots(data: unknown): TeamWordSlot[] {
   if (!Array.isArray(data) || !data.every(isTeamWordSlot)) {
     throw new Error('队伍词槽数据格式不正确。');
@@ -94,6 +84,118 @@ function parseTeamWordSlots(data: unknown): TeamWordSlot[] {
 
   return data;
 }
+
+function compactSelectColumns(columns: string): string {
+  return columns.replace(/\s+/g, '');
+}
+
+const ROOM_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  room_code,
+  host_user_id,
+  status,
+  phase,
+  round_number,
+  max_rounds,
+  seat_count,
+  role_rotation_enabled,
+  encrypt_phase_minutes,
+  decode_phase_minutes,
+  intercept_phase_minutes,
+  miscommunication_limit,
+  life_mode_enabled,
+  life_points,
+  allow_midgame_join,
+  phase_started_at,
+  phase_deadline_at,
+  winner,
+  score_team_a_intercepts,
+  score_team_b_intercepts,
+  score_team_a_miscomms,
+  score_team_b_miscomms,
+  team_a_words_confirmed,
+  team_b_words_confirmed,
+  bangumi_catalog_inputs,
+  bangumi_catalog_types,
+  bangumi_catalog_word_count,
+  bangumi_catalog_updated_at,
+  created_at,
+  updated_at
+`);
+
+const PLAYER_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  room_id,
+  auth_user_id,
+  player_name,
+  team,
+  role,
+  team_seat,
+  is_spectator,
+  is_host,
+  connected,
+  joined_at
+`);
+
+const TEAM_WORDS_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  room_id,
+  team,
+  words,
+  seen_words,
+  word_slots,
+  confirmed,
+  created_at
+`);
+
+const ROUND_CODES_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  room_id,
+  team,
+  round_number,
+  encoder_player_id,
+  code,
+  created_at
+`);
+
+const ROUND_SUBMISSIONS_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  room_id,
+  team,
+  round_number,
+  clues,
+  intercept_guess,
+  own_guess,
+  revealed_code,
+  intercept_correct,
+  own_correct,
+  resolved_at,
+  created_at,
+  updated_at
+`);
+
+const TEAM_WORD_FEEDBACK_REQUESTS_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  room_id,
+  team,
+  request_number,
+  requested_by_player_id,
+  words,
+  word_slots,
+  created_at
+`);
+
+const TEAM_WORD_FEEDBACK_RESPONSES_SNAPSHOT_COLUMNS = compactSelectColumns(`
+  id,
+  request_id,
+  room_id,
+  team,
+  player_id,
+  slot_index,
+  accepted,
+  created_at,
+  updated_at
+`);
 
 export async function createRoom(playerName: string, desiredRoomCode?: string) {
   const client = assertSupabase();
@@ -573,38 +675,38 @@ export async function terminateGame(roomId: string) {
 
 export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
   const client = assertSupabase();
-  const roomQuery = client.from('rooms').select('*').eq('id', roomId).single();
+  const roomQuery = client.from('rooms').select(ROOM_SNAPSHOT_COLUMNS).eq('id', roomId).single();
   const playersQuery = client
     .from('room_players')
-    .select('*')
+    .select(PLAYER_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('team', { ascending: true })
     .order('team_seat', { ascending: true, nullsFirst: false })
     .order('joined_at', { ascending: true });
   const wordsQuery = client
     .from('team_words')
-    .select('*')
+    .select(TEAM_WORDS_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('team', { ascending: true });
   const codesQuery = client
     .from('round_codes')
-    .select('*')
+    .select(ROUND_CODES_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('round_number', { ascending: true });
   const submissionsQuery = client
     .from('round_submissions')
-    .select('*')
+    .select(ROUND_SUBMISSIONS_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('round_number', { ascending: false })
     .order('team', { ascending: true });
   const feedbackRequestsQuery = client
     .from('team_word_feedback_requests')
-    .select('*')
+    .select(TEAM_WORD_FEEDBACK_REQUESTS_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('request_number', { ascending: false });
   const feedbackResponsesQuery = client
     .from('team_word_feedback_responses')
-    .select('*')
+    .select(TEAM_WORD_FEEDBACK_RESPONSES_SNAPSHOT_COLUMNS)
     .eq('room_id', roomId)
     .order('slot_index', { ascending: true })
     .order('created_at', { ascending: true });
@@ -636,25 +738,34 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
   if (feedbackResponsesResult.error) throw feedbackResponsesResult.error;
 
   return {
-    room: {
-      ...(roomResult.data as RoomRecord),
-      bangumi_catalog_entries: Array.isArray((roomResult.data as RoomRecord).bangumi_catalog_entries)
-        ? ((roomResult.data as RoomRecord).bangumi_catalog_entries.filter(isBangumiCatalogEntry) as BangumiCatalogEntry[])
-        : [],
-    },
-    players: (playersResult.data ?? []) as PlayerRecord[],
-    teamWords: ((wordsResult.data ?? []) as TeamWordsRecord[]).map((entry) => ({
+    room: roomResult.data as unknown as RoomRecord,
+    players: ((playersResult.data ?? []) as unknown) as PlayerRecord[],
+    teamWords: (((wordsResult.data ?? []) as unknown) as TeamWordsRecord[]).map((entry) => ({
       ...entry,
       word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
     })),
-    teamWordFeedbackRequests: ((feedbackRequestsResult.data ?? []) as TeamWordFeedbackRequestRecord[]).map((entry) => ({
+    teamWordFeedbackRequests: (((feedbackRequestsResult.data ?? []) as unknown) as TeamWordFeedbackRequestRecord[]).map((entry) => ({
       ...entry,
       word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
     })),
-    teamWordFeedbackResponses: (feedbackResponsesResult.data ?? []) as TeamWordFeedbackResponseRecord[],
-    roundCodes: (codesResult.data ?? []) as RoundCodeRecord[],
-    submissions: (submissionsResult.data ?? []) as RoundSubmissionRecord[],
+    teamWordFeedbackResponses: ((feedbackResponsesResult.data ?? []) as unknown) as TeamWordFeedbackResponseRecord[],
+    roundCodes: ((codesResult.data ?? []) as unknown) as RoundCodeRecord[],
+    submissions: ((submissionsResult.data ?? []) as unknown) as RoundSubmissionRecord[],
   };
+}
+
+export async function fetchBangumiCatalogWords(roomId: string): Promise<string[]> {
+  const client = assertSupabase();
+  const { data, error } = await client.from('rooms').select('bangumi_catalog_words').eq('id', roomId).single();
+
+  if (error) {
+    throw error;
+  }
+
+  const value = data as { bangumi_catalog_words?: unknown } | null;
+  return Array.isArray(value?.bangumi_catalog_words)
+    ? value.bangumi_catalog_words.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';

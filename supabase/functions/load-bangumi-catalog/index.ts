@@ -391,6 +391,7 @@ Deno.serve(async (request) => {
         bangumi_catalog_types: normalizedCollectionTypes,
         bangumi_catalog_entries: entries,
         bangumi_catalog_words: entries.map((entry) => entry.title),
+        bangumi_catalog_word_count: entries.length,
         bangumi_catalog_updated_at: updatedAt,
       })
       .eq('id', body.roomId);

@@ -44,8 +44,7 @@ export interface RoomRecord {
   team_b_words_confirmed: boolean;
   bangumi_catalog_inputs: string[];
   bangumi_catalog_types: number[];
-  bangumi_catalog_entries: BangumiCatalogEntry[];
-  bangumi_catalog_words: string[];
+  bangumi_catalog_word_count: number;
   bangumi_catalog_updated_at: string | null;
   created_at: string;
   updated_at: string;

@@ -8,6 +8,7 @@ import {
   createRoom,
   disbandRoom,
   extractBangumiCharacters,
+  fetchBangumiCatalogWords,
   fetchRoomSnapshot,
   getRoomJoinStatus,
   generateTeamWords,
@@ -781,6 +782,7 @@ function App() {
   const [spectatorTeamView, setSpectatorTeamView] = useState<Team>('A');
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
   const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
+  const [bangumiCatalogBrowserWords, setBangumiCatalogBrowserWords] = useState<string[]>([]);
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
@@ -1142,17 +1144,13 @@ function App() {
         : [],
     [snapshot],
   );
-  const bangumiCatalogWords = useMemo(
-    () => (snapshot?.room.bangumi_catalog_words ?? []).slice().sort((left, right) => left.localeCompare(right, 'zh-CN')),
-    [snapshot],
-  );
   const bangumiCatalogSummary = useMemo<BangumiCatalogSummary>(
     () => ({
-      configured: bangumiCatalogWords.length > 0,
+      configured: (snapshot?.room.bangumi_catalog_word_count ?? 0) > 0,
       userCount: snapshot?.room.bangumi_catalog_inputs.length ?? 0,
-      wordCount: bangumiCatalogWords.length,
+      wordCount: snapshot?.room.bangumi_catalog_word_count ?? 0,
     }),
-    [bangumiCatalogWords, snapshot],
+    [snapshot],
   );
   const isLoadingBangumiCatalog = busyKey === 'load-bangumi-catalog';
 
@@ -1656,16 +1654,23 @@ function App() {
     setBangumiCatalogModalOpen(false);
   }
 
-  function openBangumiCatalogBrowser() {
-    if (!snapshot || snapshot.room.bangumi_catalog_words.length === 0) {
+  async function openBangumiCatalogBrowser() {
+    if (!snapshot || snapshot.room.bangumi_catalog_word_count === 0) {
       return;
     }
 
+    const words = await withAction('load-bangumi-catalog-browser', () => fetchBangumiCatalogWords(snapshot.room.id));
+    if (words === null) {
+      return;
+    }
+
+    setBangumiCatalogBrowserWords(words.slice().sort((left, right) => left.localeCompare(right, 'zh-CN')));
     setBangumiCatalogBrowserOpen(true);
   }
 
   function closeBangumiCatalogBrowser() {
     setBangumiCatalogBrowserOpen(false);
+    setBangumiCatalogBrowserWords([]);
   }
 
   function updateBangumiCatalogInput(index: number, value: string) {
@@ -2906,8 +2911,13 @@ function App() {
 
                   <div className="catalog-actions">
                     {bangumiCatalogSummary.configured ? (
-                      <button className="ghost-button" onClick={openBangumiCatalogBrowser} type="button">
-                        浏览词库
+                      <button
+                        className="ghost-button"
+                        disabled={busyKey !== null}
+                        onClick={() => void openBangumiCatalogBrowser()}
+                        type="button"
+                      >
+                        {busyKey === 'load-bangumi-catalog-browser' ? '载入中...' : '浏览词库'}
                       </button>
                     ) : null}
                   </div>
@@ -3995,11 +4005,11 @@ function App() {
             </div>
 
             <div className="catalog-browser-summary">
-              <div className="tag">词数：{bangumiCatalogWords.length}</div>
+              <div className="tag">词数：{bangumiCatalogBrowserWords.length}</div>
             </div>
 
             <div className="catalog-browser-list" role="list">
-              {bangumiCatalogWords.map((word) => (
+              {bangumiCatalogBrowserWords.map((word) => (
                 <span className="catalog-browser-item" key={word} role="listitem">
                   {word}
                 </span>

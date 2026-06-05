@@ -82,7 +82,14 @@ alter table public.rooms
 add column if not exists bangumi_catalog_words text[] not null default '{}';
 
 alter table public.rooms
+add column if not exists bangumi_catalog_word_count integer not null default 0;
+
+alter table public.rooms
 add column if not exists bangumi_catalog_updated_at timestamptz null;
+
+update public.rooms
+set bangumi_catalog_word_count = coalesce(array_length(bangumi_catalog_words, 1), 0)
+where bangumi_catalog_word_count <> coalesce(array_length(bangumi_catalog_words, 1), 0);
 
 alter table public.rooms drop constraint if exists rooms_seat_count_check;
 alter table public.rooms
