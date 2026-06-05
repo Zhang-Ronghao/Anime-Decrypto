@@ -1320,6 +1320,30 @@ function App() {
   );
   const canSubmitTeamWordFeedbackDraft =
     canSubmitTeamWordFeedback && teamWordFeedbackDraftComplete && teamWordFeedbackDraftChanged;
+  const teamWordFeedbackSubmittedPlayerIds = useMemo(
+    () =>
+      new Set(
+        myTeamFeedbackPlayers
+          .filter((player) =>
+            [0, 1, 2, 3].every(
+              (slotIndex) =>
+                latestTeamWordFeedbackRequest &&
+                teamWordFeedbackResponseByPlayerSlot[
+                  feedbackResponseKey(latestTeamWordFeedbackRequest.id, player.id, slotIndex)
+                ],
+            ),
+          )
+          .map((player) => player.id),
+      ),
+    [latestTeamWordFeedbackRequest, myTeamFeedbackPlayers, teamWordFeedbackResponseByPlayerSlot],
+  );
+  const teamWordFeedbackAllSubmitted = Boolean(
+    canEditWordAssignment &&
+      latestTeamWordFeedbackRequest &&
+      isLatestTeamWordFeedbackCurrent &&
+      myTeamFeedbackPlayers.length > 0 &&
+      teamWordFeedbackSubmittedPlayerIds.size === myTeamFeedbackPlayers.length,
+  );
   const canSubmitClues = !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
   const canSubmitDecode = !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
@@ -3147,7 +3171,7 @@ function App() {
               <div className="action-body-main">
                 {canViewWordAssignment ? (
                   <div className="action-lines">
-                    <div className="action-line-head action-line-word-assignment">
+                    <div className={cn('action-line-head action-line-word-assignment', teamWordFeedbackAllSubmitted && 'word-feedback-head-complete')}>
                       <div className="action-line-head-cell">词语</div>
                       {showsDualWordColumns ? (
                         <div className="action-line-head-word-pair">
@@ -3160,7 +3184,9 @@ function App() {
                       <div className="action-line-head-cell">
                         {latestTeamWordFeedbackRequest
                           ? isLatestTeamWordFeedbackCurrent
-                            ? `反馈 ${latestTeamWordFeedbackRequest.request_number}`
+                            ? teamWordFeedbackAllSubmitted
+                              ? '反馈完成'
+                              : `反馈 ${latestTeamWordFeedbackRequest.request_number}`
                             : '反馈已过期'
                           : '反馈'}
                       </div>
@@ -3287,7 +3313,7 @@ function App() {
                               </button>
                             ) : null}
                           </div>
-                          <div className="word-feedback-inline">
+                          <div className={cn('word-feedback-inline', teamWordFeedbackAllSubmitted && 'word-feedback-inline-complete')}>
                             {latestTeamWordFeedbackRequest && isLatestTeamWordFeedbackCurrent ? (
                               canSubmitTeamWordFeedback ? (
                                 <div className="word-feedback-choice" role="group" aria-label={`第 ${index + 1} 个词反馈`}>
@@ -3326,9 +3352,15 @@ function App() {
                                   <span className="word-feedback-badge word-feedback-badge-no" title={rejectedNames.join('、')}>
                                     × {rejectedNames.length}
                                   </span>
-                                  <span className="word-feedback-badge word-feedback-badge-pending" title={pendingNames.join('、')}>
-                                    待 {pendingNames.length}
-                                  </span>
+                                  {teamWordFeedbackAllSubmitted ? (
+                                    <span className="word-feedback-badge word-feedback-badge-complete" title="全部队友已提交">
+                                      完成
+                                    </span>
+                                  ) : (
+                                    <span className="word-feedback-badge word-feedback-badge-pending" title={pendingNames.join('、')}>
+                                      待 {pendingNames.length}
+                                    </span>
+                                  )}
                                 </div>
                               )
                             ) : (
@@ -3341,8 +3373,10 @@ function App() {
                       );
                     })}
 
-                    {canSubmitTeamWordFeedback ? (
-                      <div className="word-feedback-submit-row">
+                    <div className={cn('assignment-toolbar', canSubmitTeamWordFeedback && 'assignment-toolbar-feedback')}>
+                      {canSubmitTeamWordFeedback ? <span aria-hidden="true" /> : null}
+                      {canSubmitTeamWordFeedback ? <span aria-hidden="true" /> : null}
+                      {canSubmitTeamWordFeedback ? (
                         <button
                           className="primary-button word-feedback-submit-button"
                           disabled={busyKey !== null || !canSubmitTeamWordFeedbackDraft}
@@ -3351,10 +3385,7 @@ function App() {
                         >
                           提交反馈
                         </button>
-                      </div>
-                    ) : null}
-
-                    <div className="assignment-toolbar">
+                      ) : null}
                       <button
                         className="ghost-button"
                         disabled={isWordAssignmentReadOnly || busyKey !== null}

@@ -992,6 +992,13 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.assignment-toolbar-feedback {
+  display: grid;
+  grid-template-columns: 56px minmax(180px, 1fr) minmax(132px, auto);
+  gap: 10px;
+  align-items: center;
+}
+
 .team-word-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1024,6 +1031,21 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.word-feedback-head-complete {
+  padding: 6px 0;
+  border: 1px solid #79bd87;
+  border-radius: 8px;
+  background: #edf8f0;
+  color: #177a32;
+}
+
+.word-feedback-inline-complete {
+  min-height: 42px;
+  border: 1px solid #79bd87;
+  border-radius: 8px;
+  background: #f3fbf5;
 }
 
 .word-feedback-choice,
@@ -1062,15 +1084,15 @@ select:focus {
 }
 
 .word-feedback-choice-yes.word-feedback-choice-selected {
-  border-color: #177a32;
-  background: #177a32;
-  color: #fff;
+  border-color: #2f9850;
+  background: #d9f3df;
+  color: #126b2c;
 }
 
 .word-feedback-choice-no.word-feedback-choice-selected {
-  border-color: var(--red);
-  background: var(--red);
-  color: #fff;
+  border-color: #d85858;
+  background: #ffe0e0;
+  color: #a91f1f;
 }
 
 .word-feedback-choice-button:disabled {
@@ -1103,13 +1125,17 @@ select:focus {
   color: var(--muted);
 }
 
-.word-feedback-submit-row {
-  display: flex;
-  justify-content: flex-end;
+.word-feedback-badge-complete {
+  border-color: #79bd87;
+  background: #edf8f0;
+  color: #177a32;
 }
 
 .word-feedback-submit-button {
-  width: min(180px, 100%);
+  width: 84px;
+  min-height: 34px;
+  padding: 0.45rem 0.55rem;
+  justify-self: center;
 }
 
 .word-feedback-inline-empty {
@@ -2634,6 +2660,23 @@ code {
   .assignment-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .assignment-toolbar-feedback {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .assignment-toolbar-feedback > :first-child {
+    display: none;
+  }
+
+  .assignment-toolbar-feedback > :nth-child(2) {
+    grid-column: 1;
+  }
+
+  .assignment-toolbar-feedback .word-feedback-submit-button {
+    grid-column: 2;
+    justify-self: flex-start;
   }
 
   .team-word-control {
