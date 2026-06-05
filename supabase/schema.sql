@@ -3232,7 +3232,7 @@ begin
   end if;
 
   if jsonb_array_length(coalesce(p_room.bangumi_catalog_entries, '[]'::jsonb)) = 0 then
-    raise exception 'Bangumi catalog metadata is missing.';
+    raise exception '当前房间没有加入 Bangumi 词库，请先在大厅载入词库，或手动填写词语。';
   end if;
 
   select coalesce(array_agg(word order by first_ord), array[]::text[])
