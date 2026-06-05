@@ -1213,7 +1213,7 @@ function App() {
   const canEditWordAssignment = Boolean(
     isWordAssignmentPhase && self?.team && self.role === 'encoder' && myTeamWordRecord && !myTeamWordRecord.confirmed,
   );
-  const canViewWordAssignment = Boolean(isWordAssignmentPhase && self?.team && myTeamWordRecord);
+  const canViewWordAssignment = Boolean(isWordAssignmentPhase && self?.team);
   const isWordAssignmentReadOnly = canViewWordAssignment && !canEditWordAssignment;
   const canExtractTeamWordCharacters = teamWordDraftMode === 'generated';
   const shouldConfirmBeforeManualEdit = teamWordDraftMode === 'generated';
