@@ -3,28 +3,30 @@
   font-family: 'Inter', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #121826;
-  background: #f5f7fb;
+  color: oklch(20% 0.024 262);
+  background: oklch(97.4% 0.01 255);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --page: #f5f7fb;
-  --panel: #ffffff;
-  --line: #d9e0ec;
-  --line-strong: #b9c4d4;
-  --text: #121826;
-  --muted: #5d6678;
-  --soft: #eef2f8;
-  --blue: #2359c9;
-  --blue-soft: #eef4ff;
-  --blue-line: #7ea2f4;
-  --red: #c82929;
-  --red-soft: #fff1f1;
-  --red-line: #f28a8a;
-  --good: #1f7a28;
-  --bad: #c51717;
-  --warn: #fff4cc;
+  --page: oklch(97.4% 0.01 255);
+  --panel: oklch(99.2% 0.004 255);
+  --panel-raised: oklch(100% 0.003 255);
+  --line: oklch(89.5% 0.018 255);
+  --line-strong: oklch(80.8% 0.028 255);
+  --text: oklch(20% 0.024 262);
+  --muted: oklch(47.8% 0.028 260);
+  --soft: oklch(95.5% 0.014 255);
+  --blue: oklch(47% 0.166 263);
+  --blue-soft: oklch(96.2% 0.024 260);
+  --blue-line: oklch(72.4% 0.097 260);
+  --red: oklch(50.2% 0.176 27);
+  --red-soft: oklch(96.8% 0.025 21);
+  --red-line: oklch(76% 0.111 24);
+  --good: oklch(49.4% 0.13 145);
+  --bad: oklch(48% 0.185 27);
+  --warn: oklch(95.8% 0.071 89);
+  --focus-ring: 0 0 0 3px oklch(47% 0.166 263 / 0.16);
   --shadow: 0 16px 44px rgba(26, 38, 66, 0.1);
 }
 
@@ -56,7 +58,7 @@ select {
   min-height: 42px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   padding: 0.65rem 0.75rem;
   transition: border-color 160ms ease, box-shadow 160ms ease;
@@ -72,7 +74,7 @@ input:focus,
 select:focus {
   outline: none;
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(35, 89, 201, 0.14);
+  box-shadow: var(--focus-ring);
 }
 
 .app-shell {
@@ -109,9 +111,8 @@ select:focus {
   border: 1px solid rgba(20, 33, 61, 0.08);
   border-radius: 28px;
   background:
-    radial-gradient(circle at top left, rgba(232, 76, 76, 0.18), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(48, 96, 212, 0.22), transparent 38%),
-    linear-gradient(135deg, #fffaf8 0%, #f7f9ff 52%, #fefefe 100%);
+    linear-gradient(122deg, oklch(98.6% 0.012 24) 0%, oklch(98.4% 0.016 255) 48%, var(--panel) 100%),
+    linear-gradient(90deg, oklch(63% 0.17 25 / 0.16), oklch(55% 0.17 263 / 0.16));
   box-shadow: 0 30px 80px rgba(22, 35, 68, 0.14);
 }
 
@@ -122,30 +123,6 @@ select:focus {
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 22px;
   pointer-events: none;
-}
-
-.hero-orb {
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(10px);
-  opacity: 0.72;
-  pointer-events: none;
-}
-
-.hero-orb-red {
-  top: -44px;
-  left: -26px;
-  width: 180px;
-  height: 180px;
-  background: radial-gradient(circle, rgba(233, 88, 88, 0.36), rgba(233, 88, 88, 0));
-}
-
-.hero-orb-blue {
-  right: -34px;
-  bottom: -54px;
-  width: 220px;
-  height: 220px;
-  background: radial-gradient(circle, rgba(69, 117, 228, 0.28), rgba(69, 117, 228, 0));
 }
 
 .hero-copy h1,
@@ -200,11 +177,10 @@ select:focus {
   padding: 0.35rem 0.9rem;
   border: 1px solid rgba(20, 33, 61, 0.1);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
+  background: color-mix(in oklch, var(--panel) 88%, transparent);
   color: #26344f;
   font-size: 0.92rem;
   font-weight: 800;
-  backdrop-filter: blur(10px);
   box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
 }
 
@@ -215,12 +191,11 @@ select:focus {
   padding: 0.35rem 0.9rem;
   border: 1px solid rgba(35, 89, 201, 0.26);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--panel);
   color: #2359c9;
   font-size: 0.92rem;
   font-weight: 800;
   text-decoration: none;
-  backdrop-filter: blur(10px);
   box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
 }
 
@@ -238,7 +213,7 @@ select:focus {
   padding: 0.42rem 0.8rem;
   border: 1px solid rgba(22, 35, 63, 0.08);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
+  background: color-mix(in oklch, var(--panel) 86%, transparent);
   color: #4f5d75;
   letter-spacing: 0.14em;
   box-shadow: 0 10px 24px rgba(28, 42, 76, 0.06);
@@ -263,10 +238,9 @@ select:focus {
   border: 1px solid rgba(185, 196, 212, 0.6);
   border-radius: 22px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 250, 255, 0.82)),
-    rgba(255, 255, 255, 0.86);
+    linear-gradient(180deg, color-mix(in oklch, var(--panel) 96%, var(--blue-soft)), color-mix(in oklch, var(--panel) 90%, var(--soft))),
+    var(--panel);
   box-shadow: 0 20px 44px rgba(24, 39, 74, 0.12);
-  backdrop-filter: blur(16px);
 }
 
 .hero-button-row {
@@ -284,7 +258,7 @@ select:focus {
   min-height: 50px;
   border-radius: 14px;
   border-color: rgba(155, 169, 191, 0.8);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--panel-raised);
 }
 
 .hero-form-card input::placeholder {
@@ -298,7 +272,7 @@ select:focus {
 
 .hero-form-card .ghost-button {
   border: 1px solid rgba(112, 133, 174, 0.25);
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--panel);
 }
 
 .hero-form-card .primary-button:hover,
@@ -417,7 +391,7 @@ select:focus {
 .role-strip-team {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel-raised);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -474,7 +448,7 @@ select:focus {
 
 .role-chip-self {
   border-color: var(--line-strong);
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .status-pill {
@@ -530,7 +504,7 @@ select:focus {
   padding: 12px 14px;
   border: 1px solid;
   border-radius: 14px;
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .team-score > div:not(.team-score-display),
@@ -636,13 +610,13 @@ select:focus {
   border-radius: 8px;
   padding: 0.75rem 1rem;
   font-weight: 800;
-  transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease, border-color 160ms ease;
+  transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
 .primary-button {
   min-height: 48px;
   background: linear-gradient(180deg, #2f6be5, #1f53c2);
-  color: #fff;
+  color: var(--panel-raised);
   box-shadow: 0 10px 24px rgba(35, 89, 201, 0.25);
 }
 
@@ -659,7 +633,7 @@ select:focus {
 
 .outline-button {
   min-height: 48px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   border: 1px solid var(--blue-line);
 }
@@ -693,6 +667,28 @@ select:focus {
 .outline-button:hover,
 .seat-card:hover {
   transform: translateY(-1px);
+}
+
+.primary-button:active,
+.ghost-button:active,
+.danger-button:active,
+.outline-button:active,
+.seat-card:active {
+  transform: translateY(0);
+}
+
+.primary-button:focus-visible,
+.ghost-button:focus-visible,
+.danger-button:focus-visible,
+.outline-button:focus-visible,
+.seat-card:focus-visible,
+.home-footer-link:focus-visible,
+.hero-tag-link:focus-visible,
+.repo-link-button:focus-visible,
+.host-transfer-option:focus-visible,
+.word-feedback-choice-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .primary-button:disabled,
@@ -780,7 +776,7 @@ select:focus {
   padding: 0.25rem 0.7rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   font-size: 0.94rem;
   font-weight: 800;
@@ -793,7 +789,7 @@ select:focus {
   padding: 0.25rem 0.72rem;
   border: 1px solid rgba(179, 124, 0, 0.24);
   border-radius: 999px;
-  background: linear-gradient(135deg, #fff7d6 0%, #ffe8a3 100%);
+  background: linear-gradient(135deg, oklch(97.2% 0.058 89) 0%, oklch(91.4% 0.119 86) 100%);
   color: #7a5400;
   font-size: 0.86rem;
   font-weight: 900;
@@ -926,7 +922,7 @@ select:focus {
   overflow: hidden;
   border: 1px solid;
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   font-weight: 800;
 }
 
@@ -934,7 +930,7 @@ select:focus {
   height: 100%;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--panel-raised);
   font-size: 1.2rem;
 }
 
@@ -975,7 +971,7 @@ select:focus {
   padding: 0.55rem 0.8rem;
   border: 1px solid;
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   font-weight: 850;
   text-align: center;
@@ -1020,7 +1016,7 @@ select:focus {
   color: var(--text);
   opacity: 1;
   cursor: default;
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .action-line select:disabled {
@@ -1085,7 +1081,7 @@ select:focus {
   place-items: center;
   border: 2px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--muted);
   font-size: 1.2rem;
   font-weight: 900;
@@ -1095,13 +1091,13 @@ select:focus {
 
 .word-feedback-choice-yes {
   border-color: #79bd87;
-  background: #fff;
+  background: var(--panel-raised);
   color: #177a32;
 }
 
 .word-feedback-choice-no {
   border-color: var(--red-line);
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--red);
 }
 
@@ -1127,7 +1123,7 @@ select:focus {
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel-raised);
   font-size: 0.9rem;
   font-weight: 900;
   white-space: nowrap;
@@ -1149,13 +1145,13 @@ select:focus {
 
 .word-feedback-badge-complete {
   border-color: #79bd87;
-  background: #fff;
+  background: var(--panel-raised);
   color: #177a32;
 }
 
 .word-feedback-badge-complete-warning {
   border-color: #d5a039;
-  background: #fff;
+  background: var(--panel-raised);
   color: #8a5a00;
 }
 
@@ -1225,7 +1221,7 @@ select:focus {
   padding: 0.2rem 0.25rem;
   border: 1px solid rgba(176, 188, 204, 0.76);
   border-radius: 7px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 900;
@@ -1300,7 +1296,7 @@ select:focus {
   padding: 10px 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel-raised);
   text-align: center;
 }
 
@@ -1355,7 +1351,7 @@ select:focus {
   padding: 18px;
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   text-align: center;
 }
 
@@ -1384,7 +1380,7 @@ select:focus {
   border-color: rgba(200, 41, 41, 0.26);
   background:
     radial-gradient(circle at top, rgba(200, 41, 41, 0.18), transparent 55%),
-    linear-gradient(135deg, #fff6f6 0%, #ffe1e1 100%);
+    linear-gradient(135deg, color-mix(in oklch, var(--panel) 72%, var(--red-soft)) 0%, var(--red-soft) 100%);
 }
 
 .finished-result-card-blue {
@@ -1602,7 +1598,7 @@ select:focus {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .lobby-toggle input {
@@ -1644,17 +1640,17 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 15px;
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .team-seat-panel-red {
   border-color: var(--red-line);
-  background: linear-gradient(180deg, rgba(255, 241, 241, 0.85), #fff 120px);
+  background: linear-gradient(180deg, rgba(255, 241, 241, 0.85), var(--panel-raised) 120px);
 }
 
 .team-seat-panel-blue {
   border-color: var(--blue-line);
-  background: linear-gradient(180deg, rgba(238, 244, 255, 0.85), #fff 120px);
+  background: linear-gradient(180deg, rgba(238, 244, 255, 0.85), var(--panel-raised) 120px);
 }
 
 .team-seat-head {
@@ -1687,7 +1683,7 @@ select:focus {
   display: grid;
   align-content: space-between;
   text-align: left;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   border: 1px solid var(--line);
   padding: 0.68rem 0.8rem;
@@ -1733,7 +1729,7 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 14px 15px;
-  background: linear-gradient(180deg, #fff, var(--soft));
+  background: linear-gradient(180deg, var(--panel-raised), var(--soft));
 }
 
 .spectator-panel-main {
@@ -1765,7 +1761,7 @@ select:focus {
   max-width: 180px;
   padding: 0.34rem 0.7rem;
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   border: 1px solid var(--line);
   color: var(--text);
   font-size: 0.86rem;
@@ -1848,7 +1844,7 @@ select:focus {
 .history-row {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   padding: 14px;
 }
 
@@ -1926,13 +1922,13 @@ select:focus {
 .info-panel-red {
   --info-accent-line: var(--red-line);
   border-color: var(--red-line);
-  background: linear-gradient(180deg, var(--red-soft), #fff 140px);
+  background: linear-gradient(180deg, var(--red-soft), var(--panel-raised) 140px);
 }
 
 .info-panel-blue {
   --info-accent-line: var(--blue-line);
   border-color: var(--blue-line);
-  background: linear-gradient(180deg, var(--blue-soft), #fff 140px);
+  background: linear-gradient(180deg, var(--blue-soft), var(--panel-raised) 140px);
 }
 
 .info-header {
@@ -1998,7 +1994,7 @@ select:focus {
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--muted);
   font-weight: 700;
 }
@@ -2012,7 +2008,7 @@ select:focus {
   overflow: hidden;
   border: 1px solid var(--info-accent-line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .matrix-row {
@@ -2130,7 +2126,7 @@ select:focus {
   overflow: hidden;
   border: 1px solid var(--info-accent-line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .record-row {
@@ -2223,7 +2219,7 @@ select:focus {
   padding: 12px 14px;
   border: 1px solid #f0a6a6;
   border-radius: 8px;
-  background: #fff1f1;
+  background: var(--red-soft);
   font-weight: 700;
 }
 
@@ -2280,7 +2276,7 @@ select:focus {
   padding: 0.45rem 0.8rem;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   font-weight: 700;
 }
@@ -2329,7 +2325,7 @@ select:focus {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -2525,7 +2521,7 @@ select:focus {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel-raised);
 }
 
 .midgame-team-card-red {
@@ -2603,7 +2599,7 @@ select:focus {
   padding: 0.65rem 0.8rem;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel-raised);
   color: var(--text);
   font-weight: 700;
   overflow: hidden;
@@ -2994,5 +2990,16 @@ code {
 
   .record-row {
     min-width: 650px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

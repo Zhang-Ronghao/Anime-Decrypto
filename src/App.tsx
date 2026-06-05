@@ -2909,8 +2909,6 @@ function App() {
     return (
       <main className="app-shell">
         <section className="panel hero-panel hero-panel-home">
-          <div className="hero-orb hero-orb-red" aria-hidden="true" />
-          <div className="hero-orb hero-orb-blue" aria-hidden="true" />
           <div className="hero-copy">
             <div className="hero-eyebrow-row">
               <p className="hero-tag">动漫高手4.0</p>
