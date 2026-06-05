@@ -3445,7 +3445,13 @@ function App() {
           </footer>
         </>
       ) : (
-        <div className="game-board">
+        <>
+          <section className="role-strip">
+            {roleStripTeams.map((team) => (
+              <RoleGroup players={team === 'A' ? teamAPlayers : teamBPlayers} selfId={self.id} team={team} key={team} />
+            ))}
+          </section>
+
           <section className={cn('action-panel', actionPanelTone && `action-panel-${actionPanelTone}`)}>
             <div className="action-header">
               <div className="action-header-card">
@@ -4076,12 +4082,6 @@ function App() {
             </div>
           </section>
 
-          <section className="role-strip">
-            {roleStripTeams.map((team) => (
-              <RoleGroup players={team === 'A' ? teamAPlayers : teamBPlayers} selfId={self.id} team={team} key={team} />
-            ))}
-          </section>
-
           <section className="main-info-grid">
             <article className={cn('info-panel', `info-panel-${teamTone(myTeam)}`)}>
               <header className="info-header">
@@ -4270,7 +4270,7 @@ function App() {
               </button>
             ) : null}
           </section>
-        </div>
+        </>
       )}
 
       {hostTransferDialogOpen && snapshot?.room.phase === 'lobby' && self?.is_host ? (
