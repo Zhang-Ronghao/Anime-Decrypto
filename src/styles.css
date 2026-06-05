@@ -28,6 +28,11 @@
   --warn: oklch(95.8% 0.071 89);
   --focus-ring: 0 0 0 3px oklch(47% 0.166 263 / 0.16);
   --shadow: 0 16px 44px rgba(26, 38, 66, 0.1);
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 22px;
+  --space-xl: 30px;
 }
 
 * {
@@ -382,25 +387,25 @@ select:focus {
 }
 
 .role-strip {
-  margin-top: 18px;
+  margin-top: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 18px;
+  gap: var(--space-sm);
 }
 
 .role-strip-team {
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel-raised);
-  box-shadow: var(--shadow);
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--panel) 74%, var(--soft));
+  box-shadow: none;
   overflow: hidden;
 }
 
 .role-strip-line {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: 10px;
+  padding: 10px 14px;
   flex-wrap: wrap;
 }
 
@@ -436,13 +441,13 @@ select:focus {
 .role-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  padding: 0.4rem 0.7rem;
+  min-height: 30px;
+  padding: 0.32rem 0.62rem;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--soft);
   color: var(--text);
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   font-weight: 700;
 }
 
@@ -495,6 +500,12 @@ select:focus {
   justify-self: end;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.game-board {
+  display: grid;
+  gap: var(--space-lg);
+  margin-top: var(--space-lg);
 }
 
 .team-score {
@@ -703,11 +714,12 @@ select:focus {
 }
 
 .action-panel {
-  margin-top: 18px;
+  margin-top: 0;
   display: grid;
-  grid-template-columns: minmax(240px, 0.36fr) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 0.32fr) minmax(0, 1fr);
   align-items: stretch;
   gap: 0;
+  min-height: 236px;
   overflow: hidden;
 }
 
@@ -733,29 +745,28 @@ select:focus {
   min-width: 0;
   display: grid;
   align-content: space-between;
-  gap: 14px;
-  padding: 16px 18px;
+  gap: var(--space-lg);
+  padding: 22px;
   border-right: 1px solid var(--line);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 255, 0.96)),
-    linear-gradient(135deg, rgba(35, 89, 201, 0.06), rgba(200, 41, 41, 0.05));
+    linear-gradient(180deg, oklch(99.4% 0.004 255), oklch(96.8% 0.012 255)),
+    linear-gradient(135deg, oklch(47% 0.166 263 / 0.05), oklch(50.2% 0.176 27 / 0.04));
 }
 
 .action-header-card {
   display: grid;
-  justify-items: center;
-  gap: 8px;
-  padding: 14px 12px;
-  border: 1px solid rgba(185, 196, 212, 0.8);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.9);
-  text-align: center;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  justify-items: start;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  box-shadow: none;
 }
 
 .action-header h2 {
   margin: 0;
-  font-size: 1.32rem;
+  font-size: 1.48rem;
   line-height: 1.1;
   letter-spacing: 0;
 }
@@ -763,7 +774,7 @@ select:focus {
 .identity-banner {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
   margin: 0;
   flex-wrap: wrap;
@@ -797,7 +808,7 @@ select:focus {
 }
 
 .action-hint {
-  max-width: 24ch;
+  max-width: 32ch;
   margin: 0;
   color: var(--muted);
   font-weight: 700;
@@ -825,10 +836,10 @@ select:focus {
 .action-body {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px;
+  grid-template-columns: minmax(0, 1fr) minmax(168px, 0.2fr);
   gap: 0;
   align-items: stretch;
-  padding: 18px 22px;
+  padding: 24px;
 }
 
 .action-body-main {
@@ -836,7 +847,7 @@ select:focus {
   min-height: 100%;
   display: grid;
   align-content: center;
-  padding-right: 22px;
+  padding-right: 24px;
 }
 
 .action-body-main > * {
@@ -1908,15 +1919,20 @@ select:focus {
 }
 
 .main-info-grid {
-  margin-top: 22px;
+  margin-top: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
+  align-items: start;
+  gap: var(--space-lg);
 }
 
 .info-panel {
-  padding: 18px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 16px;
   --info-accent-line: var(--line);
+  box-shadow: 0 10px 28px rgba(26, 38, 66, 0.06);
 }
 
 .info-panel-red {
@@ -1932,12 +1948,12 @@ select:focus {
 }
 
 .info-header {
-  min-height: 72px;
+  min-height: 66px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: start;
   gap: 14px;
-  margin-bottom: 4px;
+  margin-bottom: 0;
 }
 
 .info-header-copy {
@@ -2078,7 +2094,7 @@ select:focus {
 }
 
 .record-block {
-  margin-top: 24px;
+  margin-top: 4px;
 }
 
 .record-block h3 {
