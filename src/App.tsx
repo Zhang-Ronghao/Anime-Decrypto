@@ -25,7 +25,7 @@ import {
   submitInterceptGuess,
   skipFirstIntercept,
   submitOwnGuess,
-  submitTeamWordFeedback,
+  submitTeamWordFeedbackBatch,
   subscribeToSelfNotifications,
   subscribeToRoom,
   type RoomSubscriptionStatus,
@@ -104,6 +104,7 @@ interface BangumiCatalogSummary {
 
 type TeamWordDraftMode = 'manual' | 'generated' | 'characters';
 type TimedPhase = 'encrypt' | 'decode' | 'intercept';
+type TeamWordFeedbackDraftValue = boolean | null;
 
 type BangumiCollectionType = 1 | 2 | 3 | 4 | 5;
 
@@ -441,6 +442,10 @@ function emptyTeamWordSlot(): TeamWordSlot {
 
 function emptyTeamWordSlots(): TeamWordSlot[] {
   return Array.from({ length: 4 }, () => emptyTeamWordSlot());
+}
+
+function emptyTeamWordFeedbackDraft(): TeamWordFeedbackDraftValue[] {
+  return [null, null, null, null];
 }
 
 function normalizeTeamWordSlot(slot: Partial<TeamWordSlot> | null | undefined): TeamWordSlot {
@@ -781,6 +786,10 @@ function App() {
     defaultBangumiCatalogTypes(),
   );
   const [showAllRoundRecords, setShowAllRoundRecords] = useState(false);
+  const [teamWordFeedbackDraft, setTeamWordFeedbackDraft] = useState<{
+    requestId: string | null;
+    values: TeamWordFeedbackDraftValue[];
+  }>(() => ({ requestId: null, values: emptyTeamWordFeedbackDraft() }));
 
   function invalidateTeamWordDraftAsyncResults() {
     teamWordDraftRevisionRef.current += 1;
@@ -1264,6 +1273,18 @@ function App() {
       ]),
     ) as Record<string, TeamWordFeedbackResponseRecord>;
   }, [teamWordFeedbackResponses]);
+  const submittedTeamWordFeedbackDraft = useMemo<TeamWordFeedbackDraftValue[]>(() => {
+    if (!self || !latestTeamWordFeedbackRequest) {
+      return emptyTeamWordFeedbackDraft();
+    }
+
+    return [0, 1, 2, 3].map(
+      (slotIndex) =>
+        teamWordFeedbackResponseByPlayerSlot[
+          feedbackResponseKey(latestTeamWordFeedbackRequest.id, self.id, slotIndex)
+        ]?.accepted ?? null,
+    );
+  }, [latestTeamWordFeedbackRequest, self, teamWordFeedbackResponseByPlayerSlot]);
   const myTeamFeedbackPlayers = useMemo(
     () =>
       (myTeam === 'A' ? teamAPlayers : teamBPlayers).filter(
@@ -1289,6 +1310,16 @@ function App() {
       latestTeamWordFeedbackRequest &&
       isLatestTeamWordFeedbackCurrent,
   );
+  const currentTeamWordFeedbackDraft =
+    latestTeamWordFeedbackRequest && teamWordFeedbackDraft.requestId === latestTeamWordFeedbackRequest.id
+      ? teamWordFeedbackDraft.values
+      : submittedTeamWordFeedbackDraft;
+  const teamWordFeedbackDraftComplete = currentTeamWordFeedbackDraft.every((value) => value !== null);
+  const teamWordFeedbackDraftChanged = currentTeamWordFeedbackDraft.some(
+    (value, index) => value !== submittedTeamWordFeedbackDraft[index],
+  );
+  const canSubmitTeamWordFeedbackDraft =
+    canSubmitTeamWordFeedback && teamWordFeedbackDraftComplete && teamWordFeedbackDraftChanged;
   const canSubmitClues = !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
   const canSubmitDecode = !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
@@ -1467,6 +1498,21 @@ function App() {
     teamWordManualModePinned,
     teamWordServerSlots,
   ]);
+
+  useEffect(() => {
+    if (!canSubmitTeamWordFeedback || !latestTeamWordFeedbackRequest) {
+      setTeamWordFeedbackDraft((current) =>
+        current.requestId === null ? current : { requestId: null, values: emptyTeamWordFeedbackDraft() },
+      );
+      return;
+    }
+
+    setTeamWordFeedbackDraft((current) =>
+      current.requestId === latestTeamWordFeedbackRequest.id
+        ? current
+        : { requestId: latestTeamWordFeedbackRequest.id, values: submittedTeamWordFeedbackDraft },
+    );
+  }, [canSubmitTeamWordFeedback, latestTeamWordFeedbackRequest, submittedTeamWordFeedbackDraft]);
 
   async function withAction<T>(
     key: string,
@@ -2204,14 +2250,41 @@ function App() {
     setWordAssignmentNotice('已询问队友，请等待他们对每个词打勾或打叉。');
   }
 
-  async function handleSubmitTeamWordFeedback(slotIndex: number, accepted: boolean) {
+  function updateTeamWordFeedbackDraft(index: number, accepted: boolean) {
+    if (!latestTeamWordFeedbackRequest) {
+      return;
+    }
+
+    setTeamWordFeedbackDraft((current) => {
+      const currentValues =
+        current.requestId === latestTeamWordFeedbackRequest.id ? current.values : submittedTeamWordFeedbackDraft;
+
+      return {
+        requestId: latestTeamWordFeedbackRequest.id,
+        values: currentValues.map((value, itemIndex) => (itemIndex === index ? accepted : value)),
+      };
+    });
+  }
+
+  async function handleSubmitTeamWordFeedbackDraft() {
     if (!snapshot || !latestTeamWordFeedbackRequest) {
       return;
     }
 
+    if (!teamWordFeedbackDraftComplete) {
+      setActionError('需要给 4 个词语都选择打勾或打叉');
+      return;
+    }
+
+    const feedback = currentTeamWordFeedbackDraft.filter((value): value is boolean => value !== null);
+    if (feedback.length !== 4) {
+      setActionError('需要给 4 个词语都选择打勾或打叉');
+      return;
+    }
+
     await withAction(
-      `submit-team-word-feedback-${slotIndex}`,
-      () => submitTeamWordFeedback(latestTeamWordFeedbackRequest.id, slotIndex, accepted),
+      'submit-team-word-feedback',
+      () => submitTeamWordFeedbackBatch(latestTeamWordFeedbackRequest.id, feedback),
       { refreshRoomId: snapshot.room.id },
     );
   }
@@ -3039,6 +3112,15 @@ function App() {
                     确认词语
                   </button>
                 </div>
+              ) : canSubmitTeamWordFeedback ? (
+                <button
+                  className="primary-button"
+                  disabled={busyKey !== null || !canSubmitTeamWordFeedbackDraft}
+                  onClick={() => void handleSubmitTeamWordFeedbackDraft()}
+                  type="button"
+                >
+                  提交反馈
+                </button>
               ) : canSubmitClues ? (
                 <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleClueSubmit()} type="button">
                   提交线索
@@ -3107,12 +3189,7 @@ function App() {
                       const pendingNames = myTeamFeedbackPlayers
                         .filter((player) => !responseByPlayerId[player.id])
                         .map((player) => player.player_name);
-                      const myFeedback =
-                        self && latestTeamWordFeedbackRequest
-                          ? teamWordFeedbackResponseByPlayerSlot[
-                              feedbackResponseKey(latestTeamWordFeedbackRequest.id, self.id, index)
-                            ]
-                          : undefined;
+                      const draftFeedback = currentTeamWordFeedbackDraft[index];
 
                       return (
                         <div className="action-line action-line-word-assignment" key={`team-word-${index}`}>
@@ -3227,10 +3304,10 @@ function App() {
                                     className={cn(
                                       'word-feedback-choice-button',
                                       'word-feedback-choice-yes',
-                                      myFeedback?.accepted === true && 'word-feedback-choice-selected',
+                                      draftFeedback === true && 'word-feedback-choice-selected',
                                     )}
                                     disabled={busyKey !== null}
-                                    onClick={() => void handleSubmitTeamWordFeedback(index, true)}
+                                    onClick={() => updateTeamWordFeedbackDraft(index, true)}
                                     title="这个词能用"
                                     type="button"
                                   >
@@ -3240,10 +3317,10 @@ function App() {
                                     className={cn(
                                       'word-feedback-choice-button',
                                       'word-feedback-choice-no',
-                                      myFeedback?.accepted === false && 'word-feedback-choice-selected',
+                                      draftFeedback === false && 'word-feedback-choice-selected',
                                     )}
                                     disabled={busyKey !== null}
-                                    onClick={() => void handleSubmitTeamWordFeedback(index, false)}
+                                    onClick={() => updateTeamWordFeedbackDraft(index, false)}
                                     title="这个词不合适"
                                     type="button"
                                   >

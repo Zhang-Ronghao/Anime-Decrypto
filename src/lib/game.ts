@@ -432,6 +432,18 @@ export async function submitTeamWordFeedback(requestId: string, slotIndex: numbe
   }
 }
 
+export async function submitTeamWordFeedbackBatch(requestId: string, feedback: boolean[]) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('submit_team_word_feedback_batch', {
+    p_request_id: requestId,
+    p_feedback: feedback,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function extractBangumiCharacters(roomId: string, team: Team) {
   const client = assertSupabase();
   const { data, error } = await client.functions.invoke('extract-bangumi-characters', {

@@ -4030,6 +4030,76 @@ begin
 end;
 $$;
 
+create or replace function public.submit_team_word_feedback_batch(p_request_id uuid, p_feedback boolean[])
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_request public.team_word_feedback_requests%rowtype;
+  v_room public.rooms%rowtype;
+  v_player_id uuid;
+  v_current_words text[];
+begin
+  perform public.assert_authenticated();
+
+  if coalesce(array_length(p_feedback, 1), 0) <> 4 or exists (select 1 from unnest(p_feedback) as items(value) where value is null) then
+    raise exception 'Feedback must include all 4 word slots.';
+  end if;
+
+  select *
+  into v_request
+  from public.team_word_feedback_requests
+  where id = p_request_id;
+
+  if v_request.id is null then
+    raise exception 'Word feedback request not found.';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = v_request.room_id;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception 'Current phase is not word assignment.';
+  end if;
+
+  select id
+  into v_player_id
+  from public.room_players
+  where room_id = v_request.room_id
+    and auth_user_id = auth.uid()
+    and team = v_request.team
+    and coalesce(role, '') <> 'encoder'
+    and not is_spectator
+  limit 1;
+
+  if v_player_id is null then
+    raise exception 'Only same-team non-encoders can submit word feedback.';
+  end if;
+
+  select words
+  into v_current_words
+  from public.team_words
+  where room_id = v_request.room_id
+    and team = v_request.team
+    and not confirmed;
+
+  if v_current_words is null or v_current_words <> v_request.words then
+    raise exception 'Team words changed. Wait for a new feedback request.';
+  end if;
+
+  insert into public.team_word_feedback_responses (request_id, room_id, team, player_id, slot_index, accepted)
+  select p_request_id, v_request.room_id, v_request.team, v_player_id, slot_index, p_feedback[slot_index + 1]
+  from generate_series(0, 3) as slots(slot_index)
+  on conflict (request_id, player_id, slot_index)
+  do update
+  set accepted = excluded.accepted;
+end;
+$$;
+
 grant usage on schema public to authenticated;
 grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications, public.team_word_feedback_requests, public.team_word_feedback_responses to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
@@ -4059,6 +4129,7 @@ grant execute on function public.confirm_team_words(uuid, text, text[]) to authe
 grant execute on function public.confirm_team_words(uuid, text, text[], jsonb) to authenticated;
 grant execute on function public.request_team_word_feedback(uuid, text, text[], jsonb) to authenticated;
 grant execute on function public.submit_team_word_feedback(uuid, integer, boolean) to authenticated;
+grant execute on function public.submit_team_word_feedback_batch(uuid, boolean[]) to authenticated;
 grant execute on function public.submit_clues(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_intercept_guess(uuid, text, text) to authenticated;
 grant execute on function public.skip_first_intercept(uuid) to authenticated;
