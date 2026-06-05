@@ -3333,7 +3333,10 @@ begin
     );
   end loop;
 
-  slots := public.normalize_team_word_slots(v_slots, true);
+  slots := case
+    when p_count = 4 then public.normalize_team_word_slots(v_slots, true)
+    else v_slots
+  end;
   words := public.team_word_slots_to_words(slots);
   seen_words := v_seen_words;
   return next;
