@@ -1300,6 +1300,15 @@ function App() {
     latestTeamWordFeedbackRequest &&
       serializeWords(latestTeamWordFeedbackRequest.words) === serializeWords(teamWordSlotsToWords(teamWordSlotsDraft)),
   );
+  const teamWordFeedbackSlotCurrent = useMemo(
+    () =>
+      [0, 1, 2, 3].map(
+        (index) =>
+          Boolean(latestTeamWordFeedbackRequest) &&
+          (latestTeamWordFeedbackRequest?.words[index] ?? '') === (teamWordSlotsToWords(teamWordSlotsDraft)[index] ?? ''),
+      ),
+    [latestTeamWordFeedbackRequest, teamWordSlotsDraft],
+  );
   const canRequestTeamWordFeedback = canEditWordAssignment && hasCompleteTeamWordDraft;
   const canSubmitTeamWordFeedback = Boolean(
     isWordAssignmentReadOnly &&
@@ -1320,30 +1329,6 @@ function App() {
   );
   const canSubmitTeamWordFeedbackDraft =
     canSubmitTeamWordFeedback && teamWordFeedbackDraftComplete && teamWordFeedbackDraftChanged;
-  const teamWordFeedbackSubmittedPlayerIds = useMemo(
-    () =>
-      new Set(
-        myTeamFeedbackPlayers
-          .filter((player) =>
-            [0, 1, 2, 3].every(
-              (slotIndex) =>
-                latestTeamWordFeedbackRequest &&
-                teamWordFeedbackResponseByPlayerSlot[
-                  feedbackResponseKey(latestTeamWordFeedbackRequest.id, player.id, slotIndex)
-                ],
-            ),
-          )
-          .map((player) => player.id),
-      ),
-    [latestTeamWordFeedbackRequest, myTeamFeedbackPlayers, teamWordFeedbackResponseByPlayerSlot],
-  );
-  const teamWordFeedbackAllSubmitted = Boolean(
-    canEditWordAssignment &&
-      latestTeamWordFeedbackRequest &&
-      isLatestTeamWordFeedbackCurrent &&
-      myTeamFeedbackPlayers.length > 0 &&
-      teamWordFeedbackSubmittedPlayerIds.size === myTeamFeedbackPlayers.length,
-  );
   const canSubmitClues = !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
   const canSubmitDecode = !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
@@ -3183,7 +3168,7 @@ function App() {
                       )}
                       <div className="action-line-head-cell">
                         {latestTeamWordFeedbackRequest
-                          ? isLatestTeamWordFeedbackCurrent
+                          ? teamWordFeedbackSlotCurrent.some(Boolean)
                             ? `反馈 ${latestTeamWordFeedbackRequest.request_number}`
                             : '反馈已过期'
                           : '反馈'}
@@ -3205,6 +3190,9 @@ function App() {
                         .filter((player) => !responseByPlayerId[player.id])
                         .map((player) => player.player_name);
                       const draftFeedback = currentTeamWordFeedbackDraft[index];
+                      const isFeedbackSlotCurrent = teamWordFeedbackSlotCurrent[index];
+                      const isFeedbackSlotComplete =
+                        isFeedbackSlotCurrent && myTeamFeedbackPlayers.length > 0 && pendingNames.length === 0;
 
                       return (
                         <div className="action-line action-line-word-assignment" key={`team-word-${index}`}>
@@ -3312,7 +3300,7 @@ function App() {
                             ) : null}
                           </div>
                           <div className="word-feedback-inline">
-                            {latestTeamWordFeedbackRequest && isLatestTeamWordFeedbackCurrent ? (
+                            {latestTeamWordFeedbackRequest && isFeedbackSlotCurrent ? (
                               canSubmitTeamWordFeedback ? (
                                 <div className="word-feedback-choice" role="group" aria-label={`第 ${index + 1} 个词反馈`}>
                                   <button
@@ -3350,7 +3338,7 @@ function App() {
                                   <span className="word-feedback-badge word-feedback-badge-no" title={rejectedNames.join('、')}>
                                     × {rejectedNames.length}
                                   </span>
-                                  {teamWordFeedbackAllSubmitted ? (
+                                  {isFeedbackSlotComplete ? (
                                     <span
                                       className={cn(
                                         'word-feedback-badge',
