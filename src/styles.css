@@ -422,14 +422,6 @@ select:focus {
   overflow: hidden;
 }
 
-.role-strip-team-red {
-  border-color: var(--red-line);
-}
-
-.role-strip-team-blue {
-  border-color: var(--blue-line);
-}
-
 .role-strip-line {
   display: flex;
   align-items: center;
@@ -725,16 +717,12 @@ select:focus {
 
 .action-panel-red {
   border-color: var(--red-line);
-  box-shadow:
-    0 18px 48px rgba(200, 41, 41, 0.08),
-    inset 0 0 0 1px rgba(200, 41, 41, 0.04);
+  box-shadow: 0 18px 48px rgba(200, 41, 41, 0.08);
 }
 
 .action-panel-blue {
   border-color: var(--blue-line);
-  box-shadow:
-    0 18px 48px rgba(35, 89, 201, 0.08),
-    inset 0 0 0 1px rgba(35, 89, 201, 0.04);
+  box-shadow: 0 18px 48px rgba(35, 89, 201, 0.08);
 }
 
 .action-panel-red .action-header {
