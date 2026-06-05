@@ -1379,10 +1379,26 @@ function App() {
   const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
   const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
   const currentRoundGuessFeedbackResponses = useMemo(
-    () =>
-      snapshot
-        ? snapshot.roundGuessFeedbackResponses.filter((entry) => entry.round_number === currentRoundNumber)
-        : [],
+    () => {
+      if (!snapshot) {
+        return [];
+      }
+
+      const phaseStartedAt = snapshot.room.phase_started_at ? new Date(snapshot.room.phase_started_at).getTime() : null;
+
+      return snapshot.roundGuessFeedbackResponses.filter((entry) => {
+        if (entry.round_number !== currentRoundNumber) {
+          return false;
+        }
+
+        if (!phaseStartedAt) {
+          return true;
+        }
+
+        const feedbackUpdatedAt = new Date(entry.updated_at ?? entry.created_at).getTime();
+        return Number.isFinite(feedbackUpdatedAt) && feedbackUpdatedAt >= phaseStartedAt;
+      });
+    },
     [currentRoundNumber, snapshot],
   );
   const teamWordServerSlots = useMemo(() => teamWordSlotsFromRecord(myTeamWordRecord), [myTeamWordRecord]);
@@ -1507,6 +1523,7 @@ function App() {
     : isInterceptPhase
       ? interceptFeedbackResponses
       : [];
+  const activeGuessVoteResponses = activeGuessFeedbackResponses.filter((entry) => ['1', '2', '3', '4'].includes(entry.guess_digit));
   const guessFeedbackPlayers = useMemo(
     () =>
       myTeamPlayers.filter((player) => {
@@ -1515,7 +1532,7 @@ function App() {
         }
 
         if (isDecodePhase) {
-          return player.role !== 'decoder';
+          return player.role === 'member';
         }
 
         if (isInterceptPhase) {
@@ -1535,20 +1552,24 @@ function App() {
       activeGuessFeedbackResponses.map((entry) => [roundGuessFeedbackKey(entry.player_id, entry.clue_index), entry]),
     ) as Record<string, RoundGuessFeedbackResponseRecord>;
   }, [activeGuessFeedbackResponses]);
-  const submittedDecodeFeedbackDraft = useMemo(
-    () =>
-      self
-        ? [0, 1, 2].map(
-            (clueIndex) => activeGuessFeedbackByPlayerClue[roundGuessFeedbackKey(self.id, clueIndex)]?.guess_digit ?? '',
-          )
-        : emptyRoundGuessFeedbackDraft(),
-    [activeGuessFeedbackByPlayerClue, self],
+  const submittedDecodeFeedbackDraft = useMemo(() => {
+    if (!self) {
+      return emptyRoundGuessFeedbackDraft();
+    }
+
+    return [0, 1, 2].map((clueIndex) => {
+      const submittedDigit = activeGuessFeedbackByPlayerClue[roundGuessFeedbackKey(self.id, clueIndex)]?.guess_digit ?? '';
+      return submittedDigit === '-' ? '' : submittedDigit;
+    });
+  }, [activeGuessFeedbackByPlayerClue, self]);
+  const hasSubmittedGuessFeedback = Boolean(
+    self && [0, 1, 2].some((clueIndex) => activeGuessFeedbackByPlayerClue[roundGuessFeedbackKey(self.id, clueIndex)]),
   );
   const canSubmitDecodeFeedback = Boolean(
     !isSpectator &&
       isDecodePhase &&
       self?.team &&
-      self.role !== 'decoder' &&
+      self.role === 'member' &&
       !myTeamSubmission?.own_guess &&
       (myTeamSubmission?.clues?.length ?? 0) > 0,
   );
@@ -1577,11 +1598,11 @@ function App() {
     (value, index) => value !== submittedGuessFeedbackDraft[index],
   );
   const canSubmitGuessFeedbackDraft =
-    (canSubmitDecodeFeedback || canSubmitInterceptFeedback) && guessFeedbackDraftChanged;
+    (canSubmitDecodeFeedback || canSubmitInterceptFeedback) && (!hasSubmittedGuessFeedback || guessFeedbackDraftChanged);
   const isGuessFeedbackInputMode = canSubmitDecodeFeedback || canSubmitInterceptFeedback;
   const guessChoiceLabel = isDecodePhase ? '选择解码' : '选择截码';
   const guessFeedbackButtonLabel = isDecodePhase ? '发送解密建议' : '发送拦截建议';
-  const hasActiveGuessFeedback = activeGuessFeedbackResponses.length > 0;
+  const hasActiveGuessFeedback = activeGuessVoteResponses.length > 0;
   const canSkipFirstIntercept = Boolean(isFirstRoundInterceptSkip && self?.is_host);
   const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
   const displayedInterceptDigits = opponentSubmission?.intercept_guess
@@ -3795,7 +3816,7 @@ function App() {
                       </div>
                     ) : (
                       (myTeamSubmission?.clues ?? []).map((clue, index) => {
-                        const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
+                        const clueFeedbackResponses = activeGuessVoteResponses.filter((entry) => entry.clue_index === index);
 
                         return (
                           <div className={cn('action-line', isGuessFeedbackInputMode ? 'action-line-guess-input' : 'action-line-guess')} key={`${clue}-${index}`}>
@@ -3907,7 +3928,7 @@ function App() {
                       </div>
                     ) : (
                       (opponentSubmission?.clues ?? []).map((clue, index) => {
-                        const clueFeedbackResponses = activeGuessFeedbackResponses.filter((entry) => entry.clue_index === index);
+                        const clueFeedbackResponses = activeGuessVoteResponses.filter((entry) => entry.clue_index === index);
 
                         return (
                           <div className={cn('action-line', isGuessFeedbackInputMode ? 'action-line-guess-input' : 'action-line-guess')} key={`${clue}-${index}`}>

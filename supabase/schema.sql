@@ -384,11 +384,16 @@ create table if not exists public.round_guess_feedback_responses (
   target_team text not null check (target_team in ('A', 'B')),
   player_id uuid not null references public.room_players(id) on delete cascade,
   clue_index integer not null check (clue_index between 0 and 2),
-  guess_digit text not null check (guess_digit in ('1', '2', '3', '4')),
+  guess_digit text not null check (guess_digit in ('-', '1', '2', '3', '4')),
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   unique (room_id, round_number, phase, team, player_id, clue_index)
 );
+
+alter table public.round_guess_feedback_responses drop constraint if exists round_guess_feedback_responses_guess_digit_check;
+alter table public.round_guess_feedback_responses
+add constraint round_guess_feedback_responses_guess_digit_check
+check (guess_digit in ('-', '1', '2', '3', '4'));
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -3089,7 +3094,6 @@ declare
   v_room public.rooms%rowtype;
   v_player_id uuid;
   v_target_team text;
-  v_blocked_role text;
 begin
   perform public.assert_authenticated();
 
@@ -3132,31 +3136,22 @@ begin
     when p_team = 'A' then 'B'
     else 'A'
   end;
-  v_blocked_role := case when p_phase = 'decode' then 'decoder' else 'encoder' end;
-
   select id
   into v_player_id
   from public.room_players
   where room_id = p_room_id
     and auth_user_id = auth.uid()
     and team = p_team
-    and coalesce(role, '') <> v_blocked_role
+    and (
+      (p_phase = 'decode' and role = 'member')
+      or (p_phase = 'intercept' and coalesce(role, '') <> 'encoder')
+    )
     and not is_spectator
   limit 1;
 
   if v_player_id is null then
-    raise exception 'Only same-team non-operators can submit feedback.';
+    raise exception 'Only eligible same-team players can submit feedback.';
   end if;
-
-  delete from public.round_guess_feedback_responses
-  using unnest(p_guess_digits) with ordinality as items(value, ordinality)
-  where public.round_guess_feedback_responses.room_id = p_room_id
-    and public.round_guess_feedback_responses.round_number = v_room.round_number
-    and public.round_guess_feedback_responses.phase = p_phase
-    and public.round_guess_feedback_responses.team = p_team
-    and public.round_guess_feedback_responses.player_id = v_player_id
-    and public.round_guess_feedback_responses.clue_index = ordinality::integer - 1
-    and trim(coalesce(value, '')) = '';
 
   insert into public.round_guess_feedback_responses (
     room_id,
@@ -3176,9 +3171,8 @@ begin
     v_target_team,
     v_player_id,
     ordinality::integer - 1,
-    trim(value)
+    coalesce(nullif(trim(value), ''), '-')
   from unnest(p_guess_digits) with ordinality as items(value, ordinality)
-  where trim(coalesce(value, '')) in ('1', '2', '3', '4')
   on conflict (room_id, round_number, phase, team, player_id, clue_index)
   do update
   set guess_digit = excluded.guess_digit;
