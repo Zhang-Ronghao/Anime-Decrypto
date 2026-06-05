@@ -9,6 +9,8 @@ import type {
   RoundCodeRecord,
   RoundSubmissionRecord,
   Team,
+  TeamWordFeedbackRequestRecord,
+  TeamWordFeedbackResponseRecord,
   TeamWordSlot,
   TeamWordsRecord,
 } from '../types';
@@ -403,6 +405,33 @@ export async function confirmTeamWords(roomId: string, team: Team, words: string
   }
 }
 
+export async function requestTeamWordFeedback(roomId: string, team: Team, words: string[], slots: TeamWordSlot[]) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('request_team_word_feedback', {
+    p_room_id: roomId,
+    p_team: team,
+    p_words: words,
+    p_slots: slots,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function submitTeamWordFeedback(requestId: string, slotIndex: number, accepted: boolean) {
+  const client = assertSupabase();
+  const { error } = await client.rpc('submit_team_word_feedback', {
+    p_request_id: requestId,
+    p_slot_index: slotIndex,
+    p_accepted: accepted,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function extractBangumiCharacters(roomId: string, team: Team) {
   const client = assertSupabase();
   const { data, error } = await client.functions.invoke('extract-bangumi-characters', {
@@ -556,13 +585,34 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
     .eq('room_id', roomId)
     .order('round_number', { ascending: false })
     .order('team', { ascending: true });
+  const feedbackRequestsQuery = client
+    .from('team_word_feedback_requests')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('request_number', { ascending: false });
+  const feedbackResponsesQuery = client
+    .from('team_word_feedback_responses')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('slot_index', { ascending: true })
+    .order('created_at', { ascending: true });
 
-  const [roomResult, playersResult, wordsResult, codesResult, submissionsResult] = await Promise.all([
+  const [
+    roomResult,
+    playersResult,
+    wordsResult,
+    codesResult,
+    submissionsResult,
+    feedbackRequestsResult,
+    feedbackResponsesResult,
+  ] = await Promise.all([
     roomQuery,
     playersQuery,
     wordsQuery,
     codesQuery,
     submissionsQuery,
+    feedbackRequestsQuery,
+    feedbackResponsesQuery,
   ]);
 
   if (roomResult.error) throw roomResult.error;
@@ -570,6 +620,8 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
   if (wordsResult.error) throw wordsResult.error;
   if (codesResult.error) throw codesResult.error;
   if (submissionsResult.error) throw submissionsResult.error;
+  if (feedbackRequestsResult.error) throw feedbackRequestsResult.error;
+  if (feedbackResponsesResult.error) throw feedbackResponsesResult.error;
 
   return {
     room: {
@@ -583,6 +635,11 @@ export async function fetchRoomSnapshot(roomId: string): Promise<RoomSnapshot> {
       ...entry,
       word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
     })),
+    teamWordFeedbackRequests: ((feedbackRequestsResult.data ?? []) as TeamWordFeedbackRequestRecord[]).map((entry) => ({
+      ...entry,
+      word_slots: Array.isArray(entry.word_slots) ? entry.word_slots.filter(isTeamWordSlot) : [],
+    })),
+    teamWordFeedbackResponses: (feedbackResponsesResult.data ?? []) as TeamWordFeedbackResponseRecord[],
     roundCodes: (codesResult.data ?? []) as RoundCodeRecord[],
     submissions: (submissionsResult.data ?? []) as RoundSubmissionRecord[],
   };
@@ -622,6 +679,16 @@ export function subscribeToRoom(
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'round_submissions', filter: `room_id=eq.${roomId}` },
+      onChange,
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'team_word_feedback_requests', filter: `room_id=eq.${roomId}` },
+      onChange,
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'team_word_feedback_responses', filter: `room_id=eq.${roomId}` },
       onChange,
     )
     .subscribe((status, error) => {

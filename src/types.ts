@@ -76,6 +76,29 @@ export interface TeamWordsRecord {
   created_at: string;
 }
 
+export interface TeamWordFeedbackRequestRecord {
+  id: string;
+  room_id: string;
+  team: Team;
+  request_number: number;
+  requested_by_player_id: string;
+  words: string[];
+  word_slots: TeamWordSlot[];
+  created_at: string;
+}
+
+export interface TeamWordFeedbackResponseRecord {
+  id: string;
+  request_id: string;
+  room_id: string;
+  team: Team;
+  player_id: string;
+  slot_index: number;
+  accepted: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RoundCodeRecord {
   id: string;
   room_id: string;
@@ -106,6 +129,8 @@ export interface RoomSnapshot {
   room: RoomRecord;
   players: PlayerRecord[];
   teamWords: TeamWordsRecord[];
+  teamWordFeedbackRequests: TeamWordFeedbackRequestRecord[];
+  teamWordFeedbackResponses: TeamWordFeedbackResponseRecord[];
   roundCodes: RoundCodeRecord[];
   submissions: RoundSubmissionRecord[];
 }

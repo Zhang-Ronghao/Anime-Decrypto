@@ -266,6 +266,37 @@ create table if not exists public.player_notifications (
   created_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.team_word_feedback_requests (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  team text not null check (team in ('A', 'B')),
+  request_number integer not null check (request_number > 0),
+  requested_by_player_id uuid not null references public.room_players(id) on delete cascade,
+  words text[] not null check (array_length(words, 1) = 4),
+  word_slots jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (room_id, team, request_number)
+);
+
+alter table public.team_word_feedback_requests
+add column if not exists words text[] not null default array['', '', '', ''];
+
+alter table public.team_word_feedback_requests
+add column if not exists word_slots jsonb not null default '[]'::jsonb;
+
+create table if not exists public.team_word_feedback_responses (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.team_word_feedback_requests(id) on delete cascade,
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  team text not null check (team in ('A', 'B')),
+  player_id uuid not null references public.room_players(id) on delete cascade,
+  slot_index integer not null check (slot_index between 0 and 3),
+  accepted boolean not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (request_id, player_id, slot_index)
+);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -300,6 +331,12 @@ execute function public.set_updated_at();
 drop trigger if exists trg_round_submissions_updated_at on public.round_submissions;
 create trigger trg_round_submissions_updated_at
 before update on public.round_submissions
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists trg_team_word_feedback_responses_updated_at on public.team_word_feedback_responses;
+create trigger trg_team_word_feedback_responses_updated_at
+before update on public.team_word_feedback_responses
 for each row
 execute function public.set_updated_at();
 
@@ -361,6 +398,8 @@ alter table public.team_words enable row level security;
 alter table public.round_codes enable row level security;
 alter table public.round_submissions enable row level security;
 alter table public.player_notifications enable row level security;
+alter table public.team_word_feedback_requests enable row level security;
+alter table public.team_word_feedback_responses enable row level security;
 
 drop policy if exists "rooms_select_member" on public.rooms;
 create policy "rooms_select_member"
@@ -430,6 +469,26 @@ on public.round_submissions
 for select
 to authenticated
 using (public.is_room_member(room_id));
+
+drop policy if exists "team_word_feedback_requests_select_same_team" on public.team_word_feedback_requests;
+create policy "team_word_feedback_requests_select_same_team"
+on public.team_word_feedback_requests
+for select
+to authenticated
+using (
+  public.is_room_member(room_id)
+  and team = public.current_player_team(room_id)
+);
+
+drop policy if exists "team_word_feedback_responses_select_same_team" on public.team_word_feedback_responses;
+create policy "team_word_feedback_responses_select_same_team"
+on public.team_word_feedback_responses
+for select
+to authenticated
+using (
+  public.is_room_member(room_id)
+  and team = public.current_player_team(room_id)
+);
 
 drop policy if exists "player_notifications_select_self" on public.player_notifications;
 create policy "player_notifications_select_self"
@@ -1966,6 +2025,7 @@ begin
 
   delete from public.round_submissions where room_id = p_room_id;
   delete from public.round_codes where room_id = p_room_id;
+  delete from public.team_word_feedback_requests where room_id = p_room_id;
   delete from public.team_words where room_id = p_room_id;
 
   insert into public.team_words (room_id, team, words, confirmed)
@@ -2985,6 +3045,7 @@ begin
 
   delete from public.round_submissions where room_id = p_room_id;
   delete from public.round_codes where room_id = p_room_id;
+  delete from public.team_word_feedback_requests where room_id = p_room_id;
   delete from public.team_words where room_id = p_room_id;
 
   update public.room_players
@@ -3041,6 +3102,7 @@ begin
 
   delete from public.round_submissions where room_id = p_room_id;
   delete from public.round_codes where room_id = p_room_id;
+  delete from public.team_word_feedback_requests where room_id = p_room_id;
   delete from public.team_words where room_id = p_room_id;
 
   update public.room_players
@@ -3791,8 +3853,185 @@ begin
 end;
 $$;
 
+create or replace function public.request_team_word_feedback(p_room_id uuid, p_team text, p_words text[], p_slots jsonb default null)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room public.rooms%rowtype;
+  v_words text[];
+  v_existing_slots jsonb;
+  v_slots jsonb;
+  v_index integer;
+  v_item jsonb;
+  v_player_id uuid;
+  v_request_number integer;
+  v_request_id uuid;
+begin
+  perform public.assert_authenticated();
+
+  if p_team not in ('A', 'B') then
+    raise exception 'Invalid team.';
+  end if;
+
+  v_words := public.normalize_team_words(p_words, true);
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception 'Current phase is not word assignment.';
+  end if;
+
+  select id
+  into v_player_id
+  from public.room_players
+  where room_id = p_room_id
+    and auth_user_id = auth.uid()
+    and team = p_team
+    and role = 'encoder'
+    and not is_spectator
+  limit 1;
+
+  if v_player_id is null then
+    raise exception 'Only the team encoder can request word feedback.';
+  end if;
+
+  if exists (
+    select 1
+    from public.team_words
+    where room_id = p_room_id
+      and team = p_team
+      and confirmed
+  ) then
+    raise exception 'Team words are already confirmed.';
+  end if;
+
+  v_existing_slots := case
+    when jsonb_typeof(coalesce(p_slots, 'null'::jsonb)) = 'array' and jsonb_array_length(coalesce(p_slots, '[]'::jsonb)) = 4
+      then public.normalize_team_word_slots(p_slots, false)
+    else public.coerce_team_word_slots_from_words(v_words)
+  end;
+
+  v_slots := '[]'::jsonb;
+
+  for v_index in 1..4
+  loop
+    v_item := case
+      when jsonb_typeof(coalesce(v_existing_slots, 'null'::jsonb)) = 'array' and jsonb_array_length(coalesce(v_existing_slots, '[]'::jsonb)) >= v_index
+        then v_existing_slots->(v_index - 1)
+      else jsonb_build_object('subjectId', null, 'sourceTitle', null, 'showSourceTitle', false, 'characterOptions', '[]'::jsonb)
+    end;
+
+    v_slots := v_slots || jsonb_build_array(
+      jsonb_build_object(
+        'text', v_words[v_index],
+        'subjectId', case when jsonb_typeof(v_item->'subjectId') = 'number' then (v_item->>'subjectId')::integer else null end,
+        'sourceTitle', nullif(trim(coalesce(v_item->>'sourceTitle', '')), ''),
+        'showSourceTitle', case when nullif(trim(coalesce(v_item->>'sourceTitle', '')), '') is not null then coalesce((v_item->>'showSourceTitle')::boolean, false) else false end,
+        'characterOptions', case when jsonb_typeof(v_item->'characterOptions') = 'array' then v_item->'characterOptions' else '[]'::jsonb end
+      )
+    );
+  end loop;
+
+  v_slots := public.normalize_team_word_slots(v_slots, true);
+
+  update public.team_words
+  set words = v_words,
+      word_slots = v_slots
+  where room_id = p_room_id
+    and team = p_team;
+
+  select coalesce(max(request_number), 0) + 1
+  into v_request_number
+  from public.team_word_feedback_requests
+  where room_id = p_room_id
+    and team = p_team;
+
+  insert into public.team_word_feedback_requests (room_id, team, request_number, requested_by_player_id, words, word_slots)
+  values (p_room_id, p_team, v_request_number, v_player_id, v_words, v_slots)
+  returning id into v_request_id;
+
+  return v_request_id;
+end;
+$$;
+
+create or replace function public.submit_team_word_feedback(p_request_id uuid, p_slot_index integer, p_accepted boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_request public.team_word_feedback_requests%rowtype;
+  v_room public.rooms%rowtype;
+  v_player_id uuid;
+  v_current_words text[];
+begin
+  perform public.assert_authenticated();
+
+  if p_slot_index < 0 or p_slot_index > 3 then
+    raise exception 'Invalid word slot.';
+  end if;
+
+  select *
+  into v_request
+  from public.team_word_feedback_requests
+  where id = p_request_id;
+
+  if v_request.id is null then
+    raise exception 'Word feedback request not found.';
+  end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = v_request.room_id;
+
+  if v_room.phase <> 'word_assignment' then
+    raise exception 'Current phase is not word assignment.';
+  end if;
+
+  select id
+  into v_player_id
+  from public.room_players
+  where room_id = v_request.room_id
+    and auth_user_id = auth.uid()
+    and team = v_request.team
+    and coalesce(role, '') <> 'encoder'
+    and not is_spectator
+  limit 1;
+
+  if v_player_id is null then
+    raise exception 'Only same-team non-encoders can submit word feedback.';
+  end if;
+
+  select words
+  into v_current_words
+  from public.team_words
+  where room_id = v_request.room_id
+    and team = v_request.team
+    and not confirmed;
+
+  if v_current_words is null or v_current_words <> v_request.words then
+    raise exception 'Team words changed. Wait for a new feedback request.';
+  end if;
+
+  insert into public.team_word_feedback_responses (request_id, room_id, team, player_id, slot_index, accepted)
+  values (p_request_id, v_request.room_id, v_request.team, v_player_id, p_slot_index, p_accepted)
+  on conflict (request_id, player_id, slot_index)
+  do update
+  set accepted = excluded.accepted;
+end;
+$$;
+
 grant usage on schema public to authenticated;
-grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications to authenticated;
+grant select on public.rooms, public.room_players, public.team_words, public.round_codes, public.round_submissions, public.player_notifications, public.team_word_feedback_requests, public.team_word_feedback_responses to authenticated;
 grant execute on function public.create_room(text, text) to authenticated;
 grant execute on function public.get_room_join_status(text) to authenticated;
 grant execute on function public.join_room(text, text) to authenticated;
@@ -3817,6 +4056,9 @@ grant execute on function public.generate_team_words(uuid, text) to authenticate
 grant execute on function public.replace_team_word_slot(uuid, text, integer) to authenticated;
 grant execute on function public.save_team_words(uuid, text, text[]) to authenticated;
 grant execute on function public.confirm_team_words(uuid, text, text[]) to authenticated;
+grant execute on function public.confirm_team_words(uuid, text, text[], jsonb) to authenticated;
+grant execute on function public.request_team_word_feedback(uuid, text, text[], jsonb) to authenticated;
+grant execute on function public.submit_team_word_feedback(uuid, integer, boolean) to authenticated;
 grant execute on function public.submit_clues(uuid, text, text[]) to authenticated;
 grant execute on function public.submit_intercept_guess(uuid, text, text) to authenticated;
 grant execute on function public.skip_first_intercept(uuid) to authenticated;
@@ -3868,6 +4110,22 @@ $$;
 do $$
 begin
   alter publication supabase_realtime add table public.player_notifications;
+exception
+  when duplicate_object then null;
+end;
+$$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.team_word_feedback_requests;
+exception
+  when duplicate_object then null;
+end;
+$$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.team_word_feedback_responses;
 exception
   when duplicate_object then null;
 end;

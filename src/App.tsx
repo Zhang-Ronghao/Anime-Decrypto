@@ -19,11 +19,13 @@ import {
   loadBangumiCatalog,
   replaceTeamWordSlot,
   restartRoom,
+  requestTeamWordFeedback,
   startGame,
   submitClues,
   submitInterceptGuess,
   skipFirstIntercept,
   submitOwnGuess,
+  submitTeamWordFeedback,
   subscribeToSelfNotifications,
   subscribeToRoom,
   type RoomSubscriptionStatus,
@@ -55,6 +57,8 @@ import type {
   RoomSnapshot,
   RoundSubmissionRecord,
   Team,
+  TeamWordFeedbackRequestRecord,
+  TeamWordFeedbackResponseRecord,
   TeamWordSlot,
   TeamWordsRecord,
 } from './types';
@@ -628,6 +632,28 @@ function getTeamSubmissions(snapshot: RoomSnapshot, team: Team): RoundSubmission
     .filter((entry) => entry.team === team)
     .slice()
     .sort((a, b) => a.round_number - b.round_number);
+}
+
+function getLatestTeamWordFeedbackRequest(
+  requests: TeamWordFeedbackRequestRecord[],
+  team: Team,
+): TeamWordFeedbackRequestRecord | null {
+  return (
+    requests
+      .filter((entry) => entry.team === team)
+      .slice()
+      .sort((left, right) => {
+        if (left.request_number !== right.request_number) {
+          return right.request_number - left.request_number;
+        }
+
+        return right.created_at.localeCompare(left.created_at);
+      })[0] ?? null
+  );
+}
+
+function feedbackResponseKey(requestId: string, playerId: string, slotIndex: number): string {
+  return `${requestId}:${playerId}:${slotIndex}`;
 }
 
 function filterVisibleRoundRecords(
@@ -1215,9 +1241,54 @@ function App() {
   );
   const canViewWordAssignment = Boolean(isWordAssignmentPhase && self?.team);
   const isWordAssignmentReadOnly = canViewWordAssignment && !canEditWordAssignment;
+  const hasCompleteTeamWordDraft = teamWordSlotsToWords(teamWordSlotsDraft).every((word) => word.length > 0);
   const canExtractTeamWordCharacters = teamWordDraftMode === 'generated';
   const shouldConfirmBeforeManualEdit = teamWordDraftMode === 'generated';
   const canReplaceGeneratedWords = teamWordDraftMode === 'generated';
+  const latestTeamWordFeedbackRequest = useMemo(
+    () => (snapshot ? getLatestTeamWordFeedbackRequest(snapshot.teamWordFeedbackRequests, myTeam) : null),
+    [myTeam, snapshot],
+  );
+  const teamWordFeedbackResponses = useMemo(
+    () =>
+      snapshot && latestTeamWordFeedbackRequest
+        ? snapshot.teamWordFeedbackResponses.filter((entry) => entry.request_id === latestTeamWordFeedbackRequest.id)
+        : [],
+    [latestTeamWordFeedbackRequest, snapshot],
+  );
+  const teamWordFeedbackResponseByPlayerSlot = useMemo(() => {
+    return Object.fromEntries(
+      teamWordFeedbackResponses.map((entry) => [
+        feedbackResponseKey(entry.request_id, entry.player_id, entry.slot_index),
+        entry,
+      ]),
+    ) as Record<string, TeamWordFeedbackResponseRecord>;
+  }, [teamWordFeedbackResponses]);
+  const myTeamFeedbackPlayers = useMemo(
+    () =>
+      (myTeam === 'A' ? teamAPlayers : teamBPlayers).filter(
+        (player) => !player.is_spectator && player.role !== 'encoder',
+      ),
+    [myTeam, teamAPlayers, teamBPlayers],
+  );
+  const teamWordFeedbackPlayerById = useMemo(
+    () => Object.fromEntries(myTeamFeedbackPlayers.map((player) => [player.id, player])) as Record<string, PlayerRecord>,
+    [myTeamFeedbackPlayers],
+  );
+  const isLatestTeamWordFeedbackCurrent = Boolean(
+    latestTeamWordFeedbackRequest &&
+      serializeWords(latestTeamWordFeedbackRequest.words) === serializeWords(teamWordSlotsToWords(teamWordSlotsDraft)),
+  );
+  const canRequestTeamWordFeedback = canEditWordAssignment && hasCompleteTeamWordDraft;
+  const canSubmitTeamWordFeedback = Boolean(
+    isWordAssignmentReadOnly &&
+      !isSpectator &&
+      !myTeamConfirmed &&
+      self?.team &&
+      self.role !== 'encoder' &&
+      latestTeamWordFeedbackRequest &&
+      isLatestTeamWordFeedbackCurrent,
+  );
   const canSubmitClues = !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
   const canSubmitDecode = !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
@@ -2093,6 +2164,58 @@ function App() {
     setWordAssignmentNotice(null);
   }
 
+  async function handleRequestTeamWordFeedback() {
+    if (!snapshot || !self?.team) {
+      return;
+    }
+
+    const team = self.team;
+    const normalizedWords = teamWordSlotsToWords(teamWordSlotsDraft);
+    if (normalizedWords.some((word) => !word)) {
+      setActionError('需要填写 4 个词语');
+      return;
+    }
+
+    const uniqueWords = new Set(normalizedWords);
+    if (uniqueWords.size !== normalizedWords.length) {
+      setActionError('同队词语不能重复');
+      return;
+    }
+
+    const normalizedSlots = teamWordSlotsDraft.map((slot, index) =>
+      normalizeTeamWordSlot({
+        ...slot,
+        text: normalizedWords[index] ?? '',
+      }),
+    );
+    const result = await withAction(
+      'request-team-word-feedback',
+      () => requestTeamWordFeedback(snapshot.room.id, team, normalizedWords, normalizedSlots),
+      { refreshRoomId: snapshot.room.id },
+    );
+    if (result === null) {
+      return;
+    }
+
+    setTeamWordSlotsDraft(normalizedSlots);
+    setTeamWordDraftMode(inferTeamWordDraftMode(normalizedSlots));
+    setTeamWordFormDirty(false);
+    setPendingConfirmedTeamWordSlots(null);
+    setWordAssignmentNotice('已询问队友，请等待他们对每个词打勾或打叉。');
+  }
+
+  async function handleSubmitTeamWordFeedback(slotIndex: number, accepted: boolean) {
+    if (!snapshot || !latestTeamWordFeedbackRequest) {
+      return;
+    }
+
+    await withAction(
+      `submit-team-word-feedback-${slotIndex}`,
+      () => submitTeamWordFeedback(latestTeamWordFeedbackRequest.id, slotIndex, accepted),
+      { refreshRoomId: snapshot.room.id },
+    );
+  }
+
   async function handleClueSubmit() {
     if (!snapshot || !self?.team) {
       return;
@@ -2903,9 +3026,19 @@ function App() {
                   切换{displayTeamName(otherTeam(spectatorTeamView))}视角
                 </button>
               ) : canEditWordAssignment ? (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleConfirmWords()} type="button">
-                  确认词语
-                </button>
+                <div className="action-header-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={busyKey !== null || !canRequestTeamWordFeedback}
+                    onClick={() => void handleRequestTeamWordFeedback()}
+                    type="button"
+                  >
+                    询问队友
+                  </button>
+                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleConfirmWords()} type="button">
+                    确认词语
+                  </button>
+                </div>
               ) : canSubmitClues ? (
                 <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleClueSubmit()} type="button">
                   提交线索
@@ -3098,6 +3231,102 @@ function App() {
                       <span className="assignment-tip">若词语过长可能显示不全，建议手动编辑</span>
                     </div>
                     {wordAssignmentNotice ? <p className="muted assignment-note">{wordAssignmentNotice}</p> : null}
+                    <section className="word-feedback-panel">
+                      <div className="word-feedback-head">
+                        <strong>{canEditWordAssignment ? '队友反馈' : '词语反馈'}</strong>
+                        <small>
+                          {latestTeamWordFeedbackRequest
+                            ? isLatestTeamWordFeedbackCurrent
+                              ? `第 ${latestTeamWordFeedbackRequest.request_number} 次询问`
+                              : '当前词语已变更'
+                            : canEditWordAssignment
+                              ? '尚未询问'
+                              : '等待加密者询问'}
+                        </small>
+                      </div>
+
+                      {latestTeamWordFeedbackRequest && isLatestTeamWordFeedbackCurrent ? (
+                        <div className="word-feedback-grid">
+                          {[0, 1, 2, 3].map((slotIndex) => {
+                            const slotResponses = teamWordFeedbackResponses.filter((entry) => entry.slot_index === slotIndex);
+                            const responseByPlayerId = Object.fromEntries(
+                              slotResponses.map((entry) => [entry.player_id, entry]),
+                            ) as Record<string, TeamWordFeedbackResponseRecord>;
+                            const acceptedNames = slotResponses
+                              .filter((entry) => entry.accepted)
+                              .map((entry) => teamWordFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+                            const rejectedNames = slotResponses
+                              .filter((entry) => !entry.accepted)
+                              .map((entry) => teamWordFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+                            const pendingNames = myTeamFeedbackPlayers
+                              .filter((player) => !responseByPlayerId[player.id])
+                              .map((player) => player.player_name);
+                            const myFeedback =
+                              self && latestTeamWordFeedbackRequest
+                                ? teamWordFeedbackResponseByPlayerSlot[
+                                    feedbackResponseKey(latestTeamWordFeedbackRequest.id, self.id, slotIndex)
+                                  ]
+                                : undefined;
+
+                            return (
+                              <div className="word-feedback-row" key={`word-feedback-${slotIndex}`}>
+                                <span className="word-feedback-index">{slotIndex + 1}</span>
+                                {canSubmitTeamWordFeedback ? (
+                                  <div className="word-feedback-choice" role="group" aria-label={`第 ${slotIndex + 1} 个词反馈`}>
+                                    <button
+                                      className={cn(
+                                        'word-feedback-choice-button',
+                                        'word-feedback-choice-yes',
+                                        myFeedback?.accepted === true && 'word-feedback-choice-selected',
+                                      )}
+                                      disabled={busyKey !== null}
+                                      onClick={() => void handleSubmitTeamWordFeedback(slotIndex, true)}
+                                      title="这个词能用"
+                                      type="button"
+                                    >
+                                      ✓
+                                    </button>
+                                    <button
+                                      className={cn(
+                                        'word-feedback-choice-button',
+                                        'word-feedback-choice-no',
+                                        myFeedback?.accepted === false && 'word-feedback-choice-selected',
+                                      )}
+                                      disabled={busyKey !== null}
+                                      onClick={() => void handleSubmitTeamWordFeedback(slotIndex, false)}
+                                      title="这个词不合适"
+                                      type="button"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="word-feedback-summary">
+                                    <span className="word-feedback-badge word-feedback-badge-yes" title={acceptedNames.join('、')}>
+                                      ✓ {acceptedNames.length}
+                                    </span>
+                                    <span className="word-feedback-badge word-feedback-badge-no" title={rejectedNames.join('、')}>
+                                      × {rejectedNames.length}
+                                    </span>
+                                    <span className="word-feedback-badge word-feedback-badge-pending" title={pendingNames.join('、')}>
+                                      待 {pendingNames.length}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="muted word-feedback-empty">
+                          {latestTeamWordFeedbackRequest
+                            ? '词语已经调整，请加密者重新询问队友。'
+                            : canEditWordAssignment
+                              ? '点击上方“询问队友”后，队友可以对每个词打勾或打叉。'
+                              : '加密者发起询问后，你可以对每个词打勾或打叉。'}
+                        </p>
+                      )}
+                    </section>
                   </div>
                 ) : isWordAssignmentPhase ? (
                   <div className="wait-card">
