@@ -1582,6 +1582,7 @@ function App() {
   const isGuessFeedbackInputMode = canSubmitDecodeFeedback || canSubmitInterceptFeedback;
   const guessChoiceLabel = isDecodePhase ? '选择解码' : '选择截码';
   const guessFeedbackButtonLabel = isDecodePhase ? '发送解密建议' : '发送拦截建议';
+  const hasActiveGuessFeedback = activeGuessFeedbackResponses.length > 0;
   const canSkipFirstIntercept = Boolean(isFirstRoundInterceptSkip && self?.is_host);
   const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
   const displayedInterceptDigits = opponentSubmission?.intercept_guess
@@ -3769,14 +3770,7 @@ function App() {
                       <span className="action-line-head-cell">本轮线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
                       {!isGuessFeedbackInputMode ? (
-                        <div className="guess-feedback-head">
-                          <span className="guess-feedback-title">队友建议</span>
-                          <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
-                            {[1, 2, 3, 4].map((digit) => (
-                              <span key={digit}>词语{digit}</span>
-                            ))}
-                          </span>
-                        </div>
+                        <span className="action-line-head-cell">队友建议</span>
                       ) : null}
                     </div>
                     {(myTeamSubmission?.clues ?? []).map((clue, index) => {
@@ -3816,23 +3810,27 @@ function App() {
                                   </option>
                                 ))}
                               </select>
-                              <div className="guess-feedback-grid" role="group" aria-label={`第 ${index + 1} 条线索的队友建议`}>
-                                {[1, 2, 3, 4].map((digit) => {
-                                  const names = clueFeedbackResponses
-                                    .filter((entry) => entry.guess_digit === String(digit))
-                                    .map((entry) => guessFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+                              {hasActiveGuessFeedback ? (
+                                <div className="guess-feedback-grid" role="group" aria-label={`第 ${index + 1} 条线索的队友建议`}>
+                                  {[1, 2, 3, 4].map((digit) => {
+                                    const names = clueFeedbackResponses
+                                      .filter((entry) => entry.guess_digit === String(digit))
+                                      .map((entry) => guessFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
 
-                                  return (
-                                    <span
-                                      className={cn('guess-feedback-cell', names.length > 0 && 'guess-feedback-cell-active')}
-                                      key={digit}
-                                      title={names.join('、')}
-                                    >
-                                      {names.length > 0 ? `${names.length}票` : ''}
-                                    </span>
-                                  );
-                                })}
-                              </div>
+                                    return (
+                                      <span
+                                        className={cn('guess-feedback-cell', names.length > 0 && 'guess-feedback-cell-active')}
+                                        key={digit}
+                                        title={names.join('、')}
+                                      >
+                                        {names.length > 0 ? `${names.length}票` : ''}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : index === 0 ? (
+                                <div className="guess-feedback-empty-panel">等待队友建议</div>
+                              ) : null}
                             </>
                           )}
                         </div>
@@ -3858,14 +3856,7 @@ function App() {
                       <span className="action-line-head-cell">对方线索</span>
                       <span className="action-line-head-cell">{guessChoiceLabel}</span>
                       {!isGuessFeedbackInputMode ? (
-                        <div className="guess-feedback-head">
-                          <span className="guess-feedback-title">队友建议</span>
-                          <span className="guess-feedback-grid guess-feedback-grid-head" aria-label="队友建议">
-                            {[1, 2, 3, 4].map((digit) => (
-                              <span key={digit}>词语{digit}</span>
-                            ))}
-                          </span>
-                        </div>
+                        <span className="action-line-head-cell">队友建议</span>
                       ) : null}
                     </div>
                     {(opponentSubmission?.clues ?? []).map((clue, index) => {
@@ -3905,23 +3896,27 @@ function App() {
                                   </option>
                                 ))}
                               </select>
-                              <div className="guess-feedback-grid" role="group" aria-label={`第 ${index + 1} 条线索的队友建议`}>
-                                {[1, 2, 3, 4].map((digit) => {
-                                  const names = clueFeedbackResponses
-                                    .filter((entry) => entry.guess_digit === String(digit))
-                                    .map((entry) => guessFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
+                              {hasActiveGuessFeedback ? (
+                                <div className="guess-feedback-grid" role="group" aria-label={`第 ${index + 1} 条线索的队友建议`}>
+                                  {[1, 2, 3, 4].map((digit) => {
+                                    const names = clueFeedbackResponses
+                                      .filter((entry) => entry.guess_digit === String(digit))
+                                      .map((entry) => guessFeedbackPlayerById[entry.player_id]?.player_name ?? '队友');
 
-                                  return (
-                                    <span
-                                      className={cn('guess-feedback-cell', names.length > 0 && 'guess-feedback-cell-active')}
-                                      key={digit}
-                                      title={names.join('、')}
-                                    >
-                                      {names.length > 0 ? `${names.length}票` : ''}
-                                    </span>
-                                  );
-                                })}
-                              </div>
+                                    return (
+                                      <span
+                                        className={cn('guess-feedback-cell', names.length > 0 && 'guess-feedback-cell-active')}
+                                        key={digit}
+                                        title={names.join('、')}
+                                      >
+                                        {names.length > 0 ? `${names.length}票` : ''}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : index === 0 ? (
+                                <div className="guess-feedback-empty-panel">等待队友建议</div>
+                              ) : null}
                             </>
                           )}
                         </div>

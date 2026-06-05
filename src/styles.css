@@ -1217,6 +1217,21 @@ select:focus {
   color: #177a32;
 }
 
+.guess-feedback-empty-panel {
+  min-height: 152px;
+  grid-row: span 3;
+  display: grid;
+  place-items: center;
+  padding: 0.8rem;
+  border: 1px dashed rgba(139, 152, 172, 0.78);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 900;
+  text-align: center;
+}
+
 .guess-feedback-summary {
   min-width: 0;
   display: flex;
@@ -2753,6 +2768,11 @@ code {
 
   .guess-feedback-title {
     text-align: center;
+  }
+
+  .guess-feedback-empty-panel {
+    min-height: 72px;
+    grid-row: auto;
   }
 
   .guess-feedback-toolbar {
