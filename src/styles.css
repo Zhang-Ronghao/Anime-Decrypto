@@ -1109,6 +1109,12 @@ select:focus {
   color: #177a32;
 }
 
+.word-feedback-badge-complete-warning {
+  border-color: #d5a039;
+  background: #fff;
+  color: #8a5a00;
+}
+
 .word-feedback-submit-button {
   width: 84px;
   min-height: 34px;

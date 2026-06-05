@@ -3351,7 +3351,15 @@ function App() {
                                     × {rejectedNames.length}
                                   </span>
                                   {teamWordFeedbackAllSubmitted ? (
-                                    <span className="word-feedback-badge word-feedback-badge-complete" title="全部队友已提交">
+                                    <span
+                                      className={cn(
+                                        'word-feedback-badge',
+                                        rejectedNames.length === 0
+                                          ? 'word-feedback-badge-complete'
+                                          : 'word-feedback-badge-complete-warning',
+                                      )}
+                                      title={rejectedNames.length === 0 ? '全部队友通过' : '有队友认为这个词不合适'}
+                                    >
                                       完成
                                     </span>
                                   ) : (
