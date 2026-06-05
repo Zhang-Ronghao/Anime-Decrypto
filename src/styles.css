@@ -106,30 +106,18 @@ select:focus {
   align-items: center;
   gap: 28px;
   padding: 48px;
-  border: 1px solid rgba(20, 33, 61, 0.08);
-  border-radius: 28px;
-  background:
-    radial-gradient(circle at top left, rgba(232, 76, 76, 0.18), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(48, 96, 212, 0.22), transparent 38%),
-    linear-gradient(135deg, #fffaf8 0%, #f7f9ff 52%, #fefefe 100%);
-  box-shadow: 0 30px 80px rgba(22, 35, 68, 0.14);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fffafa 0%, #ffffff 46%, #f7f9ff 100%);
+  box-shadow: 0 24px 60px rgba(22, 35, 68, 0.1);
 }
 
 .hero-panel-home::after {
-  content: '';
-  position: absolute;
-  inset: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 22px;
-  pointer-events: none;
+  display: none;
 }
 
 .hero-orb {
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(10px);
-  opacity: 0.72;
-  pointer-events: none;
+  display: none;
 }
 
 .hero-orb-red {
@@ -200,12 +188,11 @@ select:focus {
   padding: 0.35rem 0.9rem;
   border: 1px solid rgba(20, 33, 61, 0.1);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--panel);
   color: #26344f;
   font-size: 0.92rem;
   font-weight: 800;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
+  box-shadow: 0 6px 18px rgba(28, 42, 76, 0.06);
 }
 
 .hero-tag-link {
@@ -215,13 +202,12 @@ select:focus {
   padding: 0.35rem 0.9rem;
   border: 1px solid rgba(35, 89, 201, 0.26);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--panel);
   color: #2359c9;
   font-size: 0.92rem;
   font-weight: 800;
   text-decoration: none;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
+  box-shadow: 0 6px 18px rgba(28, 42, 76, 0.06);
 }
 
 .eyebrow,
@@ -260,13 +246,10 @@ select:focus {
   display: grid;
   gap: 18px;
   padding: 26px;
-  border: 1px solid rgba(185, 196, 212, 0.6);
-  border-radius: 22px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 250, 255, 0.82)),
-    rgba(255, 255, 255, 0.86);
-  box-shadow: 0 20px 44px rgba(24, 39, 74, 0.12);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 16px 40px rgba(24, 39, 74, 0.1);
 }
 
 .hero-button-row {
@@ -277,14 +260,14 @@ select:focus {
 .hero-button-row .ghost-button {
   flex: 1 1 0;
   min-height: 52px;
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .hero-form-card input {
   min-height: 50px;
-  border-radius: 14px;
+  border-radius: 8px;
   border-color: rgba(155, 169, 191, 0.8);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--panel);
 }
 
 .hero-form-card input::placeholder {
@@ -292,13 +275,13 @@ select:focus {
 }
 
 .hero-form-card .primary-button {
-  background: linear-gradient(135deg, #d94a4a, #255fe0);
-  box-shadow: 0 14px 30px rgba(63, 92, 176, 0.24);
+  background: linear-gradient(180deg, #2f6be5, #1f53c2);
+  box-shadow: 0 12px 26px rgba(35, 89, 201, 0.22);
 }
 
 .hero-form-card .ghost-button {
-  border: 1px solid rgba(112, 133, 174, 0.25);
-  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--line);
+  background: var(--soft);
 }
 
 .hero-form-card .primary-button:hover,
@@ -693,6 +676,19 @@ select:focus {
 .outline-button:hover,
 .seat-card:hover {
   transform: translateY(-1px);
+}
+
+.primary-button:focus-visible,
+.ghost-button:focus-visible,
+.danger-button:focus-visible,
+.outline-button:focus-visible,
+.seat-card:focus-visible,
+.repo-link-button:focus-visible,
+.home-footer-link:focus-visible,
+.word-feedback-choice-button:focus-visible,
+.host-transfer-option:focus-visible {
+  outline: 3px solid rgba(35, 89, 201, 0.34);
+  outline-offset: 3px;
 }
 
 .primary-button:disabled,
@@ -1179,6 +1175,30 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.guess-choice-note {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-height: 32px;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.guess-choice-note strong {
+  color: var(--text);
+  font-family: 'IBM Plex Mono', 'Consolas', monospace;
+  font-size: 0.96rem;
 }
 
 .guess-feedback-grid {
@@ -1703,6 +1723,14 @@ select:focus {
 
 .seat-card-active {
   outline: 2px solid var(--blue);
+}
+
+.seat-card-red.seat-card-active {
+  outline-color: var(--red);
+}
+
+.seat-card-blue.seat-card-active {
+  outline-color: var(--blue);
 }
 
 .seat-card-head {
