@@ -157,7 +157,7 @@ const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
   decodeMinutes: 2,
   interceptMinutes: 2,
 };
-const GUESS_NUMBER_NOTE = '括号表示队友猜测的数字，只有猜错时才显示';
+const GUESS_NUMBER_NOTE = '线索按正确编号归位；括号内是队友猜错时选的编号';
 const FULL_REFRESH_MIN_INTERVAL_MS = 800;
 const REALTIME_REFRESH_DEBOUNCE_MS = 400;
 
