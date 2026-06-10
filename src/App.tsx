@@ -4572,14 +4572,13 @@ function App() {
                       type="checkbox"
                     />
                     <span>
-                      <strong>加入热门动画</strong>
-                      <small>数据：{BANGUMI_POPULAR_SOURCE_DATE}</small>
+                      <strong>加入下方年份范围内收藏前 {bangumiPopularCatalogLimit} 的动画</strong>
                     </span>
                   </label>
-                  <span className="catalog-popular-value">前 {bangumiPopularCatalogLimit}</span>
+                  <span className="catalog-popular-data">数据：{BANGUMI_POPULAR_SOURCE_DATE}</span>
                 </div>
 
-                <div className="catalog-popular-year-row">
+                <div className="catalog-popular-control-row">
                   <label>
                     <span>起始年份</span>
                     <input
@@ -4606,21 +4605,21 @@ function App() {
                       value={bangumiPopularYearMaxDraft}
                     />
                   </label>
-                </div>
 
-                <div className="catalog-popular-slider-row">
-                  <span>前 {BANGUMI_POPULAR_LIMIT_MIN}</span>
-                  <input
-                    aria-label="Bangumi 收藏人数排行范围"
-                    disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
-                    max={BANGUMI_POPULAR_LIMIT_MAX}
-                    min={BANGUMI_POPULAR_LIMIT_MIN}
-                    onChange={(event) => updateBangumiPopularCatalogLimit(Number(event.target.value))}
-                    step={BANGUMI_POPULAR_LIMIT_STEP}
-                    type="range"
-                    value={bangumiPopularCatalogLimit}
-                  />
-                  <span>前 {BANGUMI_POPULAR_LIMIT_MAX}</span>
+                  <div className="catalog-popular-slider-row">
+                    <span>前 {BANGUMI_POPULAR_LIMIT_MIN}</span>
+                    <input
+                      aria-label="Bangumi 收藏人数排行范围"
+                      disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
+                      max={BANGUMI_POPULAR_LIMIT_MAX}
+                      min={BANGUMI_POPULAR_LIMIT_MIN}
+                      onChange={(event) => updateBangumiPopularCatalogLimit(Number(event.target.value))}
+                      step={BANGUMI_POPULAR_LIMIT_STEP}
+                      type="range"
+                      value={bangumiPopularCatalogLimit}
+                    />
+                    <span>前 {BANGUMI_POPULAR_LIMIT_MAX}</span>
+                  </div>
                 </div>
               </div>
             </div>

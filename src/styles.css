@@ -2291,8 +2291,8 @@ select:focus {
 
 .catalog-popular-source {
   display: grid;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: color-mix(in oklch, var(--blue-soft) 44%, var(--panel-raised));
@@ -2330,39 +2330,31 @@ select:focus {
   font-size: 0.92rem;
 }
 
-.catalog-popular-toggle small {
+.catalog-popular-data {
+  flex: 0 0 auto;
   color: var(--muted);
+  font-size: 0.78rem;
   font-weight: 700;
 }
 
-.catalog-popular-value {
-  flex: 0 0 auto;
-  padding: 0.25rem 0.55rem;
-  border: 1px solid rgba(35, 89, 201, 0.18);
-  border-radius: 999px;
-  background: var(--panel-raised);
-  color: var(--blue);
-  font-size: 0.82rem;
-  font-weight: 900;
+.catalog-popular-control-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 120px) minmax(92px, 120px) minmax(180px, 1fr);
+  align-items: end;
+  gap: 8px;
 }
 
-.catalog-popular-year-row {
+.catalog-popular-control-row label {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.catalog-popular-year-row label {
-  display: grid;
-  gap: 4px;
+  gap: 3px;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 800;
 }
 
-.catalog-popular-year-row input {
-  min-height: 36px;
-  padding: 0.45rem 0.6rem;
+.catalog-popular-control-row input[type='number'] {
+  min-height: 32px;
+  padding: 0.35rem 0.5rem;
 }
 
 .catalog-popular-slider-row {
@@ -2376,7 +2368,7 @@ select:focus {
 }
 
 .catalog-popular-slider-row input[type='range'] {
-  min-height: 28px;
+  min-height: 24px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3055,7 +3047,7 @@ code {
   }
 
   .catalog-popular-top-row,
-  .catalog-popular-year-row {
+  .catalog-popular-control-row {
     grid-template-columns: 1fr;
     align-items: stretch;
     flex-direction: column;
