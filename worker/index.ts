@@ -239,6 +239,16 @@ function readCookie(request: Request, name: string): string | null {
 }
 
 function sessionFromRequest(request: Request): string | null {
+  const fromHeader = request.headers.get('x-decrypto-session');
+  if (fromHeader && isUuidLike(fromHeader)) {
+    return fromHeader;
+  }
+
+  const fromQuery = new URL(request.url).searchParams.get('session');
+  if (fromQuery && isUuidLike(fromQuery)) {
+    return fromQuery;
+  }
+
   const fromCookie = readCookie(request, SESSION_COOKIE);
   return fromCookie && isUuidLike(fromCookie) ? fromCookie : null;
 }

@@ -13,6 +13,7 @@ import type {
   TeamWordSlot,
   TeamWordsRecord,
 } from '../types';
+import { getSessionIdForRequest } from './session';
 
 const DEFAULT_ROUND_HISTORY_ROW_LIMIT = 16;
 let lastRoomId: string | null = null;
@@ -26,14 +27,15 @@ function apiUrl(path: string): string {
 }
 
 function wsUrl(path: string): string {
+  const withSession = `${path}${path.includes('?') ? '&' : '?'}session=${encodeURIComponent(getSessionIdForRequest())}`;
   const base = apiBase();
   if (base) {
-    const url = new URL(path, base);
+    const url = new URL(withSession, base);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return url.toString();
   }
 
-  const url = new URL(path, window.location.origin);
+  const url = new URL(withSession, window.location.origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();
 }
@@ -44,6 +46,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     credentials: 'include',
     headers: {
       'content-type': 'application/json',
+      'x-decrypto-session': getSessionIdForRequest(),
       ...init.headers,
     },
   });
