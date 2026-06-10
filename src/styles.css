@@ -2311,6 +2311,23 @@ select:focus {
   pointer-events: none;
 }
 
+.catalog-source-group::after {
+  content: '交集';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  padding: 4px 0;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+  text-orientation: upright;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+}
+
 .catalog-popular-source {
   display: grid;
   gap: 8px;
@@ -2382,12 +2399,19 @@ select:focus {
 
 .catalog-popular-slider-row {
   display: grid;
-  grid-template-columns: auto minmax(180px, 1fr) auto;
-  align-items: center;
-  gap: 8px;
+  grid-template-columns: minmax(180px, 1fr);
+  align-items: stretch;
+  gap: 4px;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 800;
+}
+
+.catalog-popular-slider-title {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .catalog-popular-slider-row input[type='range'] {

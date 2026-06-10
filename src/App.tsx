@@ -4595,7 +4595,7 @@ function App() {
                 />
                 <span>
                   <strong>开启从动画提取人物名</strong>
-                  <small>开启后，词语分配页面会显示“提取动画主要角色”按钮</small>
+                  <small>开启后，词语分配阶段支持将动画标题转换为角色名。</small>
                 </span>
               </label>
             </div>
@@ -4725,7 +4725,7 @@ function App() {
                     </label>
 
                     <div className="catalog-popular-slider-row">
-                      <span>前 {BANGUMI_POPULAR_LIMIT_MIN}</span>
+                      <span className="catalog-popular-slider-title">收藏排行范围</span>
                       <input
                         aria-label="Bangumi 收藏人数排行范围"
                         disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
@@ -4736,7 +4736,6 @@ function App() {
                         type="range"
                         value={bangumiPopularCatalogLimit}
                       />
-                      <span>前 {BANGUMI_POPULAR_LIMIT_MAX}</span>
                     </div>
                   </div>
                 </div>
