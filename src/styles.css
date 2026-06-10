@@ -2257,14 +2257,11 @@ select:focus {
 }
 
 .catalog-intersection-note {
-  font-size: 1rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .catalog-intersection-note strong {
   color: var(--blue);
-  font-size: 1.18em;
-  font-weight: 950;
 }
 
 .modal-form-stack {
@@ -2319,6 +2316,22 @@ select:focus {
   border-left: 2px solid var(--line-strong);
   border-radius: 6px 0 0 6px;
   opacity: 0.78;
+  pointer-events: none;
+}
+
+.catalog-source-group::after {
+  content: '交集';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  padding: 0.1rem 0.18rem;
+  border-radius: 5px;
+  background: var(--panel-raised);
+  color: var(--blue);
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1;
+  transform: translate(-22%, -50%);
   pointer-events: none;
 }
 
