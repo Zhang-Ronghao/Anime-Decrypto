@@ -2625,7 +2625,7 @@ function App() {
 
     const invalidValue = normalizedInputs.find((value) => !isBangumiCatalogInputValid(value));
     if (invalidValue) {
-      failCatalogValidation('仅支持用户 ID，或 bangumi.tv / bgm.tv / chii.in 的用户主页、收藏夹页面、目录链接。');
+      failCatalogValidation('仅支持 Bangumi 用户 ID，或 bangumi.tv / bgm.tv / chii.in 的用户主页、收藏夹页面、目录链接。');
       return;
     }
 
@@ -3397,7 +3397,7 @@ function App() {
                 <div className="lobby-settings-head">
                   <div>
                     <strong>Bangumi 动画词库</strong>
-                    <p className="muted lobby-settings-copy">支持用户 ID、收藏夹页面链接或目录链接，多个来源取交集。</p>
+                    <p className="muted lobby-settings-copy">支持 Bangumi 用户 ID、收藏夹页面链接或目录链接，多个来源取交集。</p>
                   </div>
 
                   {self.is_host ? (
@@ -4617,7 +4617,7 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>载入 Bangumi 动画词库</h2>
-                <p className="muted">填写<strong>用户 ID</strong>（推荐）或<strong>收藏夹链接</strong>或<strong>目录链接</strong></p>
+                <p className="muted">填写<strong>Bangumi 用户 ID</strong>（推荐）或<strong>收藏夹链接</strong>或<strong>目录链接</strong></p>
                 <p className="muted catalog-intersection-note">
                   支持多个来源，词库将取<strong>交集</strong>
                 </p>
