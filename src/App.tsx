@@ -4618,7 +4618,9 @@ function App() {
               <div>
                 <h2>载入 Bangumi 动画词库</h2>
                 <p className="muted">填写<strong>用户 ID</strong>（推荐）或<strong>收藏夹链接</strong>或<strong>目录链接</strong></p>
-                <p className="muted">支持多个来源，词库将取<strong>交集</strong></p>
+                <p className="muted catalog-intersection-note">
+                  支持多个来源，词库将取<strong>交集</strong>
+                </p>
                 <p className="muted">用户收藏夹可按如下按钮进行过滤</p>
               </div>
               <button

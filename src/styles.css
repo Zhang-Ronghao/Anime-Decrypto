@@ -2256,6 +2256,17 @@ select:focus {
   margin-top: 6px;
 }
 
+.catalog-intersection-note {
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.catalog-intersection-note strong {
+  color: var(--blue);
+  font-size: 1.18em;
+  font-weight: 950;
+}
+
 .modal-form-stack {
   display: grid;
   gap: 12px;
