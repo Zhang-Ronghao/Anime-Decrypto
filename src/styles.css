@@ -2338,12 +2338,12 @@ select:focus {
 .catalog-source-group::after {
   content: '交集';
   position: absolute;
-  left: -11px;
+  left: -9px;
   top: 50%;
-  padding: 8px 0;
+  padding: 7px 0;
   background: rgba(255, 255, 255, 0.96);
   color: var(--muted);
-  font-size: 1.12rem;
+  font-size: 0.98rem;
   font-weight: 900;
   line-height: 1;
   letter-spacing: 0;
@@ -2438,7 +2438,32 @@ select:focus {
   line-height: 1.2;
 }
 
+.catalog-popular-range-wrap {
+  position: relative;
+  min-width: 0;
+  padding-top: 28px;
+}
+
+.catalog-popular-range-value {
+  position: absolute;
+  top: 0;
+  min-width: 58px;
+  padding: 0.18rem 0.44rem;
+  border: 1px solid rgba(35, 89, 201, 0.22);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(24, 39, 74, 0.08);
+}
+
 .catalog-popular-slider-row input[type='range'] {
+  width: 100%;
   min-height: 24px;
   padding: 0;
   border: 0;

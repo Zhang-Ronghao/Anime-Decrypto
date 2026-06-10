@@ -1372,6 +1372,9 @@ function App() {
   const lifePoints = optimisticLobbySettings?.life_points ?? lifePointsFromRoom(snapshot?.room);
   const bangumiCharacterExtractEnabled =
     optimisticLobbySettings?.bangumi_character_extract_enabled ?? (snapshot?.room.bangumi_character_extract_enabled === true);
+  const bangumiPopularRangePercent =
+    ((bangumiPopularCatalogLimit - BANGUMI_POPULAR_LIMIT_MIN) / (BANGUMI_POPULAR_LIMIT_MAX - BANGUMI_POPULAR_LIMIT_MIN)) *
+    100;
   const visibleMySubmissions = useMemo(
     () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
     [currentPhase, currentRoundNumber, mySubmissions, showAllRoundRecords],
@@ -4727,17 +4730,25 @@ function App() {
                     </label>
 
                     <div className="catalog-popular-slider-row">
-                      <span className="catalog-popular-slider-title">收藏排行范围</span>
-                      <input
-                        aria-label="Bangumi 收藏人数排行范围"
-                        disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
-                        max={BANGUMI_POPULAR_LIMIT_MAX}
-                        min={BANGUMI_POPULAR_LIMIT_MIN}
-                        onChange={(event) => updateBangumiPopularCatalogLimit(Number(event.target.value))}
-                        step={BANGUMI_POPULAR_LIMIT_STEP}
-                        type="range"
-                        value={bangumiPopularCatalogLimit}
-                      />
+                      <span className="catalog-popular-slider-title">收藏人数排行取前多少名</span>
+                      <div className="catalog-popular-range-wrap">
+                        <output
+                          className="catalog-popular-range-value"
+                          style={{ left: `clamp(32px, ${bangumiPopularRangePercent}%, calc(100% - 32px))` }}
+                        >
+                          前 {bangumiPopularCatalogLimit}
+                        </output>
+                        <input
+                          aria-label="Bangumi 收藏人数排行范围"
+                          disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
+                          max={BANGUMI_POPULAR_LIMIT_MAX}
+                          min={BANGUMI_POPULAR_LIMIT_MIN}
+                          onChange={(event) => updateBangumiPopularCatalogLimit(Number(event.target.value))}
+                          step={BANGUMI_POPULAR_LIMIT_STEP}
+                          type="range"
+                          value={bangumiPopularCatalogLimit}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
