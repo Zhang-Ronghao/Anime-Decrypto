@@ -33,6 +33,7 @@ export interface RoomRecord {
   life_mode_enabled: boolean;
   life_points: number;
   allow_midgame_join: boolean;
+  bangumi_character_extract_enabled: boolean;
   phase_started_at: string | null;
   phase_deadline_at: string | null;
   winner: Team | null;

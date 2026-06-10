@@ -107,6 +107,7 @@ const ROOM_SNAPSHOT_COLUMNS = compactSelectColumns(`
   life_mode_enabled,
   life_points,
   allow_midgame_join,
+  bangumi_character_extract_enabled,
   phase_started_at,
   phase_deadline_at,
   winner,
@@ -362,6 +363,7 @@ export async function updateRoomLobbySettings(
   lifeModeEnabled: boolean,
   lifePoints: number,
   allowMidgameJoin: boolean,
+  bangumiCharacterExtractEnabled: boolean,
 ) {
   const client = assertSupabase();
   const { error } = await client.rpc('update_room_lobby_settings', {
@@ -375,6 +377,7 @@ export async function updateRoomLobbySettings(
     p_life_mode_enabled: lifeModeEnabled,
     p_life_points: lifePoints,
     p_allow_midgame_join: allowMidgameJoin,
+    p_bangumi_character_extract_enabled: bangumiCharacterExtractEnabled,
   });
 
   if (error) {

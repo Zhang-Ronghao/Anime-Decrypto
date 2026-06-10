@@ -17,6 +17,7 @@ create table if not exists public.rooms (
   life_mode_enabled boolean not null default false,
   life_points integer not null default 3 check (life_points in (3, 4)),
   allow_midgame_join boolean not null default true,
+  bangumi_character_extract_enabled boolean not null default false,
   phase_started_at timestamptz null default timezone('utc', now()),
   phase_deadline_at timestamptz null,
   winner text null check (winner in ('A', 'B')),
@@ -62,6 +63,9 @@ add column if not exists life_points integer not null default 3;
 
 alter table public.rooms
 add column if not exists allow_midgame_join boolean not null default true;
+
+alter table public.rooms
+add column if not exists bangumi_character_extract_enabled boolean not null default false;
 
 alter table public.rooms
 add column if not exists phase_started_at timestamptz null default timezone('utc', now());
@@ -217,6 +221,9 @@ alter column life_mode_enabled set default false;
 
 alter table public.rooms
 alter column life_points set default 3;
+
+alter table public.rooms
+alter column bangumi_character_extract_enabled set default false;
 
 update public.rooms
 set phase_started_at = coalesce(phase_started_at, updated_at, created_at);
@@ -1759,7 +1766,8 @@ create or replace function public.update_room_lobby_settings(
   p_miscommunication_limit integer,
   p_life_mode_enabled boolean,
   p_life_points integer,
-  p_allow_midgame_join boolean
+  p_allow_midgame_join boolean,
+  p_bangumi_character_extract_enabled boolean
 )
 returns void
 language plpgsql
@@ -1854,8 +1862,43 @@ begin
       miscommunication_limit = p_miscommunication_limit,
       life_mode_enabled = p_life_mode_enabled,
       life_points = p_life_points,
-      allow_midgame_join = p_allow_midgame_join
+      allow_midgame_join = p_allow_midgame_join,
+      bangumi_character_extract_enabled = p_bangumi_character_extract_enabled
   where id = p_room_id;
+end;
+$$;
+
+create or replace function public.update_room_lobby_settings(
+  p_room_id uuid,
+  p_seat_count integer,
+  p_role_rotation_enabled boolean,
+  p_encrypt_phase_minutes integer,
+  p_decode_phase_minutes integer,
+  p_intercept_phase_minutes integer,
+  p_miscommunication_limit integer,
+  p_life_mode_enabled boolean,
+  p_life_points integer,
+  p_allow_midgame_join boolean
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.update_room_lobby_settings(
+    p_room_id,
+    p_seat_count,
+    p_role_rotation_enabled,
+    p_encrypt_phase_minutes,
+    p_decode_phase_minutes,
+    p_intercept_phase_minutes,
+    p_miscommunication_limit,
+    p_life_mode_enabled,
+    p_life_points,
+    p_allow_midgame_join,
+    false
+  );
 end;
 $$;
 
@@ -4339,6 +4382,7 @@ grant execute on function public.update_room_lobby_settings(uuid, integer, boole
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer, boolean) to authenticated;
 grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer, boolean, integer, boolean) to authenticated;
+grant execute on function public.update_room_lobby_settings(uuid, integer, boolean, integer, integer, integer, integer, boolean, integer, boolean, boolean) to authenticated;
 grant execute on function public.update_self_seat(uuid, text, integer) to authenticated;
 grant execute on function public.update_self_spectator(uuid, boolean) to authenticated;
 grant execute on function public.clear_all_seats(uuid) to authenticated;

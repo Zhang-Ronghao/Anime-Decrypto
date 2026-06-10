@@ -63,6 +63,7 @@ import {
 import type {
   PlayerRecord,
   Role,
+  RoomRecord,
   RoomJoinStatus,
   RoomPhase,
   RoomSnapshot,
@@ -167,6 +168,10 @@ const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
 const GUESS_NUMBER_NOTE = '线索按正确编号归位；括号内是队友猜错时选的编号';
 const FULL_REFRESH_MIN_INTERVAL_MS = 800;
 const REALTIME_REFRESH_DEBOUNCE_MS = 400;
+
+type LobbySettingsOptimistic = Partial<
+  Pick<RoomRecord, 'life_mode_enabled' | 'life_points' | 'bangumi_character_extract_enabled'>
+>;
 
 interface HomeFooterLinkItemProps {
   label: string;
@@ -847,6 +852,7 @@ function App() {
   const [bangumiPopularYearMinDraft, setBangumiPopularYearMinDraft] = useState('');
   const [bangumiPopularYearMaxDraft, setBangumiPopularYearMaxDraft] = useState('');
   const [showAllRoundRecords, setShowAllRoundRecords] = useState(false);
+  const [optimisticLobbySettings, setOptimisticLobbySettings] = useState<LobbySettingsOptimistic | null>(null);
   const [teamWordFeedbackDraft, setTeamWordFeedbackDraft] = useState<{
     requestId: string | null;
     values: TeamWordFeedbackDraftValue[];
@@ -1361,8 +1367,10 @@ function App() {
   const roleStripTeams: Team[] = [myTeam, opponentTeam];
   const lobbyTimerSettings = lobbyTimerSettingsFromRoom(snapshot?.room);
   const miscommunicationLimit = miscommunicationLimitFromRoom(snapshot?.room);
-  const lifeModeEnabled = snapshot?.room.life_mode_enabled === true;
-  const lifePoints = lifePointsFromRoom(snapshot?.room);
+  const lifeModeEnabled = optimisticLobbySettings?.life_mode_enabled ?? (snapshot?.room.life_mode_enabled === true);
+  const lifePoints = optimisticLobbySettings?.life_points ?? lifePointsFromRoom(snapshot?.room);
+  const bangumiCharacterExtractEnabled =
+    optimisticLobbySettings?.bangumi_character_extract_enabled ?? (snapshot?.room.bangumi_character_extract_enabled === true);
   const visibleMySubmissions = useMemo(
     () => filterVisibleRoundRecords(mySubmissions, currentRoundNumber, currentPhase, showAllRoundRecords),
     [currentPhase, currentRoundNumber, mySubmissions, showAllRoundRecords],
@@ -1460,7 +1468,7 @@ function App() {
   const canViewWordAssignment = Boolean(isWordAssignmentPhase && self?.team);
   const isWordAssignmentReadOnly = canViewWordAssignment && !canEditWordAssignment;
   const hasCompleteTeamWordDraft = teamWordSlotsToWords(teamWordSlotsDraft).every((word) => word.length > 0);
-  const canExtractTeamWordCharacters = teamWordDraftMode === 'generated';
+  const canExtractTeamWordCharacters = bangumiCharacterExtractEnabled && teamWordDraftMode === 'generated';
   const shouldConfirmBeforeManualEdit = teamWordDraftMode === 'generated';
   const canReplaceGeneratedWords = teamWordDraftMode === 'generated';
   const latestTeamWordFeedbackRequest = useMemo(
@@ -1906,8 +1914,13 @@ function App() {
     setBangumiPopularCatalogLimit(BANGUMI_POPULAR_LIMIT_DEFAULT);
     setBangumiPopularYearMinDraft('');
     setBangumiPopularYearMaxDraft('');
+    setOptimisticLobbySettings(null);
     setActionError(message ?? null);
     window.history.replaceState({}, '', window.location.pathname);
+  }
+
+  function patchSnapshotRoom(patch: Partial<RoomRecord>) {
+    setSnapshot((current) => (current ? { ...current, room: { ...current.room, ...patch } } : current));
   }
 
   function updateGuessDigit(kind: 'decode' | 'intercept' | 'decode-feedback' | 'intercept-feedback', index: number, digit: string) {
@@ -2228,6 +2241,7 @@ function App() {
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
+        snapshot.room.bangumi_character_extract_enabled,
       ),
     );
   }
@@ -2248,6 +2262,7 @@ function App() {
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
+        snapshot.room.bangumi_character_extract_enabled,
       ),
     );
   }
@@ -2283,6 +2298,7 @@ function App() {
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
+        snapshot.room.bangumi_character_extract_enabled,
       ),
     );
   }
@@ -2303,17 +2319,19 @@ function App() {
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
+        snapshot.room.bangumi_character_extract_enabled,
       ),
     );
   }
 
   async function handleLifeModeToggle(enabled: boolean) {
-    if (!snapshot || !self?.is_host || enabled === snapshot.room.life_mode_enabled) {
+    if (!snapshot || !self?.is_host || enabled === lifeModeEnabled) {
       return;
     }
 
     const timers = lobbyTimerSettingsFromRoom(snapshot.room);
-    await withAction('lobby-life-mode', () =>
+    setOptimisticLobbySettings((current) => ({ ...current, life_mode_enabled: enabled }));
+    const result = await withAction('lobby-life-mode', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
         snapshot.room.seat_count,
@@ -2323,17 +2341,23 @@ function App() {
         enabled,
         lifePointsFromRoom(snapshot.room),
         snapshot.room.allow_midgame_join,
+        snapshot.room.bangumi_character_extract_enabled,
       ),
     );
+    if (result !== null) {
+      patchSnapshotRoom({ life_mode_enabled: enabled });
+    }
+    setOptimisticLobbySettings(null);
   }
 
   async function handleLifePointsChange(points: number) {
-    if (!snapshot || !self?.is_host || points === lifePointsFromRoom(snapshot.room)) {
+    if (!snapshot || !self?.is_host || points === lifePoints) {
       return;
     }
 
     const timers = lobbyTimerSettingsFromRoom(snapshot.room);
-    await withAction('lobby-life-points', () =>
+    setOptimisticLobbySettings((current) => ({ ...current, life_points: points }));
+    const result = await withAction('lobby-life-points', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
         snapshot.room.seat_count,
@@ -2343,8 +2367,13 @@ function App() {
         snapshot.room.life_mode_enabled,
         points,
         snapshot.room.allow_midgame_join,
+        snapshot.room.bangumi_character_extract_enabled,
       ),
     );
+    if (result !== null) {
+      patchSnapshotRoom({ life_points: points });
+    }
+    setOptimisticLobbySettings(null);
   }
 
   async function handleMidgameJoinToggle(enabled: boolean) {
@@ -2363,8 +2392,35 @@ function App() {
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
         enabled,
+        snapshot.room.bangumi_character_extract_enabled,
       ),
     );
+  }
+
+  async function handleBangumiCharacterExtractToggle(enabled: boolean) {
+    if (!snapshot || !self?.is_host || enabled === bangumiCharacterExtractEnabled) {
+      return;
+    }
+
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
+    setOptimisticLobbySettings((current) => ({ ...current, bangumi_character_extract_enabled: enabled }));
+    const result = await withAction('lobby-bangumi-character-extract', () =>
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        snapshot.room.role_rotation_enabled,
+        timers,
+        miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.life_mode_enabled,
+        lifePointsFromRoom(snapshot.room),
+        snapshot.room.allow_midgame_join,
+        enabled,
+      ),
+    );
+    if (result !== null) {
+      patchSnapshotRoom({ bangumi_character_extract_enabled: enabled });
+    }
+    setOptimisticLobbySettings(null);
   }
 
   async function handleStartGame() {
@@ -3445,6 +3501,9 @@ function App() {
             </div>
 
             <p className="muted lobby-hint">{self.is_host ? lobbyStartHint : '等待房主开始游戏'}</p>
+            {self.is_host ? (
+              <p className="muted lobby-hint lobby-hint-secondary">更推荐玩生命模式，房主可在“其他设置”中开启。</p>
+            ) : null}
             </article>
 
             <article className="panel">
@@ -3808,14 +3867,16 @@ function App() {
                       >
                         随机生成动画标题
                       </button>
-                      <button
-                        className="ghost-button"
-                        disabled={isWordAssignmentReadOnly || busyKey !== null || !canExtractTeamWordCharacters}
-                        onClick={() => void handleExtractCharacters()}
-                        type="button"
-                      >
-                        提取动画主要角色
-                      </button>
+                      {bangumiCharacterExtractEnabled ? (
+                        <button
+                          className="ghost-button"
+                          disabled={isWordAssignmentReadOnly || busyKey !== null || !canExtractTeamWordCharacters}
+                          onClick={() => void handleExtractCharacters()}
+                          type="button"
+                        >
+                          提取动画主要角色
+                        </button>
+                      ) : null}
                       <button
                         className="ghost-button"
                         disabled={isWordAssignmentReadOnly || busyKey !== null || !canToggleSourceTitles}
@@ -4455,7 +4516,7 @@ function App() {
                       type="radio"
                     />
                     <span>
-                      <strong>生命模式</strong>
+                      <strong>生命模式（推荐）</strong>
                       <small>失误或被拦截扣生命</small>
                     </span>
                   </label>
@@ -4469,7 +4530,7 @@ function App() {
                     >
                       {LIFE_POINT_OPTIONS.map((option) => (
                         <option key={option} value={option}>
-                          {option} 点
+                          {option} 点{option === DEFAULT_LIFE_POINTS ? '（推荐）' : ''}
                         </option>
                       ))}
                     </select>
@@ -4487,6 +4548,19 @@ function App() {
                 <span>
                   <strong>允许中途加入</strong>
                   <small>开启后，游戏中有空位的队伍允许新玩家以队员身份加入</small>
+                </span>
+              </label>
+
+              <label className="settings-toggle-row">
+                <input
+                  checked={bangumiCharacterExtractEnabled}
+                  disabled={!self?.is_host || busyKey !== null}
+                  onChange={(event) => void handleBangumiCharacterExtractToggle(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>开启从动画提取人物名</strong>
+                  <small>开启后，词语分配页面会显示“提取动画主要角色”按钮</small>
                 </span>
               </label>
             </div>
