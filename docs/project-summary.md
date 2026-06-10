@@ -1,37 +1,64 @@
 # 项目摘要
 
-## 一句话说明
+Anime Decrypto 是一个基于 React、Vite 和 Cloudflare 的网页多人截码战原型。前端只负责展示和调用接口，房间状态、权限、实时同步和隐藏信息控制放在 Cloudflare Worker / Durable Object 里处理，D1 负责持久化。
 
-Anime Decrypto 是一个基于 React、Vite 和 Supabase 的网页多人截码战原型。前端只负责展示和调用接口，房间状态、权限、实时同步和隐藏信息主要放在 Supabase 里处理。
+## 当前技术栈
 
-## 当前能力
+- 前端：React 19、TypeScript、Vite
+- 部署：Cloudflare Pages
+- API：Cloudflare Workers
+- 实时：Durable Objects + WebSocket
+- 持久化：Cloudflare D1
 
-- 房间：创建、加入、自定义房间码、房主转让、踢人、解散、离开。
-- 大厅：可变席位、队伍入座、观战、清空座位、身份轮换、阶段倒计时、胜负规则、中途加入开关。
-- 玩法：词语分配、加密、解码、拦截、结算、结束、重开、终止。
-- 选词：手动填写、Bangumi 随机抽词、替换词槽、角色提取、队内词语反馈。
-- 实时：房间、玩家、词语、回合、反馈和个人通知会通过 Realtime 同步。
-- 权限：关键写操作走 RPC，隐藏信息通过表拆分和 RLS 控制。
+## 核心文件
 
-## 当前阶段流
+- [`src/App.tsx`](../src/App.tsx)：主 UI、房间流程、座位选择、阶段渲染。
+- [`src/lib/game.ts`](../src/lib/game.ts)：前端游戏 API 客户端，封装 HTTP 和 WebSocket。
+- [`src/lib/session.ts`](../src/lib/session.ts)：Cloudflare 匿名会话 bootstrap。
+- [`worker/index.ts`](../worker/index.ts)：Worker 路由、Durable Object 房间状态机、权限过滤、D1 持久化。
+- [`d1/migrations/0001_initial.sql`](../d1/migrations/0001_initial.sql)：D1 表结构。
+- [`wrangler.toml`](../wrangler.toml)：Worker、Durable Object、D1 绑定配置。
+- [`src/types.ts`](../src/types.ts)：前后端共享领域类型。
+- [`src/lib/utils.ts`](../src/lib/utils.ts)：队伍、身份、阶段、猜测格式等工具函数。
+- [`src/styles.css`](../src/styles.css)：UI 样式。
 
-```text
-lobby -> word_assignment -> encrypt -> decode -> intercept -> result -> finished
-```
+## 数据流
 
-## 主要文件
+1. 前端调用 `src/lib/session.ts` 的 `ensureSession()`。
+2. Worker 通过 HttpOnly cookie 建立匿名玩家会话。
+3. 前端通过 `src/lib/game.ts` 调用 `/api/*`。
+4. Worker 把房间请求路由到对应 Durable Object。
+5. Durable Object 串行处理房间操作并广播 WebSocket 变更。
+6. Durable Object 将完整房间状态快照写入 D1。
+7. 前端收到 WebSocket 变更后刷新房间快照。
 
-- [`src/App.tsx`](../src/App.tsx)：主 UI 和交互流程。
-- [`src/lib/game.ts`](../src/lib/game.ts)：Supabase RPC、查询、Realtime 订阅和 Edge Function 调用。
-- [`src/types.ts`](../src/types.ts)：前端领域类型。
-- [`src/lib/utils.ts`](../src/lib/utils.ts)：队伍、席位、身份、阶段和猜测格式化工具。
-- [`supabase/schema.sql`](../supabase/schema.sql)：表、RLS、RPC、Realtime 发布配置。
-- [`supabase/functions/load-bangumi-catalog/index.ts`](../supabase/functions/load-bangumi-catalog/index.ts)：Bangumi 词库载入。
-- [`supabase/functions/extract-bangumi-characters/index.ts`](../supabase/functions/extract-bangumi-characters/index.ts)：Bangumi 角色提取。
+## 隐藏信息
 
-## 当前边界
+隐藏信息不靠 UI 判断：
 
-- 没有聊天系统。
-- 断线重连和房间清理仍是基础实现。
-- 倒计时不自动强制提交。
-- Bangumi Edge Functions 是增强功能，不是基础游戏必需。
+- 队伍词语只返回给本队非观战玩家。
+- 当前回合密码只返回给本轮对应加密/拦截者。
+- 回合结果在结算前会过滤未公开字段。
+- 房间操作在 Durable Object 内检查玩家身份和房主权限。
+
+## 当前功能
+
+- 创建/加入房间、自定义 6 位房间码。
+- 4、6、8、10、12、14 人座位。
+- 观战、中途加入、清空座位、房主转让、踢人、解散房间。
+- 身份轮换、阶段倒计时、失误上限、生命模式。
+- `lobby -> word_assignment -> encrypt -> decode -> intercept -> result -> finished` 主流程。
+- 队伍词语确认、词语反馈、猜测反馈。
+- WebSocket 房间同步。
+- D1 持久化房间状态。
+
+## 迁移说明
+
+旧版本使用 Supabase Auth、Postgres、RPC、RLS 和 Realtime。当前版本已经把这些职责迁移到 Cloudflare：
+
+- Supabase RPC -> Worker/Durable Object action
+- Supabase Realtime -> Durable Object WebSocket
+- Supabase RLS -> Worker/Durable Object 权限过滤
+- Postgres 表 -> D1 `rooms` 表中的状态快照
+
+`supabase/` 目录目前保留为历史参考，不再是当前部署必需文件。

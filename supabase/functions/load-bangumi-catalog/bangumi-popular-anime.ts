@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Generated from Bangumi archive subject.jsonlines dump-2026-05-19.210434Z.
 // Source file is not committed because it is too large for the app repository.
 

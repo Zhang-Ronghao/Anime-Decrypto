@@ -1,0 +1,20 @@
+name = "anime-decrypto-api"
+main = "worker/index.ts"
+compatibility_date = "2026-06-01"
+
+[[durable_objects.bindings]]
+name = "ROOM_OBJECTS"
+class_name = "RoomDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDurableObject"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "anime_decrypto"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "d1/migrations"
+
+[vars]
+ALLOWED_ORIGIN = "http://localhost:5173"

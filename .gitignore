@@ -15,6 +15,7 @@ pnpm-debug.log*
 coverage/
 .vite/
 .cache/
+.wrangler/
 *.tsbuildinfo
 
 .DS_Store

@@ -46,7 +46,7 @@ import {
   updateSelfSpectator,
   updateSelfSeat,
 } from './lib/game';
-import { ensureSession, isSupabaseConfigured, supabase } from './lib/supabase';
+import { backendAuth, ensureSession, isBackendConfigured } from './lib/session';
 import {
   cn,
   isEncryptPhase,
@@ -888,7 +888,7 @@ function App() {
     let cancelled = false;
 
     async function boot() {
-      if (!isSupabaseConfigured) {
+      if (!isBackendConfigured) {
         setBooting(false);
         return;
       }
@@ -1221,11 +1221,7 @@ function App() {
   }, [syncFallbackUntil, roomId, sessionUserId]);
 
   useEffect(() => {
-    if (!supabase) {
-      return;
-    }
-
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data } = backendAuth.auth.onAuthStateChange((_event, session) => {
       setSessionUserId(session?.user.id ?? null);
     });
 
@@ -3057,15 +3053,14 @@ function App() {
     );
   }
 
-  if (!isSupabaseConfigured) {
+  if (!isBackendConfigured) {
     return (
       <main className="app-shell">
         <section className="panel hero-panel">
           <p className="eyebrow">动漫高手——截码战</p>
-          <h1>先接入 Supabase 再开始</h1>
+          <h1>先接入 Cloudflare Worker 再开始</h1>
           <p className="muted">
-            需要在项目根目录创建 <code>.env.local</code>，填写 <code>VITE_SUPABASE_URL</code> 和{' '}
-            <code>VITE_SUPABASE_ANON_KEY</code>，并执行 <code>supabase/schema.sql</code>
+            本地开发需要在项目根目录创建 <code>.env.local</code>，填写 <code>VITE_API_BASE_URL</code>，并执行 D1 迁移。
           </p>
         </section>
       </main>

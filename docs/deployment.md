@@ -1,163 +1,278 @@
-# 部署说明
+# Cloudflare 部署说明
 
-## 部署目标
+本项目现在使用：
 
-基础部署完成后，读者应当能独立跑起：
+- 前端：Cloudflare Pages，部署 Vite/React 的 `dist/`
+- 后端：Cloudflare Workers，提供 `/api/*`
+- 实时房间：Durable Objects，每个房间一个有状态对象
+- 持久化：D1，保存房间码索引和完整房间状态快照
 
-- 前端页面。
-- Supabase 房间状态与权限控制。
-- 房间创建、加入、观战、选座、开局、回合流转。
+不再需要 Supabase URL、Supabase anon key、Supabase RPC、RLS 或 Realtime。
 
-Bangumi 词库和角色提取是可选增强，不是基础部署前置。
+官方参考：
 
-## 1. 准备 Supabase 项目
+- Cloudflare Pages React 部署：https://developers.cloudflare.com/pages/framework-guides/deploy-a-react-site/
+- Cloudflare D1 入门：https://developers.cloudflare.com/d1/get-started/
+- Durable Objects 入门：https://developers.cloudflare.com/durable-objects/get-started/
+- Workers 路由：https://developers.cloudflare.com/workers/configuration/routing/routes/
 
-1. 新建一个 Supabase 项目。
-2. 进入 SQL Editor。
-3. 执行 [`supabase/schema.sql`](../supabase/schema.sql)。
+## 1. 本地开发
 
-这一步会创建或迁移：
-
-- 核心表。
-- RLS 策略。
-- RPC 函数。
-- Realtime 发布配置。
-- Bangumi 词库独立条目表。
-- 队内词语反馈表。
-- 玩家通知表。
-
-`schema.sql` 里保留了一些迁移语句，用来兼容旧数据，例如把旧的房间内词库数组迁移到 `room_bangumi_catalog_entries`。
-
-## 2. 开启认证与实时能力
-
-在 Supabase Dashboard 中确认：
-
-- `Authentication -> Providers -> Anonymous` 已开启。
-- Realtime 已启用。
-- 至少这些表已加入 Realtime 发布：
-  `rooms`、`room_players`、`team_words`、`round_codes`、`round_submissions`、`player_notifications`、`team_word_feedback_requests`、`team_word_feedback_responses`。
-
-如果这些表没有加入发布，房间状态、词语反馈或被踢通知不会实时刷新。
-
-## 3. 配置前端环境变量
-
-本地或部署平台都需要提供：
-
-```bash
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
-
-本地开发通常放在 `.env.local`。
-
-## 4. 本地验证
-
-安装依赖并启动：
+先安装依赖：
 
 ```bash
 npm install
+```
+
+创建 `.env.local`：
+
+```bash
+VITE_API_BASE_URL=http://localhost:8787
+```
+
+初始化本地 D1：
+
+```bash
+npm run d1:migrate:local
+```
+
+开两个终端。
+
+第一个终端启动 Worker：
+
+```bash
+npm run worker:dev
+```
+
+第二个终端启动前端：
+
+```bash
 npm run dev
 ```
 
-建议至少验证一次：
+打开 Vite 给出的地址，通常是：
 
-- 能匿名进入页面。
-- 能创建房间。
-- 第二个浏览器窗口能加入同一房间。
-- 选座、观战和房间状态能实时同步。
-- 房主能调整席位数、身份轮换、倒计时、胜负规则和中途加入开关。
-- 两队能进入选词阶段并手动确认词语。
-
-## 5. 部署前端
-
-这个项目是标准 Vite 前端，直接部署到 Vercel 即可。
-
-最小流程：
-
-1. 导入 GitHub 仓库。
-2. Framework Preset 选择 Vite。
-3. 配置 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`。
-4. 触发部署。
-
-如果你不用 Vercel，也可以先本地构建再部署静态产物：
-
-```bash
-npm run build
+```text
+http://localhost:5173
 ```
 
-## 6. 可选部署 Bangumi Edge Functions
+## 2. 创建 Cloudflare D1
 
-如果你希望房主可以在大厅里直接载入 Bangumi 词库，并在选词阶段自动提取角色名，再部署：
+登录 Cloudflare：
 
-- `supabase/functions/load-bangumi-catalog`
-- `supabase/functions/extract-bangumi-characters`
+```bash
+npx wrangler login
+```
 
-部署方式可以用 Supabase CLI，也可以在 Dashboard 的 Edge Functions 界面手动创建并粘贴代码。
+创建远程 D1 数据库：
 
-这一步不是基础玩法必需：
+```bash
+npx wrangler d1 create anime_decrypto
+```
 
-- 不部署时，房间、选座、观战、手动选词和回合流程仍可运行。
-- 只是不能一键载入 Bangumi 词库。
-- 未配置词库时，随机抽词会失败，需要手动填写词语。
+命令输出里会有一段类似：
 
-## 7. 部署后检查
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "anime_decrypto"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
 
-建议按这个顺序验收：
+把 `database_id` 复制到项目根目录的 `wrangler.toml`，替换：
 
-1. 创建房间并加入多个玩家。
-2. 调整房间席位数与身份轮换开关。
-3. 加入观战并切换观战视角。
-4. 测试房主转让、踢人、清空座位。
-5. 正常开局并进入 `word_assignment`。
-6. 手动确认两队词语，或测试词语反馈流程。
-7. 走完至少一轮 `encrypt -> decode -> intercept -> result`。
-8. 测试终止游戏和重新开始。
+```toml
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+```
 
-如果你还部署了 Bangumi 能力，再额外检查：
+执行远程 D1 迁移：
 
-1. 大厅能成功载入 Bangumi 词库。
-2. 大厅能浏览已载入词库。
-3. 选词阶段能随机抽词和替换单个词。
-4. 角色提取接口可用。
+```bash
+npm run d1:migrate:remote
+```
 
-## 常见问题
+## 3. 部署 Worker 后端
 
-### 页面能打开，但操作一直报权限错误
+先检查 Worker 能否打包：
 
-优先检查：
+```bash
+npx wrangler deploy --dry-run
+```
 
-- `schema.sql` 是否完整执行。
-- Anonymous Auth 是否开启。
-- 使用的 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY` 是否来自同一个项目。
+正式部署：
 
-### 房间状态不自动刷新
+```bash
+npm run worker:deploy
+```
 
-优先检查：
+部署成功后，终端会显示一个 Worker 地址，类似：
 
-- Realtime 是否开启。
-- 上面列出的核心表是否都加入了发布。
+```text
+https://anime-decrypto-api.<your-name>.workers.dev
+```
 
-### 词语反馈不实时变化
+记下这个地址，下一步 Pages 前端要用。
 
-优先检查：
+## 4. 配置 Worker CORS
 
-- `team_word_feedback_requests` 是否加入 Realtime。
-- `team_word_feedback_responses` 是否加入 Realtime。
-- 当前提交反馈的玩家是否是同队非加密者。
+本地默认允许：
 
-### 可以开局，但随机抽词失败
+```toml
+ALLOWED_ORIGIN = "http://localhost:5173"
+```
 
-这通常不是基础部署坏了，而是 Bangumi 词库未配置。
+部署到 Pages 后，把 `wrangler.toml` 里的 `ALLOWED_ORIGIN` 改成你的 Pages 地址，例如：
 
-处理方式：
+```toml
+[vars]
+ALLOWED_ORIGIN = "https://anime-decrypto.pages.dev"
+```
 
-- 先手动填写 4 个词继续游戏。
-- 或补充部署 Bangumi 相关 Edge Functions，并在大厅里载入词库。
+如果你有预览地址或自定义域名，可以用逗号分隔：
 
-### 能载入词库，但词库浏览或抽词异常
+```toml
+ALLOWED_ORIGIN = "https://anime-decrypto.pages.dev,https://game.example.com"
+```
 
-优先检查：
+改完后重新部署 Worker：
 
-- `room_bangumi_catalog_entries` 表是否存在。
-- `load-bangumi-catalog` 是否使用当前版本代码。
-- `schema.sql` 中的迁移语句是否完整执行。
+```bash
+npm run worker:deploy
+```
+
+## 5. 部署 Pages 前端
+
+进入 Cloudflare Dashboard：
+
+```text
+Workers & Pages -> Create application -> Pages -> Import an existing Git repository
+```
+
+选择你的 GitHub 仓库。
+
+构建配置填写：
+
+```text
+Framework preset: Vite
+Build command: npm run build
+Build output directory: dist
+```
+
+环境变量填写：
+
+```text
+VITE_API_BASE_URL=https://anime-decrypto-api.<your-name>.workers.dev
+```
+
+然后点击部署。
+
+## 6. 推荐的生产域名方式
+
+最简单方式是：
+
+```text
+前端 Pages: https://anime-decrypto.pages.dev
+后端 Worker: https://anime-decrypto-api.<your-name>.workers.dev
+```
+
+如果你有自己的域名，推荐最终做成：
+
+```text
+https://game.example.com        -> Pages 前端
+https://api.game.example.com    -> Worker 后端
+```
+
+这样 `VITE_API_BASE_URL` 填：
+
+```text
+https://api.game.example.com
+```
+
+也要把 `ALLOWED_ORIGIN` 改成：
+
+```text
+https://game.example.com
+```
+
+## 7. 部署后验收
+
+至少验收这些流程：
+
+1. 打开 Pages 地址，输入昵称。
+2. 创建房间，确认生成 6 位房间码。
+3. 用 4 个浏览器窗口或无痕窗口加入同一房间。
+4. 两队分别坐到 1、2 号位。
+5. 房主开始游戏，进入词语分配阶段。
+6. 两队确认 4 个词语。
+7. 两队加密者看到自己的密码，另一队看不到。
+8. 两队提交 3 条线索后进入解密阶段。
+9. 两队解码者提交己方密码后进入拦截阶段。
+10. 第一轮可由房主跳过拦截，之后进入结算。
+11. 刷新页面后仍能看到当前房间状态。
+
+## 8. 常见问题
+
+### 页面能打开，但操作失败
+
+检查 Pages 环境变量：
+
+```text
+VITE_API_BASE_URL
+```
+
+它必须是 Worker 的完整地址，不能是 Pages 地址。
+
+### 浏览器控制台出现 CORS 错误
+
+检查 Worker 的：
+
+```toml
+ALLOWED_ORIGIN
+```
+
+它必须包含当前前端页面的 origin，例如：
+
+```text
+https://anime-decrypto.pages.dev
+```
+
+修改后要重新：
+
+```bash
+npm run worker:deploy
+```
+
+### Worker 部署失败，提示 D1 database_id 不对
+
+重新执行：
+
+```bash
+npx wrangler d1 create anime_decrypto
+```
+
+把输出里的 `database_id` 复制进 `wrangler.toml`。
+
+### 房间刷新后丢失
+
+确认远程 D1 迁移已经执行：
+
+```bash
+npm run d1:migrate:remote
+```
+
+本地开发只执行 `d1:migrate:local` 不会影响线上数据库。
+
+### Wrangler 本地运行时提示无法写日志
+
+这是 Windows 权限或沙箱问题，通常不影响线上部署。普通本机终端里执行一般不会出现。如果出现，尝试用普通 PowerShell/CMD 重新运行：
+
+```bash
+npm run worker:dev
+```
+
+## 9. 当前实现边界
+
+Cloudflare 迁移保留了原有 UI 和核心玩法入口，但有两个实现差异：
+
+- 原 Supabase RLS 已替换为 Worker/Durable Object 内的权限过滤。
+- Bangumi 用户/目录抓取和热门榜单入口不再依赖 Supabase Edge Functions，已迁移到 Worker。
