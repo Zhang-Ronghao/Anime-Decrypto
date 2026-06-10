@@ -3431,7 +3431,7 @@ function App() {
                 <div className="lobby-settings-head">
                   <div>
                     <strong>Bangumi 动画词库</strong>
-                    <p className="muted lobby-settings-copy">支持 Bangumi 用户 ID、收藏夹页面链接或目录链接，多个来源取交集。</p>
+                    <p className="muted lobby-settings-copy">支持 Bangumi 用户 ID、收藏夹页面链接或目录链接，多个来源可取交集/并集</p>
                   </div>
 
                   {self.is_host ? (
@@ -4631,7 +4631,7 @@ function App() {
                 />
                 <span>
                   <strong>开启从动画提取人物名</strong>
-                  <small>开启后，词语分配阶段支持将动画标题转换为角色名。</small>
+                  <small>开启后，词语分配阶段支持将动画标题转换为角色名</small>
                 </span>
               </label>
             </div>
@@ -4695,7 +4695,7 @@ function App() {
             <div className="modal-form-stack">
               {isLoadingBangumiCatalog ? (
                 <div className="catalog-loading-note" role="status">
-                  正在从 Bangumi 载入并保存词库，通常会稍慢一些，请稍等。
+                  正在从 Bangumi 载入并保存词库，通常会稍慢一些，请稍等
                 </div>
               ) : null}
 
@@ -4825,7 +4825,7 @@ function App() {
                 onClick={() => void handleLoadBangumiCatalog()}
                 type="button"
               >
-                {isLoadingBangumiCatalog ? '载入中...' : '生成交集词库'}
+                {isLoadingBangumiCatalog ? '载入中...' : '生成词库'}
               </button>
             </div>
           </section>
@@ -4846,7 +4846,7 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>Bangumi 词库</h2>
-                <p className="muted">当前房间已保存的动画词条，所有人都可以浏览。</p>
+                <p className="muted">当前房间已保存的动画词条，所有人都可以浏览</p>
               </div>
               <button className="ghost-button" onClick={closeBangumiCatalogBrowser} type="button">
                 关闭
