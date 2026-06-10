@@ -62,6 +62,7 @@ import {
 } from './lib/utils';
 import type {
   PlayerRecord,
+  BangumiCatalogMergeMode,
   Role,
   RoomRecord,
   RoomJoinStatus,
@@ -148,6 +149,7 @@ const BANGUMI_POPULAR_LIMIT_STEP = 100;
 const BANGUMI_POPULAR_LIMIT_DEFAULT = 500;
 const BANGUMI_POPULAR_YEAR_MIN = 1900;
 const BANGUMI_POPULAR_YEAR_MAX = 2100;
+const DEFAULT_BANGUMI_CATALOG_MERGE_MODE: BangumiCatalogMergeMode = 'intersection';
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
 const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/main/docs/game-rules.md';
@@ -846,6 +848,9 @@ function App() {
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
+  );
+  const [bangumiCatalogMergeMode, setBangumiCatalogMergeMode] = useState<BangumiCatalogMergeMode>(
+    DEFAULT_BANGUMI_CATALOG_MERGE_MODE,
   );
   const [bangumiCatalogError, setBangumiCatalogError] = useState<string | null>(null);
   const [bangumiPopularCatalogEnabled, setBangumiPopularCatalogEnabled] = useState(false);
@@ -1925,6 +1930,7 @@ function App() {
     setShowAllRoundRecords(false);
     setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
     setBangumiCatalogTypesDraft(defaultBangumiCatalogTypes());
+    setBangumiCatalogMergeMode(DEFAULT_BANGUMI_CATALOG_MERGE_MODE);
     setBangumiCatalogError(null);
     setBangumiPopularCatalogEnabled(false);
     setBangumiPopularCatalogLimit(BANGUMI_POPULAR_LIMIT_DEFAULT);
@@ -2030,6 +2036,7 @@ function App() {
           ) as BangumiCollectionType[])
         : defaultBangumiCatalogTypes(),
     );
+    setBangumiCatalogMergeMode(snapshot.room.bangumi_catalog_merge_mode ?? DEFAULT_BANGUMI_CATALOG_MERGE_MODE);
     setBangumiPopularCatalogEnabled(snapshot.room.bangumi_popular_catalog_limit !== null);
     setBangumiPopularCatalogLimit(
       snapshot.room.bangumi_popular_catalog_limit === null
@@ -2659,6 +2666,7 @@ function App() {
       'load-bangumi-catalog',
       () =>
         loadBangumiCatalog(snapshot.room.id, normalizedInputs, bangumiCatalogTypesDraft, {
+          mergeMode: bangumiCatalogMergeMode,
           popularLimit,
           popularYearMin,
           popularYearMax,
@@ -2677,6 +2685,7 @@ function App() {
           ) as BangumiCollectionType[])
         : defaultBangumiCatalogTypes(),
     );
+    setBangumiCatalogMergeMode(result.mergeMode);
     setBangumiPopularCatalogEnabled(result.popularLimit !== null);
     if (result.popularLimit !== null) {
       setBangumiPopularCatalogLimit(normalizeBangumiPopularLimit(result.popularLimit));
@@ -2691,6 +2700,7 @@ function App() {
               ...current.room,
               bangumi_catalog_inputs: result.inputs,
               bangumi_catalog_types: result.collectionTypes,
+              bangumi_catalog_merge_mode: result.mergeMode,
               bangumi_catalog_word_count: result.wordCount,
               bangumi_catalog_updated_at: result.updatedAt,
               bangumi_popular_catalog_limit: result.popularLimit,
@@ -4644,9 +4654,32 @@ function App() {
               <div>
                 <h2>载入 Bangumi 动画词库</h2>
                 <p className="muted">填写<strong>Bangumi 用户 ID</strong>（推荐）或<strong>收藏夹链接</strong>或<strong>目录链接</strong></p>
-                <p className="muted catalog-intersection-note">
-                  支持多个来源，词库将取<strong>交集</strong>
-                </p>
+                <div className="catalog-merge-row">
+                  <span className="muted catalog-intersection-note">支持多个来源，词库将取</span>
+                  <div className="catalog-merge-options" role="radiogroup" aria-label="词库来源合并方式">
+                    {([
+                      { value: 'intersection', label: '交集' },
+                      { value: 'union', label: '并集' },
+                    ] as Array<{ value: BangumiCatalogMergeMode; label: string }>).map((option) => (
+                      <label
+                        className={cn('catalog-merge-option', bangumiCatalogMergeMode === option.value && 'catalog-merge-option-active')}
+                        key={option.value}
+                      >
+                        <input
+                          checked={bangumiCatalogMergeMode === option.value}
+                          disabled={busyKey === 'load-bangumi-catalog'}
+                          name="bangumi-catalog-merge-mode"
+                          onChange={() => {
+                            setBangumiCatalogError(null);
+                            setBangumiCatalogMergeMode(option.value);
+                          }}
+                          type="radio"
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <p className="muted">用户收藏夹可按如下按钮进行过滤</p>
               </div>
               <button
@@ -4686,7 +4719,7 @@ function App() {
                 ))}
               </div>
 
-              <div className="catalog-source-group">
+              <div className="catalog-source-group" data-merge-label={bangumiCatalogMergeMode === 'union' ? '并集' : '交集'}>
                 {bangumiCatalogInputsDraft.map((value, index) => (
                   <div className="modal-input-row" key={`bangumi-input-${index}`}>
                     <input

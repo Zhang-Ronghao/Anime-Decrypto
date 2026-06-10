@@ -2260,8 +2260,49 @@ select:focus {
   font-weight: 700;
 }
 
-.catalog-intersection-note strong {
+.catalog-merge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.catalog-merge-options {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--soft);
+}
+
+.catalog-merge-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  min-width: 52px;
+  padding: 0.3rem 0.7rem;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.catalog-merge-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.catalog-merge-option-active {
+  background: var(--panel-raised);
   color: var(--blue);
+  box-shadow: 0 4px 12px rgba(24, 39, 74, 0.08);
 }
 
 .modal-form-stack {
@@ -2320,23 +2361,7 @@ select:focus {
 }
 
 .catalog-source-group::after {
-  content: '交集';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  padding: 0.1rem 0.18rem;
-  border-radius: 5px;
-  background: var(--panel-raised);
-  color: var(--blue);
-  font-size: 1rem;
-  font-weight: 950;
-  line-height: 1;
-  transform: translate(-22%, -50%);
-  pointer-events: none;
-}
-
-.catalog-source-group::after {
-  content: '交集';
+  content: attr(data-merge-label);
   position: absolute;
   left: -9px;
   top: 50%;

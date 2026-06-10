@@ -80,6 +80,9 @@ alter table public.rooms
 add column if not exists bangumi_catalog_types integer[] not null default '{2}';
 
 alter table public.rooms
+add column if not exists bangumi_catalog_merge_mode text not null default 'intersection';
+
+alter table public.rooms
 add column if not exists bangumi_catalog_entries jsonb not null default '[]'::jsonb;
 
 alter table public.rooms

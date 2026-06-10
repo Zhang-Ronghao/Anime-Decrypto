@@ -9,6 +9,7 @@ import type {
   RoundCodeRecord,
   RoundSubmissionRecord,
   Team,
+  BangumiCatalogMergeMode,
   TeamWordFeedbackRequestRecord,
   TeamWordFeedbackResponseRecord,
   TeamWordSlot,
@@ -119,6 +120,7 @@ const ROOM_SNAPSHOT_COLUMNS = compactSelectColumns(`
   team_b_words_confirmed,
   bangumi_catalog_inputs,
   bangumi_catalog_types,
+  bangumi_catalog_merge_mode,
   bangumi_catalog_word_count,
   bangumi_catalog_updated_at,
   bangumi_popular_catalog_limit,
@@ -468,7 +470,12 @@ export async function loadBangumiCatalog(
   roomId: string,
   inputs: string[],
   collectionTypes: number[],
-  options: { popularLimit?: number | null; popularYearMin?: number | null; popularYearMax?: number | null } = {},
+  options: {
+    mergeMode?: BangumiCatalogMergeMode;
+    popularLimit?: number | null;
+    popularYearMin?: number | null;
+    popularYearMax?: number | null;
+  } = {},
 ) {
   const client = assertSupabase();
   const { data, error } = await client.functions.invoke('load-bangumi-catalog', {
@@ -476,6 +483,7 @@ export async function loadBangumiCatalog(
       roomId,
       inputs,
       collectionTypes,
+      mergeMode: options.mergeMode ?? 'intersection',
       popularLimit: options.popularLimit ?? null,
       popularYearMin: options.popularYearMin ?? null,
       popularYearMax: options.popularYearMax ?? null,
@@ -502,6 +510,7 @@ export async function loadBangumiCatalog(
     | {
         inputs?: string[];
         collectionTypes?: number[];
+        mergeMode?: unknown;
         wordCount?: number;
         updatedAt?: string;
         popularLimit?: number | null;
@@ -524,6 +533,7 @@ export async function loadBangumiCatalog(
   return {
     inputs: value.inputs,
     collectionTypes: value.collectionTypes,
+    mergeMode: (value.mergeMode === 'union' ? 'union' : 'intersection') as BangumiCatalogMergeMode,
     wordCount: value.wordCount,
     updatedAt: value.updatedAt,
     popularLimit: typeof value.popularLimit === 'number' ? value.popularLimit : null,

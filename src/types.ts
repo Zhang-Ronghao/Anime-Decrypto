@@ -1,5 +1,6 @@
 export type Team = 'A' | 'B';
 export type Role = 'encoder' | 'decoder' | 'member';
+export type BangumiCatalogMergeMode = 'intersection' | 'union';
 export type RoomStatus = 'lobby' | 'active' | 'finished';
 export type RoomPhase = 'lobby' | 'word_assignment' | 'encrypt' | 'decode' | 'intercept' | 'result' | 'finished';
 
@@ -45,6 +46,7 @@ export interface RoomRecord {
   team_b_words_confirmed: boolean;
   bangumi_catalog_inputs: string[];
   bangumi_catalog_types: number[];
+  bangumi_catalog_merge_mode: BangumiCatalogMergeMode;
   bangumi_catalog_word_count: number;
   bangumi_catalog_updated_at: string | null;
   bangumi_popular_catalog_limit: number | null;

@@ -25,6 +25,7 @@ interface RequestBody {
   roomId?: string;
   inputs?: string[];
   collectionTypes?: number[];
+  mergeMode?: string | null;
   popularLimit?: number | null;
   popularYearMin?: number | null;
   popularYearMax?: number | null;
@@ -370,6 +371,25 @@ function intersectCatalogs(collectionsBySource: Array<Map<number, BangumiCatalog
   return entries;
 }
 
+function unionCatalogs(collectionsBySource: Array<Map<number, BangumiCatalogEntry>>): BangumiCatalogEntry[] {
+  const dedupedTitles = new Set<string>();
+  const entries: BangumiCatalogEntry[] = [];
+
+  for (const collection of collectionsBySource) {
+    for (const entry of collection.values()) {
+      if (dedupedTitles.has(entry.title)) {
+        continue;
+      }
+
+      dedupedTitles.add(entry.title);
+      entries.push(entry);
+    }
+  }
+
+  entries.sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'));
+  return entries;
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -405,6 +425,7 @@ Deno.serve(async (request) => {
     const normalizedSources = normalizeInputs(body.inputs);
     const normalizedInputs = normalizedSources.map((source) => source.input);
     const normalizedCollectionTypes = normalizeCollectionTypes(body.collectionTypes);
+    const mergeMode = body.mergeMode === 'union' ? 'union' : 'intersection';
     const popularLimit = normalizePopularLimit(body.popularLimit);
     const popularYearMin = normalizePopularYear(body.popularYearMin);
     const popularYearMax = normalizePopularYear(body.popularYearMax);
@@ -455,7 +476,7 @@ Deno.serve(async (request) => {
       );
     }
 
-    const entries = intersectCatalogs(collectionsBySource);
+    const entries = mergeMode === 'union' ? unionCatalogs(collectionsBySource) : intersectCatalogs(collectionsBySource);
     if (entries.length < 8) {
       return errorResponse('交集动画词条少于 8 个，无法用于本局游戏。');
     }
@@ -491,6 +512,7 @@ Deno.serve(async (request) => {
       .update({
         bangumi_catalog_inputs: normalizedInputs,
         bangumi_catalog_types: normalizedCollectionTypes,
+        bangumi_catalog_merge_mode: mergeMode,
         bangumi_catalog_entries: [],
         bangumi_catalog_words: [],
         bangumi_catalog_word_count: entries.length,
@@ -509,6 +531,7 @@ Deno.serve(async (request) => {
       JSON.stringify({
         inputs: normalizedInputs,
         collectionTypes: normalizedCollectionTypes,
+        mergeMode,
         wordCount: entries.length,
         updatedAt,
         popularLimit,
