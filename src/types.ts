@@ -47,6 +47,9 @@ export interface RoomRecord {
   bangumi_catalog_types: number[];
   bangumi_catalog_word_count: number;
   bangumi_catalog_updated_at: string | null;
+  bangumi_popular_catalog_limit: number | null;
+  bangumi_popular_year_min: number | null;
+  bangumi_popular_year_max: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -111,7 +111,7 @@ interface RoleGroupProps {
 
 interface BangumiCatalogSummary {
   configured: boolean;
-  userCount: number;
+  sourceCount: number;
   wordCount: number;
 }
 
@@ -1332,11 +1332,17 @@ function App() {
     [snapshot],
   );
   const bangumiCatalogSummary = useMemo<BangumiCatalogSummary>(
-    () => ({
-      configured: (snapshot?.room.bangumi_catalog_word_count ?? 0) > 0,
-      userCount: snapshot?.room.bangumi_catalog_inputs.length ?? 0,
-      wordCount: snapshot?.room.bangumi_catalog_word_count ?? 0,
-    }),
+    () => {
+      const room = snapshot?.room;
+      const catalogInputCount = room?.bangumi_catalog_inputs.length ?? 0;
+      const popularSourceCount = room && room.bangumi_popular_catalog_limit !== null ? 1 : 0;
+
+      return {
+        configured: (room?.bangumi_catalog_word_count ?? 0) > 0,
+        sourceCount: catalogInputCount + popularSourceCount,
+        wordCount: room?.bangumi_catalog_word_count ?? 0,
+      };
+    },
     [snapshot],
   );
   const isLoadingBangumiCatalog = busyKey === 'load-bangumi-catalog';
@@ -2024,6 +2030,18 @@ function App() {
           ) as BangumiCollectionType[])
         : defaultBangumiCatalogTypes(),
     );
+    setBangumiPopularCatalogEnabled(snapshot.room.bangumi_popular_catalog_limit !== null);
+    setBangumiPopularCatalogLimit(
+      snapshot.room.bangumi_popular_catalog_limit === null
+        ? BANGUMI_POPULAR_LIMIT_DEFAULT
+        : normalizeBangumiPopularLimit(snapshot.room.bangumi_popular_catalog_limit),
+    );
+    setBangumiPopularYearMinDraft(
+      snapshot.room.bangumi_popular_year_min === null ? '' : String(snapshot.room.bangumi_popular_year_min),
+    );
+    setBangumiPopularYearMaxDraft(
+      snapshot.room.bangumi_popular_year_max === null ? '' : String(snapshot.room.bangumi_popular_year_max),
+    );
     setBangumiCatalogError(null);
     setBangumiCatalogModalOpen(true);
   }
@@ -2675,6 +2693,9 @@ function App() {
               bangumi_catalog_types: result.collectionTypes,
               bangumi_catalog_word_count: result.wordCount,
               bangumi_catalog_updated_at: result.updatedAt,
+              bangumi_popular_catalog_limit: result.popularLimit,
+              bangumi_popular_year_min: result.popularYearMin,
+              bangumi_popular_year_max: result.popularYearMax,
             },
           }
         : current,
@@ -3420,7 +3441,7 @@ function App() {
                 <div className="catalog-summary-row">
                   <div className="catalog-summary-grid">
                     <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
-                    <div className="tag">用户/目录：{bangumiCatalogSummary.userCount}</div>
+                    <div className="tag">词库来源：{bangumiCatalogSummary.sourceCount}</div>
                     <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
                   </div>
 
@@ -3539,9 +3560,9 @@ function App() {
             </div>
 
             <p className="muted lobby-hint">{self.is_host ? lobbyStartHint : '等待房主开始游戏'}</p>
-            {self.is_host ? (
-              <p className="muted lobby-hint lobby-hint-secondary">更推荐玩生命模式，房主可在“其他设置”中开启。</p>
-            ) : null}
+            <p className="muted lobby-hint lobby-hint-secondary">
+              更推荐玩<strong>生命模式</strong>，房主可在“其他设置”中开启
+            </p>
             </article>
 
             <article className="panel">
@@ -3567,10 +3588,10 @@ function App() {
                     </div>
                     <div className="roster-item-side">
                       <div className="tag-row">
-                      <span className="tag">{player.is_spectator ? '观战' : player.team ? displayTeamName(player.team) : '未入队'}</span>
-                      <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
-                        {player.is_spectator ? '观战者' : player.role ? roleName(player.role) : '未选座位'}
-                      </span>
+                        <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
+                          {player.is_spectator ? '观战者' : player.role ? roleName(player.role) : '未选座位'}
+                        </span>
+                        <span className="tag">{player.is_spectator ? '观战' : player.team ? displayTeamName(player.team) : '未入队'}</span>
                       </div>
                       {self.is_host && player.id !== self.id ? (
                         snapshot.room.phase === 'lobby' ? (
@@ -3915,14 +3936,16 @@ function App() {
                           提取动画主要角色
                         </button>
                       ) : null}
-                      <button
-                        className="ghost-button"
-                        disabled={isWordAssignmentReadOnly || busyKey !== null || !canToggleSourceTitles}
-                        onClick={handleToggleSourceTitles}
-                        type="button"
-                      >
-                        {canOmitSourceTitles ? '删去动画名' : '补充动画名'}
-                      </button>
+                      {bangumiCharacterExtractEnabled ? (
+                        <button
+                          className="ghost-button"
+                          disabled={isWordAssignmentReadOnly || busyKey !== null || !canToggleSourceTitles}
+                          onClick={handleToggleSourceTitles}
+                          type="button"
+                        >
+                          {canOmitSourceTitles ? '删去动画名' : '补充动画名'}
+                        </button>
+                      ) : null}
                       <button
                         className="ghost-button"
                         disabled={isWordAssignmentReadOnly || busyKey !== null}
@@ -4730,13 +4753,12 @@ function App() {
                     </label>
 
                     <div className="catalog-popular-slider-row">
-                      <span className="catalog-popular-slider-title">收藏人数排行取前多少名</span>
                       <div className="catalog-popular-range-wrap">
                         <output
                           className="catalog-popular-range-value"
-                          style={{ left: `clamp(32px, ${bangumiPopularRangePercent}%, calc(100% - 32px))` }}
+                          style={{ left: `clamp(44px, ${bangumiPopularRangePercent}%, calc(100% - 44px))` }}
                         >
-                          前 {bangumiPopularCatalogLimit}
+                          收藏前 {bangumiPopularCatalogLimit}
                         </output>
                         <input
                           aria-label="Bangumi 收藏人数排行范围"

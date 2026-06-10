@@ -2431,13 +2431,6 @@ select:focus {
   font-weight: 800;
 }
 
-.catalog-popular-slider-title {
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 800;
-  line-height: 1.2;
-}
-
 .catalog-popular-range-wrap {
   position: relative;
   min-width: 0;
@@ -2447,7 +2440,7 @@ select:focus {
 .catalog-popular-range-value {
   position: absolute;
   top: 0;
-  min-width: 58px;
+  min-width: 76px;
   padding: 0.18rem 0.44rem;
   border: 1px solid rgba(35, 89, 201, 0.22);
   border-radius: 8px;

@@ -495,6 +495,9 @@ Deno.serve(async (request) => {
         bangumi_catalog_words: [],
         bangumi_catalog_word_count: entries.length,
         bangumi_catalog_updated_at: updatedAt,
+        bangumi_popular_catalog_limit: popularLimit,
+        bangumi_popular_year_min: popularYearMin,
+        bangumi_popular_year_max: popularYearMax,
       })
       .eq('id', body.roomId);
 

@@ -91,6 +91,15 @@ add column if not exists bangumi_catalog_word_count integer not null default 0;
 alter table public.rooms
 add column if not exists bangumi_catalog_updated_at timestamptz null;
 
+alter table public.rooms
+add column if not exists bangumi_popular_catalog_limit integer null;
+
+alter table public.rooms
+add column if not exists bangumi_popular_year_min integer null;
+
+alter table public.rooms
+add column if not exists bangumi_popular_year_max integer null;
+
 update public.rooms
 set bangumi_catalog_word_count = coalesce(array_length(bangumi_catalog_words, 1), 0)
 where bangumi_catalog_word_count <> coalesce(array_length(bangumi_catalog_words, 1), 0);

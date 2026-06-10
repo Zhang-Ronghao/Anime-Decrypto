@@ -121,6 +121,9 @@ const ROOM_SNAPSHOT_COLUMNS = compactSelectColumns(`
   bangumi_catalog_types,
   bangumi_catalog_word_count,
   bangumi_catalog_updated_at,
+  bangumi_popular_catalog_limit,
+  bangumi_popular_year_min,
+  bangumi_popular_year_max,
   created_at,
   updated_at
 `);
