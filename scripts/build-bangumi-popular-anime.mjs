@@ -6,7 +6,6 @@ const SOURCE_PATH =
   process.argv[2] ?? 'C:\\Users\\Hu_care\\Downloads\\dump-2026-05-19.210434Z\\subject.jsonlines';
 const OUTPUT_PATH =
   process.argv[3] ?? 'supabase/functions/load-bangumi-catalog/bangumi-popular-anime.ts';
-const LIMIT = 2000;
 
 function favoriteCount(favorite) {
   if (!favorite || typeof favorite !== 'object') {
@@ -17,6 +16,20 @@ function favoriteCount(favorite) {
     const value = favorite[key];
     return total + (Number.isFinite(value) ? value : 0);
   }, 0);
+}
+
+function subjectYear(date) {
+  if (typeof date !== 'string') {
+    return null;
+  }
+
+  const match = date.trim().match(/^(\d{4})/);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  return Number.isInteger(year) && year >= 1900 && year <= 2100 ? year : null;
 }
 
 function toEntry(subject) {
@@ -38,6 +51,7 @@ function toEntry(subject) {
     subjectId: subject.id,
     title,
     favoriteCount: favoriteCount(subject.favorite),
+    year: subjectYear(subject.date),
   };
 }
 
@@ -82,7 +96,6 @@ entries.sort((left, right) => {
   return left.subjectId - right.subjectId;
 });
 
-const topEntries = entries.slice(0, LIMIT);
 const generatedAt = new Date().toISOString();
 const output = `// Generated from Bangumi archive subject.jsonlines dump-2026-05-19.210434Z.
 // Source file is not committed because it is too large for the app repository.
@@ -91,11 +104,12 @@ export interface BangumiPopularAnimeEntry {
   subjectId: number;
   title: string;
   favoriteCount: number;
+  year: number | null;
 }
 
 export const BANGUMI_POPULAR_ANIME_SOURCE_DATE = '2026-05-19';
 export const BANGUMI_POPULAR_ANIME_GENERATED_AT = '${generatedAt}';
-export const BANGUMI_POPULAR_ANIME: BangumiPopularAnimeEntry[] = ${JSON.stringify(topEntries, null, 2)};
+export const BANGUMI_POPULAR_ANIME: BangumiPopularAnimeEntry[] = ${JSON.stringify(entries, null, 2)};
 `;
 
 mkdirSync(dirname(outputPath), { recursive: true });
@@ -108,9 +122,9 @@ console.log(
       outputPath,
       lineCount,
       animeCount,
-      written: topEntries.length,
-      maxFavoriteCount: topEntries[0]?.favoriteCount ?? 0,
-      minFavoriteCount: topEntries.at(-1)?.favoriteCount ?? 0,
+      written: entries.length,
+      maxFavoriteCount: entries[0]?.favoriteCount ?? 0,
+      minFavoriteCount: entries.at(-1)?.favoriteCount ?? 0,
     },
     null,
     2,

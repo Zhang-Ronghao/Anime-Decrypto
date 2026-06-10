@@ -462,7 +462,7 @@ export async function loadBangumiCatalog(
   roomId: string,
   inputs: string[],
   collectionTypes: number[],
-  options: { popularLimit?: number | null } = {},
+  options: { popularLimit?: number | null; popularYearMin?: number | null; popularYearMax?: number | null } = {},
 ) {
   const client = assertSupabase();
   const { data, error } = await client.functions.invoke('load-bangumi-catalog', {
@@ -471,6 +471,8 @@ export async function loadBangumiCatalog(
       inputs,
       collectionTypes,
       popularLimit: options.popularLimit ?? null,
+      popularYearMin: options.popularYearMin ?? null,
+      popularYearMax: options.popularYearMax ?? null,
     },
   });
 
@@ -497,6 +499,8 @@ export async function loadBangumiCatalog(
         wordCount?: number;
         updatedAt?: string;
         popularLimit?: number | null;
+        popularYearMin?: number | null;
+        popularYearMax?: number | null;
         popularSourceDate?: string | null;
       }
     | null;
@@ -517,6 +521,8 @@ export async function loadBangumiCatalog(
     wordCount: value.wordCount,
     updatedAt: value.updatedAt,
     popularLimit: typeof value.popularLimit === 'number' ? value.popularLimit : null,
+    popularYearMin: typeof value.popularYearMin === 'number' ? value.popularYearMin : null,
+    popularYearMax: typeof value.popularYearMax === 'number' ? value.popularYearMax : null,
     popularSourceDate: typeof value.popularSourceDate === 'string' ? value.popularSourceDate : null,
   };
 }

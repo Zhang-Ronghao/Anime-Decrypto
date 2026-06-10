@@ -2291,24 +2291,31 @@ select:focus {
 
 .catalog-popular-source {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: color-mix(in oklch, var(--blue-soft) 58%, var(--panel-raised));
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--blue-soft) 44%, var(--panel-raised));
+}
+
+.catalog-popular-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .catalog-popular-toggle {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   color: var(--text);
 }
 
 .catalog-popular-toggle input {
-  width: 18px;
-  min-height: 18px;
-  margin: 3px 0 0;
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
   padding: 0;
   accent-color: var(--blue);
   flex: 0 0 auto;
@@ -2316,11 +2323,11 @@ select:focus {
 
 .catalog-popular-toggle span {
   display: grid;
-  gap: 3px;
+  gap: 1px;
 }
 
 .catalog-popular-toggle strong {
-  font-size: 0.96rem;
+  font-size: 0.92rem;
 }
 
 .catalog-popular-toggle small {
@@ -2328,13 +2335,43 @@ select:focus {
   font-weight: 700;
 }
 
+.catalog-popular-value {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid rgba(35, 89, 201, 0.18);
+  border-radius: 999px;
+  background: var(--panel-raised);
+  color: var(--blue);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.catalog-popular-year-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.catalog-popular-year-row label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.catalog-popular-year-row input {
+  min-height: 36px;
+  padding: 0.45rem 0.6rem;
+}
+
 .catalog-popular-slider-row {
   display: grid;
   grid-template-columns: auto minmax(180px, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--muted);
-  font-size: 0.84rem;
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
@@ -3015,6 +3052,13 @@ code {
 
   .catalog-type-option {
     width: 100%;
+  }
+
+  .catalog-popular-top-row,
+  .catalog-popular-year-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .catalog-popular-slider-row {

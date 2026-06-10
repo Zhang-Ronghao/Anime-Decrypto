@@ -18,12 +18,16 @@ const ALLOWED_COLLECTION_TYPES = [1, 2, 3, 4, 5] as const;
 const POPULAR_LIMIT_MIN = 100;
 const POPULAR_LIMIT_MAX = 2000;
 const POPULAR_LIMIT_STEP = 100;
+const POPULAR_YEAR_MIN = 1900;
+const POPULAR_YEAR_MAX = 2100;
 
 interface RequestBody {
   roomId?: string;
   inputs?: string[];
   collectionTypes?: number[];
   popularLimit?: number | null;
+  popularYearMin?: number | null;
+  popularYearMax?: number | null;
 }
 
 interface BangumiSubject {
@@ -162,6 +166,42 @@ function normalizePopularLimit(value: number | null | undefined): number | null 
 
   const stepped = Math.round(value / POPULAR_LIMIT_STEP) * POPULAR_LIMIT_STEP;
   return Math.min(POPULAR_LIMIT_MAX, Math.max(POPULAR_LIMIT_MIN, stepped));
+}
+
+function normalizePopularYear(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const year = Math.trunc(value);
+  if (year < POPULAR_YEAR_MIN || year > POPULAR_YEAR_MAX) {
+    return null;
+  }
+
+  return year;
+}
+
+function getPopularAnimeEntries(limit: number, yearMin: number | null, yearMax: number | null): BangumiCatalogEntry[] {
+  const minYear = yearMin !== null && yearMax !== null ? Math.min(yearMin, yearMax) : yearMin;
+  const maxYear = yearMin !== null && yearMax !== null ? Math.max(yearMin, yearMax) : yearMax;
+
+  return BANGUMI_POPULAR_ANIME.filter((entry) => {
+    if (entry.year === null) {
+      return minYear === null && maxYear === null;
+    }
+
+    if (minYear !== null && entry.year < minYear) {
+      return false;
+    }
+
+    if (maxYear !== null && entry.year > maxYear) {
+      return false;
+    }
+
+    return true;
+  })
+    .slice(0, limit)
+    .map(popularAnimeToCatalogEntry);
 }
 
 async function fetchCollectionsForUserAndType(userId: string, collectionType: number): Promise<BangumiCollectionItem[]> {
@@ -366,6 +406,8 @@ Deno.serve(async (request) => {
     const normalizedInputs = normalizedSources.map((source) => source.input);
     const normalizedCollectionTypes = normalizeCollectionTypes(body.collectionTypes);
     const popularLimit = normalizePopularLimit(body.popularLimit);
+    const popularYearMin = normalizePopularYear(body.popularYearMin);
+    const popularYearMax = normalizePopularYear(body.popularYearMax);
     if (normalizedInputs.length === 0 && popularLimit === null) {
       return errorResponse('至少需要 1 个有效的 Bangumi 用户。');
     }
@@ -408,9 +450,7 @@ Deno.serve(async (request) => {
     if (popularLimit !== null) {
       collectionsBySource.push(
         new Map(
-          BANGUMI_POPULAR_ANIME.slice(0, popularLimit)
-            .map(popularAnimeToCatalogEntry)
-            .map((entry) => [entry.subjectId, entry]),
+          getPopularAnimeEntries(popularLimit, popularYearMin, popularYearMax).map((entry) => [entry.subjectId, entry]),
         ),
       );
     }
@@ -469,6 +509,8 @@ Deno.serve(async (request) => {
         wordCount: entries.length,
         updatedAt,
         popularLimit,
+        popularYearMin,
+        popularYearMax,
         popularSourceDate: popularLimit !== null ? BANGUMI_POPULAR_ANIME_SOURCE_DATE : null,
       }),
       {
