@@ -13,7 +13,7 @@ new_sqlite_classes = ["RoomDurableObject"]
 [[d1_databases]]
 binding = "DB"
 database_name = "anime_decrypto"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "8544a886-dd92-4d10-8658-b9c58b3a621e"
 migrations_dir = "d1/migrations"
 
 [vars]
