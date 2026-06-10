@@ -4658,84 +4658,86 @@ function App() {
                 ))}
               </div>
 
-              {bangumiCatalogInputsDraft.map((value, index) => (
-                <div className="modal-input-row catalog-source-row" key={`bangumi-input-${index}`}>
-                  <input
-                    disabled={busyKey === 'load-bangumi-catalog'}
-                    onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
-                    placeholder="例如：123456 或 https://bangumi.tv/anime/list/123456"
-                    value={value}
-                  />
-                  <button
-                    className="ghost-button"
-                    disabled={busyKey === 'load-bangumi-catalog' || bangumiCatalogInputsDraft.length <= 1}
-                    onClick={() => removeBangumiCatalogInput(index)}
-                    type="button"
-                  >
-                    删除
-                  </button>
-                </div>
-              ))}
-
-              <div className="catalog-popular-source catalog-source-row">
-                <div className="catalog-popular-top-row">
-                  <label className="catalog-popular-toggle">
+              <div className="catalog-source-group">
+                {bangumiCatalogInputsDraft.map((value, index) => (
+                  <div className="modal-input-row" key={`bangumi-input-${index}`}>
                     <input
-                      checked={bangumiPopularCatalogEnabled}
                       disabled={busyKey === 'load-bangumi-catalog'}
-                      onChange={(event) => setBangumiPopularCatalogEnabled(event.target.checked)}
-                      type="checkbox"
+                      onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
+                      placeholder="例如：123456 或 https://bangumi.tv/anime/list/123456"
+                      value={value}
                     />
-                    <span>
-                      <strong>年份范围内收藏前 {bangumiPopularCatalogLimit} 的动画</strong>
-                    </span>
-                  </label>
-                  <span className="catalog-popular-data">数据：{BANGUMI_POPULAR_SOURCE_DATE}</span>
-                </div>
+                    <button
+                      className="ghost-button"
+                      disabled={busyKey === 'load-bangumi-catalog' || bangumiCatalogInputsDraft.length <= 1}
+                      onClick={() => removeBangumiCatalogInput(index)}
+                      type="button"
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))}
 
-                <div className="catalog-popular-control-row">
-                  <label>
-                    <span>起始年份</span>
-                    <input
-                      disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
-                      inputMode="numeric"
-                      max={BANGUMI_POPULAR_YEAR_MAX}
-                      min={BANGUMI_POPULAR_YEAR_MIN}
-                      onChange={(event) => updateBangumiPopularYearMin(event.target.value)}
-                      pattern="[0-9]*"
-                      placeholder="不限"
-                      type="text"
-                      value={bangumiPopularYearMinDraft}
-                    />
-                  </label>
-                  <label>
-                    <span>结束年份</span>
-                    <input
-                      disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
-                      inputMode="numeric"
-                      max={BANGUMI_POPULAR_YEAR_MAX}
-                      min={BANGUMI_POPULAR_YEAR_MIN}
-                      onChange={(event) => updateBangumiPopularYearMax(event.target.value)}
-                      pattern="[0-9]*"
-                      placeholder="不限"
-                      type="text"
-                      value={bangumiPopularYearMaxDraft}
-                    />
-                  </label>
+                <div className="catalog-popular-source">
+                  <div className="catalog-popular-top-row">
+                    <label className="catalog-popular-toggle">
+                      <input
+                        checked={bangumiPopularCatalogEnabled}
+                        disabled={busyKey === 'load-bangumi-catalog'}
+                        onChange={(event) => setBangumiPopularCatalogEnabled(event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>
+                        <strong>年份范围内收藏前 {bangumiPopularCatalogLimit} 的动画</strong>
+                      </span>
+                    </label>
+                    <span className="catalog-popular-data">数据：{BANGUMI_POPULAR_SOURCE_DATE}</span>
+                  </div>
 
-                  <div className="catalog-popular-slider-row">
-                    <span>前 {BANGUMI_POPULAR_LIMIT_MIN}</span>
-                    <input
-                      aria-label="Bangumi 收藏人数排行范围"
-                      disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
-                      max={BANGUMI_POPULAR_LIMIT_MAX}
-                      min={BANGUMI_POPULAR_LIMIT_MIN}
-                      onChange={(event) => updateBangumiPopularCatalogLimit(Number(event.target.value))}
-                      step={BANGUMI_POPULAR_LIMIT_STEP}
-                      type="range"
-                      value={bangumiPopularCatalogLimit}
-                    />
-                    <span>前 {BANGUMI_POPULAR_LIMIT_MAX}</span>
+                  <div className="catalog-popular-control-row">
+                    <label>
+                      <span>起始年份</span>
+                      <input
+                        disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
+                        inputMode="numeric"
+                        max={BANGUMI_POPULAR_YEAR_MAX}
+                        min={BANGUMI_POPULAR_YEAR_MIN}
+                        onChange={(event) => updateBangumiPopularYearMin(event.target.value)}
+                        pattern="[0-9]*"
+                        placeholder="不限"
+                        type="text"
+                        value={bangumiPopularYearMinDraft}
+                      />
+                    </label>
+                    <label>
+                      <span>结束年份</span>
+                      <input
+                        disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
+                        inputMode="numeric"
+                        max={BANGUMI_POPULAR_YEAR_MAX}
+                        min={BANGUMI_POPULAR_YEAR_MIN}
+                        onChange={(event) => updateBangumiPopularYearMax(event.target.value)}
+                        pattern="[0-9]*"
+                        placeholder="不限"
+                        type="text"
+                        value={bangumiPopularYearMaxDraft}
+                      />
+                    </label>
+
+                    <div className="catalog-popular-slider-row">
+                      <span>前 {BANGUMI_POPULAR_LIMIT_MIN}</span>
+                      <input
+                        aria-label="Bangumi 收藏人数排行范围"
+                        disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
+                        max={BANGUMI_POPULAR_LIMIT_MAX}
+                        min={BANGUMI_POPULAR_LIMIT_MIN}
+                        onChange={(event) => updateBangumiPopularCatalogLimit(Number(event.target.value))}
+                        step={BANGUMI_POPULAR_LIMIT_STEP}
+                        type="range"
+                        value={bangumiPopularCatalogLimit}
+                      />
+                      <span>前 {BANGUMI_POPULAR_LIMIT_MAX}</span>
+                    </div>
                   </div>
                 </div>
               </div>

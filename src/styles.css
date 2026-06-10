@@ -2289,18 +2289,20 @@ select:focus {
   accent-color: var(--blue);
 }
 
-.catalog-source-row {
+.catalog-source-group {
   position: relative;
-  padding-left: 18px;
+  display: grid;
+  gap: 12px;
+  padding-left: 24px;
 }
 
-.catalog-source-row::before {
+.catalog-source-group::before {
   content: '';
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 10px;
+  top: 16px;
+  bottom: 16px;
+  width: 12px;
   border-top: 2px solid var(--line-strong);
   border-bottom: 2px solid var(--line-strong);
   border-left: 2px solid var(--line-strong);
@@ -2312,7 +2314,7 @@ select:focus {
 .catalog-popular-source {
   display: grid;
   gap: 8px;
-  padding: 8px 10px 8px 28px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: color-mix(in oklch, var(--blue-soft) 44%, var(--panel-raised));
