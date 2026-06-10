@@ -847,6 +847,7 @@ function App() {
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
   );
+  const [bangumiCatalogError, setBangumiCatalogError] = useState<string | null>(null);
   const [bangumiPopularCatalogEnabled, setBangumiPopularCatalogEnabled] = useState(false);
   const [bangumiPopularCatalogLimit, setBangumiPopularCatalogLimit] = useState(BANGUMI_POPULAR_LIMIT_DEFAULT);
   const [bangumiPopularYearMinDraft, setBangumiPopularYearMinDraft] = useState('');
@@ -1851,7 +1852,7 @@ function App() {
   async function withAction<T>(
     key: string,
     action: () => Promise<T>,
-    options?: { refreshRoomId?: string | null },
+    options?: { refreshRoomId?: string | null; onError?: (message: string) => void },
   ): Promise<T | null> {
     setActionError(null);
     setBusyKey(key);
@@ -1871,7 +1872,12 @@ function App() {
       if (isRoomMembershipLostError(error)) {
         resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
       } else {
-        setActionError(getErrorMessage(error, '操作失败'));
+        const message = getErrorMessage(error, '操作失败');
+        if (options?.onError) {
+          options.onError(message);
+        } else {
+          setActionError(message);
+        }
       }
       return null;
     } finally {
@@ -1910,6 +1916,7 @@ function App() {
     setShowAllRoundRecords(false);
     setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
     setBangumiCatalogTypesDraft(defaultBangumiCatalogTypes());
+    setBangumiCatalogError(null);
     setBangumiPopularCatalogEnabled(false);
     setBangumiPopularCatalogLimit(BANGUMI_POPULAR_LIMIT_DEFAULT);
     setBangumiPopularYearMinDraft('');
@@ -1921,6 +1928,20 @@ function App() {
 
   function patchSnapshotRoom(patch: Partial<RoomRecord>) {
     setSnapshot((current) => (current ? { ...current, room: { ...current.room, ...patch } } : current));
+  }
+
+  function normalizeBangumiYearDraft(value: string): string {
+    return value.replace(/\D/g, '').slice(0, 4);
+  }
+
+  function updateBangumiPopularYearMin(value: string) {
+    setBangumiCatalogError(null);
+    setBangumiPopularYearMinDraft(normalizeBangumiYearDraft(value));
+  }
+
+  function updateBangumiPopularYearMax(value: string) {
+    setBangumiCatalogError(null);
+    setBangumiPopularYearMaxDraft(normalizeBangumiYearDraft(value));
   }
 
   function updateGuessDigit(kind: 'decode' | 'intercept' | 'decode-feedback' | 'intercept-feedback', index: number, digit: string) {
@@ -2000,10 +2021,12 @@ function App() {
           ) as BangumiCollectionType[])
         : defaultBangumiCatalogTypes(),
     );
+    setBangumiCatalogError(null);
     setBangumiCatalogModalOpen(true);
   }
 
   function closeBangumiCatalogModal() {
+    setBangumiCatalogError(null);
     setBangumiCatalogModalOpen(false);
   }
 
@@ -2567,6 +2590,10 @@ function App() {
       return;
     }
 
+    setBangumiCatalogError(null);
+    const failCatalogValidation = (message: string) => {
+      setBangumiCatalogError(message);
+    };
     const normalizedInputs = normalizeBangumiCatalogDraft(bangumiCatalogInputsDraft);
     const popularLimit = bangumiPopularCatalogEnabled ? normalizeBangumiPopularLimit(bangumiPopularCatalogLimit) : null;
     const popularYearMin =
@@ -2578,7 +2605,7 @@ function App() {
         ? parseBangumiPopularYear(bangumiPopularYearMaxDraft)
         : null;
     if (normalizedInputs.length === 0 && popularLimit === null) {
-      setActionError('至少填写 1 个 Bangumi 用户/目录来源，或勾选热门榜单。');
+      failCatalogValidation('至少填写 1 个 Bangumi 用户/目录来源，或勾选热门榜单。');
       return;
     }
 
@@ -2587,27 +2614,35 @@ function App() {
       ((bangumiPopularYearMinDraft.trim() && popularYearMin === null) ||
         (bangumiPopularYearMaxDraft.trim() && popularYearMax === null))
     ) {
-      setActionError(`年份需要填写 ${BANGUMI_POPULAR_YEAR_MIN} 到 ${BANGUMI_POPULAR_YEAR_MAX} 之间的整数，或留空表示不限。`);
+      failCatalogValidation(`年份需要填写 ${BANGUMI_POPULAR_YEAR_MIN} 到 ${BANGUMI_POPULAR_YEAR_MAX} 之间的整数，或留空表示不限。`);
+      return;
+    }
+
+    if (bangumiPopularCatalogEnabled && popularYearMin !== null && popularYearMax !== null && popularYearMax <= popularYearMin) {
+      failCatalogValidation('结束年份需要大于起始年份。');
       return;
     }
 
     const invalidValue = normalizedInputs.find((value) => !isBangumiCatalogInputValid(value));
     if (invalidValue) {
-      setActionError('仅支持用户 ID，或 bangumi.tv / bgm.tv / chii.in 的用户主页、收藏夹页面、目录链接。');
+      failCatalogValidation('仅支持用户 ID，或 bangumi.tv / bgm.tv / chii.in 的用户主页、收藏夹页面、目录链接。');
       return;
     }
 
     if (normalizedInputs.length > 0 && bangumiCatalogTypesDraft.length === 0) {
-      setActionError('至少勾选 1 个分类。');
+      failCatalogValidation('至少勾选 1 个分类。');
       return;
     }
 
-    const result = await withAction('load-bangumi-catalog', () =>
-      loadBangumiCatalog(snapshot.room.id, normalizedInputs, bangumiCatalogTypesDraft, {
-        popularLimit,
-        popularYearMin,
-        popularYearMax,
-      }),
+    const result = await withAction(
+      'load-bangumi-catalog',
+      () =>
+        loadBangumiCatalog(snapshot.room.id, normalizedInputs, bangumiCatalogTypesDraft, {
+          popularLimit,
+          popularYearMin,
+          popularYearMax,
+        }),
+      { onError: setBangumiCatalogError },
     );
     if (result === null) {
       return;
@@ -4603,6 +4638,12 @@ function App() {
                 </div>
               ) : null}
 
+              {bangumiCatalogError ? (
+                <div className="catalog-error-note" role="alert">
+                  {bangumiCatalogError}
+                </div>
+              ) : null}
+
               <div className="catalog-type-group">
                 {BANGUMI_COLLECTION_TYPE_OPTIONS.map((option) => (
                   <label className="catalog-type-option" key={option.value}>
@@ -4618,7 +4659,7 @@ function App() {
               </div>
 
               {bangumiCatalogInputsDraft.map((value, index) => (
-                <div className="modal-input-row" key={`bangumi-input-${index}`}>
+                <div className="modal-input-row catalog-source-row" key={`bangumi-input-${index}`}>
                   <input
                     disabled={busyKey === 'load-bangumi-catalog'}
                     onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
@@ -4636,7 +4677,7 @@ function App() {
                 </div>
               ))}
 
-              <div className="catalog-popular-source">
+              <div className="catalog-popular-source catalog-source-row">
                 <div className="catalog-popular-top-row">
                   <label className="catalog-popular-toggle">
                     <input
@@ -4646,7 +4687,7 @@ function App() {
                       type="checkbox"
                     />
                     <span>
-                      <strong>加入下方年份范围内收藏前 {bangumiPopularCatalogLimit} 的动画</strong>
+                      <strong>年份范围内收藏前 {bangumiPopularCatalogLimit} 的动画</strong>
                     </span>
                   </label>
                   <span className="catalog-popular-data">数据：{BANGUMI_POPULAR_SOURCE_DATE}</span>
@@ -4660,9 +4701,10 @@ function App() {
                       inputMode="numeric"
                       max={BANGUMI_POPULAR_YEAR_MAX}
                       min={BANGUMI_POPULAR_YEAR_MIN}
-                      onChange={(event) => setBangumiPopularYearMinDraft(event.target.value)}
+                      onChange={(event) => updateBangumiPopularYearMin(event.target.value)}
+                      pattern="[0-9]*"
                       placeholder="不限"
-                      type="number"
+                      type="text"
                       value={bangumiPopularYearMinDraft}
                     />
                   </label>
@@ -4673,9 +4715,10 @@ function App() {
                       inputMode="numeric"
                       max={BANGUMI_POPULAR_YEAR_MAX}
                       min={BANGUMI_POPULAR_YEAR_MIN}
-                      onChange={(event) => setBangumiPopularYearMaxDraft(event.target.value)}
+                      onChange={(event) => updateBangumiPopularYearMax(event.target.value)}
+                      pattern="[0-9]*"
                       placeholder="不限"
-                      type="number"
+                      type="text"
                       value={bangumiPopularYearMaxDraft}
                     />
                   </label>
@@ -4713,7 +4756,7 @@ function App() {
                 onClick={() => void handleLoadBangumiCatalog()}
                 type="button"
               >
-                {isLoadingBangumiCatalog ? '载入中...' : '载入并保存词库'}
+                {isLoadingBangumiCatalog ? '载入中...' : '生成交集词库'}
               </button>
             </div>
           </section>
