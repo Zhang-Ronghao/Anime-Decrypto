@@ -1,4 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.0';
+import {
+  BANGUMI_POPULAR_ANIME,
+  BANGUMI_POPULAR_ANIME_SOURCE_DATE,
+  type BangumiPopularAnimeEntry,
+} from './bangumi-popular-anime.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,11 +15,15 @@ const BANGUMI_API_BASE = 'https://api.bgm.tv/v0';
 const PAGE_SIZE = 50;
 const CATALOG_INSERT_CHUNK_SIZE = 500;
 const ALLOWED_COLLECTION_TYPES = [1, 2, 3, 4, 5] as const;
+const POPULAR_LIMIT_MIN = 100;
+const POPULAR_LIMIT_MAX = 2000;
+const POPULAR_LIMIT_STEP = 100;
 
 interface RequestBody {
   roomId?: string;
   inputs?: string[];
   collectionTypes?: number[];
+  popularLimit?: number | null;
 }
 
 interface BangumiSubject {
@@ -146,6 +155,15 @@ function normalizeInputs(values: string[]): BangumiCatalogSource[] {
   return unique;
 }
 
+function normalizePopularLimit(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const stepped = Math.round(value / POPULAR_LIMIT_STEP) * POPULAR_LIMIT_STEP;
+  return Math.min(POPULAR_LIMIT_MAX, Math.max(POPULAR_LIMIT_MIN, stepped));
+}
+
 async function fetchCollectionsForUserAndType(userId: string, collectionType: number): Promise<BangumiCollectionItem[]> {
   const items: BangumiCollectionItem[] = [];
 
@@ -258,6 +276,13 @@ function collectionItemToCatalogEntry(item: BangumiCollectionItem): BangumiCatal
   return subjectToCatalogEntry(item.subject ?? null);
 }
 
+function popularAnimeToCatalogEntry(entry: BangumiPopularAnimeEntry): BangumiCatalogEntry {
+  return {
+    subjectId: entry.subjectId,
+    title: entry.title,
+  };
+}
+
 async function fetchCatalogForSource(
   source: BangumiCatalogSource,
   collectionTypes: number[],
@@ -279,12 +304,12 @@ async function fetchCatalogForSource(
   return subjects;
 }
 
-function intersectCatalogs(collectionsByUser: Array<Map<number, BangumiCatalogEntry>>): BangumiCatalogEntry[] {
-  if (collectionsByUser.length === 0) {
+function intersectCatalogs(collectionsBySource: Array<Map<number, BangumiCatalogEntry>>): BangumiCatalogEntry[] {
+  if (collectionsBySource.length === 0) {
     return [];
   }
 
-  const [first, ...rest] = collectionsByUser;
+  const [first, ...rest] = collectionsBySource;
   const dedupedTitles = new Set<string>();
   const entries: BangumiCatalogEntry[] = [];
 
@@ -340,7 +365,8 @@ Deno.serve(async (request) => {
     const normalizedSources = normalizeInputs(body.inputs);
     const normalizedInputs = normalizedSources.map((source) => source.input);
     const normalizedCollectionTypes = normalizeCollectionTypes(body.collectionTypes);
-    if (normalizedInputs.length === 0) {
+    const popularLimit = normalizePopularLimit(body.popularLimit);
+    if (normalizedInputs.length === 0 && popularLimit === null) {
       return errorResponse('至少需要 1 个有效的 Bangumi 用户。');
     }
 
@@ -374,12 +400,22 @@ Deno.serve(async (request) => {
       return errorResponse('只有大厅阶段可以载入 Bangumi 词库。', 409);
     }
 
-    const collectionsByUser: Array<Map<number, BangumiCatalogEntry>> = [];
+    const collectionsBySource: Array<Map<number, BangumiCatalogEntry>> = [];
     for (const source of normalizedSources) {
-      collectionsByUser.push(await fetchCatalogForSource(source, normalizedCollectionTypes));
+      collectionsBySource.push(await fetchCatalogForSource(source, normalizedCollectionTypes));
     }
 
-    const entries = intersectCatalogs(collectionsByUser);
+    if (popularLimit !== null) {
+      collectionsBySource.push(
+        new Map(
+          BANGUMI_POPULAR_ANIME.slice(0, popularLimit)
+            .map(popularAnimeToCatalogEntry)
+            .map((entry) => [entry.subjectId, entry]),
+        ),
+      );
+    }
+
+    const entries = intersectCatalogs(collectionsBySource);
     if (entries.length < 8) {
       return errorResponse('交集动画词条少于 8 个，无法用于本局游戏。');
     }
@@ -432,6 +468,8 @@ Deno.serve(async (request) => {
         collectionTypes: normalizedCollectionTypes,
         wordCount: entries.length,
         updatedAt,
+        popularLimit,
+        popularSourceDate: popularLimit !== null ? BANGUMI_POPULAR_ANIME_SOURCE_DATE : null,
       }),
       {
         headers: {

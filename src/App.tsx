@@ -140,6 +140,11 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
   { value: 4, label: '搁置' },
   { value: 5, label: '抛弃' },
 ];
+const BANGUMI_POPULAR_SOURCE_DATE = '2026-05-19';
+const BANGUMI_POPULAR_LIMIT_MIN = 100;
+const BANGUMI_POPULAR_LIMIT_MAX = 2000;
+const BANGUMI_POPULAR_LIMIT_STEP = 100;
+const BANGUMI_POPULAR_LIMIT_DEFAULT = 500;
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
 const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/main/docs/game-rules.md';
@@ -590,6 +595,11 @@ function normalizeBangumiCatalogDraft(inputs: string[]): string[] {
   return inputs.map((value) => value.trim()).filter((value) => value.length > 0);
 }
 
+function normalizeBangumiPopularLimit(value: number): number {
+  const stepped = Math.round(value / BANGUMI_POPULAR_LIMIT_STEP) * BANGUMI_POPULAR_LIMIT_STEP;
+  return Math.min(BANGUMI_POPULAR_LIMIT_MAX, Math.max(BANGUMI_POPULAR_LIMIT_MIN, stepped));
+}
+
 function isBangumiCatalogInputValid(value: string): boolean {
   if (/^\d+$/.test(value)) {
     return true;
@@ -816,6 +826,8 @@ function App() {
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
   );
+  const [bangumiPopularCatalogEnabled, setBangumiPopularCatalogEnabled] = useState(false);
+  const [bangumiPopularCatalogLimit, setBangumiPopularCatalogLimit] = useState(BANGUMI_POPULAR_LIMIT_DEFAULT);
   const [showAllRoundRecords, setShowAllRoundRecords] = useState(false);
   const [teamWordFeedbackDraft, setTeamWordFeedbackDraft] = useState<{
     requestId: string | null;
@@ -1872,6 +1884,8 @@ function App() {
     setShowAllRoundRecords(false);
     setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
     setBangumiCatalogTypesDraft(defaultBangumiCatalogTypes());
+    setBangumiPopularCatalogEnabled(false);
+    setBangumiPopularCatalogLimit(BANGUMI_POPULAR_LIMIT_DEFAULT);
     setActionError(message ?? null);
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -2012,6 +2026,10 @@ function App() {
     setBangumiCatalogTypesDraft((current) =>
       current.includes(value) ? current.filter((item) => item !== value) : [...current, value].sort((left, right) => left - right),
     );
+  }
+
+  function updateBangumiPopularCatalogLimit(value: number) {
+    setBangumiPopularCatalogLimit(normalizeBangumiPopularLimit(value));
   }
 
   function removeBangumiCatalogInput(index: number) {
@@ -2474,8 +2492,9 @@ function App() {
     }
 
     const normalizedInputs = normalizeBangumiCatalogDraft(bangumiCatalogInputsDraft);
-    if (normalizedInputs.length === 0) {
-      setActionError('至少填写 1 个 Bangumi 用户 ID、收藏夹页面链接或目录链接。');
+    const popularLimit = bangumiPopularCatalogEnabled ? normalizeBangumiPopularLimit(bangumiPopularCatalogLimit) : null;
+    if (normalizedInputs.length === 0 && popularLimit === null) {
+      setActionError('至少填写 1 个 Bangumi 用户/目录来源，或勾选热门榜单。');
       return;
     }
 
@@ -2485,13 +2504,13 @@ function App() {
       return;
     }
 
-    if (bangumiCatalogTypesDraft.length === 0) {
+    if (normalizedInputs.length > 0 && bangumiCatalogTypesDraft.length === 0) {
       setActionError('至少勾选 1 个分类。');
       return;
     }
 
     const result = await withAction('load-bangumi-catalog', () =>
-      loadBangumiCatalog(snapshot.room.id, normalizedInputs, bangumiCatalogTypesDraft),
+      loadBangumiCatalog(snapshot.room.id, normalizedInputs, bangumiCatalogTypesDraft, { popularLimit }),
     );
     if (result === null) {
       return;
@@ -2505,6 +2524,10 @@ function App() {
           ) as BangumiCollectionType[])
         : defaultBangumiCatalogTypes(),
     );
+    setBangumiPopularCatalogEnabled(result.popularLimit !== null);
+    if (result.popularLimit !== null) {
+      setBangumiPopularCatalogLimit(normalizeBangumiPopularLimit(result.popularLimit));
+    }
     setSnapshot((current) =>
       current && current.room.id === snapshot.room.id
         ? {
@@ -3260,7 +3283,7 @@ function App() {
                 <div className="catalog-summary-row">
                   <div className="catalog-summary-grid">
                     <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
-                    <div className="tag">来源数：{bangumiCatalogSummary.userCount}</div>
+                    <div className="tag">用户/目录：{bangumiCatalogSummary.userCount}</div>
                     <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
                   </div>
 
@@ -4443,7 +4466,7 @@ function App() {
               <div>
                 <h2>载入 Bangumi 动画词库</h2>
                 <p className="muted">填写<strong>用户 ID</strong>（推荐）或<strong>收藏夹链接</strong>或<strong>目录链接</strong></p>
-                <p className="muted">支持填写多个用户/目录，词库将取<strong>交集</strong></p>
+                <p className="muted">支持多个来源，词库将取<strong>交集</strong></p>
                 <p className="muted">用户收藏夹可按如下按钮进行过滤</p>
               </div>
               <button
@@ -4475,6 +4498,35 @@ function App() {
                     <span>{option.label}</span>
                   </label>
                 ))}
+              </div>
+
+              <div className="catalog-popular-source">
+                <label className="catalog-popular-toggle">
+                  <input
+                    checked={bangumiPopularCatalogEnabled}
+                    disabled={busyKey === 'load-bangumi-catalog'}
+                    onChange={(event) => setBangumiPopularCatalogEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>
+                    <strong>加入收藏人数前 {bangumiPopularCatalogLimit} 的动画</strong>
+                    <small>数据源：Bangumi archive subject dump，{BANGUMI_POPULAR_SOURCE_DATE}</small>
+                  </span>
+                </label>
+                <div className="catalog-popular-slider-row">
+                  <span>前 {BANGUMI_POPULAR_LIMIT_MIN}</span>
+                  <input
+                    aria-label="Bangumi 收藏人数排行范围"
+                    disabled={busyKey === 'load-bangumi-catalog' || !bangumiPopularCatalogEnabled}
+                    max={BANGUMI_POPULAR_LIMIT_MAX}
+                    min={BANGUMI_POPULAR_LIMIT_MIN}
+                    onChange={(event) => updateBangumiPopularCatalogLimit(Number(event.target.value))}
+                    step={BANGUMI_POPULAR_LIMIT_STEP}
+                    type="range"
+                    value={bangumiPopularCatalogLimit}
+                  />
+                  <span>前 {BANGUMI_POPULAR_LIMIT_MAX}</span>
+                </div>
               </div>
 
               {bangumiCatalogInputsDraft.map((value, index) => (
