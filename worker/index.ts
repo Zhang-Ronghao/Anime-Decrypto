@@ -1125,6 +1125,52 @@ export class RoomDurableObject {
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
     if (message === 'ping') {
       socket.send('pong');
+      return;
+    }
+
+    void this.handleWebSocketMessage(socket, message);
+  }
+
+  private async handleWebSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== 'string') {
+      return;
+    }
+
+    let payload: { type?: string; action?: Action } | null = null;
+    try {
+      payload = JSON.parse(message) as { type?: string; action?: Action };
+    } catch {
+      return;
+    }
+
+    if (payload?.type !== 'action' || !payload.action || typeof payload.action.type !== 'string') {
+      return;
+    }
+
+    const attachment = this.socketAttachment(socket);
+    if (!attachment) {
+      socket.close();
+      return;
+    }
+
+    const clientActionId = sanitizeClientActionId(payload.action.clientActionId);
+    try {
+      const result = await this.applyAction(attachment.roomId, attachment.userId, payload.action);
+      socket.send(
+        JSON.stringify({
+          type: 'action_result',
+          clientActionId,
+          data: result,
+        }),
+      );
+    } catch (error) {
+      socket.send(
+        JSON.stringify({
+          type: 'action_result',
+          clientActionId,
+          error: error instanceof Error ? error.message : '操作失败',
+        }),
+      );
     }
   }
 

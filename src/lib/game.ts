@@ -9,8 +9,30 @@ import type {
 import { getSessionIdForRequest } from './session';
 
 const DEFAULT_ROUND_HISTORY_ROW_LIMIT = 16;
+const WS_ACTION_TIMEOUT_MS = 4000;
 let lastRoomId: string | null = null;
 let actionSequence = 0;
+
+interface PendingWsAction {
+  reject(error: Error): void;
+  resolve(value: unknown): void;
+  timeoutId: number;
+}
+
+interface ActiveRoomSocket {
+  pendingActions: Map<string, PendingWsAction>;
+  roomId: string;
+  socket: WebSocket;
+}
+
+class WsActionTransportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WsActionTransportError';
+  }
+}
+
+let activeRoomSocket: ActiveRoomSocket | null = null;
 
 function emitUsageMetric(kind: string): void {
   if (typeof window === 'undefined') {
@@ -93,13 +115,99 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 async function action<T = null>(roomId: string, payload: Record<string, unknown>): Promise<T> {
+  const body = {
+    ...payload,
+    clientActionId: clientActionId(String(payload.type ?? 'action')),
+  };
+
+  try {
+    const wsResult = sendActionOverSocket<T>(roomId, body);
+    if (wsResult) {
+      emitUsageMetric('wsAction');
+      return await wsResult;
+    }
+  } catch (error) {
+    if (!(error instanceof WsActionTransportError)) {
+      throw error;
+    }
+
+    emitUsageMetric('wsActionFallback');
+  }
+
   return request<T>(`/api/rooms/${encodeURIComponent(roomId)}/action`, {
     method: 'POST',
-    body: JSON.stringify({
-      ...payload,
-      clientActionId: clientActionId(String(payload.type ?? 'action')),
-    }),
+    body: JSON.stringify(body),
   });
+}
+
+function sendActionOverSocket<T>(roomId: string, actionBody: Record<string, unknown>): Promise<T> | null {
+  const clientActionIdValue = actionBody.clientActionId;
+  if (
+    !activeRoomSocket ||
+    activeRoomSocket.roomId !== roomId ||
+    activeRoomSocket.socket.readyState !== WebSocket.OPEN ||
+    typeof clientActionIdValue !== 'string'
+  ) {
+    return null;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      activeRoomSocket?.pendingActions.delete(clientActionIdValue);
+      reject(new WsActionTransportError('WebSocket action timed out'));
+    }, WS_ACTION_TIMEOUT_MS);
+
+    activeRoomSocket!.pendingActions.set(clientActionIdValue, {
+      reject,
+      resolve: (value) => resolve(value as T),
+      timeoutId,
+    });
+
+    try {
+      activeRoomSocket!.socket.send(JSON.stringify({ type: 'action', action: actionBody }));
+    } catch {
+      window.clearTimeout(timeoutId);
+      activeRoomSocket!.pendingActions.delete(clientActionIdValue);
+      reject(new WsActionTransportError('WebSocket action send failed'));
+    }
+  });
+}
+
+function registerActiveRoomSocket(roomId: string, socket: WebSocket, pendingActions: Map<string, PendingWsAction>): void {
+  activeRoomSocket = { roomId, socket, pendingActions };
+}
+
+function unregisterActiveRoomSocket(socket: WebSocket, reason = 'WebSocket closed'): void {
+  if (activeRoomSocket?.socket !== socket) {
+    return;
+  }
+
+  for (const pending of activeRoomSocket.pendingActions.values()) {
+    window.clearTimeout(pending.timeoutId);
+    pending.reject(new WsActionTransportError(reason));
+  }
+  activeRoomSocket.pendingActions.clear();
+  activeRoomSocket = null;
+}
+
+function handleWsActionResult(payload: { clientActionId?: string; data?: unknown; error?: string }, pendingActions: Map<string, PendingWsAction>): boolean {
+  if (!payload.clientActionId) {
+    return false;
+  }
+
+  const pending = pendingActions.get(payload.clientActionId);
+  if (!pending) {
+    return true;
+  }
+
+  window.clearTimeout(pending.timeoutId);
+  pendingActions.delete(payload.clientActionId);
+  if (payload.error) {
+    pending.reject(new Error(payload.error));
+  } else {
+    pending.resolve(payload.data ?? null);
+  }
+  return true;
 }
 
 export async function createRoom(playerName: string, desiredRoomCode?: string) {
@@ -388,10 +496,12 @@ export function subscribeToRoom(
   onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
 ): RoomSubscription {
   const socket = new WebSocket(wsUrl(`/api/rooms/${encodeURIComponent(roomId)}/ws`));
+  const pendingActions = new Map<string, PendingWsAction>();
   let opened = false;
 
   socket.addEventListener('open', () => {
     opened = true;
+    registerActiveRoomSocket(roomId, socket, pendingActions);
     emitUsageMetric('wsOpen');
     onStatus?.('SUBSCRIBED');
   });
@@ -402,11 +512,21 @@ export function subscribeToRoom(
     }
 
     try {
-      const payload = JSON.parse(event.data) as { type?: string; snapshot?: RoomSnapshot; reason?: string; message?: string };
+      const payload = JSON.parse(event.data) as {
+        type?: string;
+        snapshot?: RoomSnapshot;
+        reason?: string;
+        message?: string;
+        clientActionId?: string;
+        data?: unknown;
+        error?: string;
+      };
       if (payload.type === 'snapshot' && payload.snapshot) {
         emitUsageMetric('wsSnapshot');
         rememberSnapshotContext(payload.snapshot);
         onSnapshot(payload.snapshot);
+      } else if (payload.type === 'action_result') {
+        handleWsActionResult(payload, pendingActions);
       } else if (payload.type === 'room_closed') {
         onRoomClosed?.(payload.reason ?? 'closed');
       } else if (payload.type === 'error') {
@@ -422,12 +542,14 @@ export function subscribeToRoom(
   });
 
   socket.addEventListener('close', () => {
+    unregisterActiveRoomSocket(socket);
     emitUsageMetric('wsClose');
     onStatus?.(opened ? 'CLOSED' : 'TIMED_OUT');
   });
 
   return {
     unsubscribe() {
+      unregisterActiveRoomSocket(socket, 'WebSocket unsubscribed');
       socket.close();
     },
   };

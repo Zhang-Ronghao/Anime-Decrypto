@@ -178,6 +178,8 @@ interface UsageDebugCounters {
   wsOpen: number;
   wsClose: number;
   wsSnapshot: number;
+  wsAction: number;
+  wsActionFallback: number;
   fallbackPoll: number;
 }
 
@@ -879,6 +881,8 @@ function App() {
     wsOpen: 0,
     wsClose: 0,
     wsSnapshot: 0,
+    wsAction: 0,
+    wsActionFallback: 0,
     fallbackPoll: 0,
   });
   const [optimisticLobbySettings, setOptimisticLobbySettings] = useState<LobbySettingsOptimistic | null>(null);
@@ -3428,6 +3432,7 @@ function App() {
           <span>snapshot {usageDebugCounters.snapshotGet}</span>
           <span>catalog {usageDebugCounters.catalogGet}</span>
           <span>ws {usageDebugCounters.wsOpen}/{usageDebugCounters.wsClose}</span>
+          <span>ws-action {usageDebugCounters.wsAction}/{usageDebugCounters.wsActionFallback}</span>
           <span>push {usageDebugCounters.wsSnapshot}</span>
           <span>fallback {usageDebugCounters.fallbackPoll}</span>
         </aside>
