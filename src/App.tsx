@@ -19,6 +19,7 @@ import {
   kickPlayer,
   leaveRoom,
   loadBangumiCatalog,
+  rememberSnapshotContext,
   replaceTeamWordSlot,
   restartRoom,
   requestTeamWordFeedback,
@@ -142,6 +143,7 @@ const BANGUMI_POPULAR_LIMIT_DEFAULT = 500;
 const BANGUMI_POPULAR_YEAR_MIN = 1900;
 const BANGUMI_POPULAR_YEAR_MAX = 2100;
 const DEFAULT_BANGUMI_CATALOG_MERGE_MODE: BangumiCatalogMergeMode = 'intersection';
+const BANGUMI_CATALOG_BROWSER_PAGE_SIZE = 200;
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
 const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/main/docs/game-rules.md';
@@ -165,6 +167,19 @@ const FULL_REFRESH_MIN_INTERVAL_MS = 800;
 type LobbySettingsOptimistic = Partial<
   Pick<RoomRecord, 'life_mode_enabled' | 'life_points' | 'bangumi_character_extract_enabled'>
 >;
+
+interface UsageDebugCounters {
+  session: number;
+  snapshotGet: number;
+  actionPost: number;
+  catalogGet: number;
+  otherGet: number;
+  otherPost: number;
+  wsOpen: number;
+  wsClose: number;
+  wsSnapshot: number;
+  fallbackPoll: number;
+}
 
 interface HomeFooterLinkItemProps {
   label: string;
@@ -828,6 +843,7 @@ function App() {
   const [decodeFeedbackGuess, setDecodeFeedbackGuess] = useState('');
   const [interceptFeedbackGuess, setInterceptFeedbackGuess] = useState('');
   const [syncFallbackUntil, setSyncFallbackUntil] = useState<number | null>(null);
+  const [roomRealtimeConnected, setRoomRealtimeConnected] = useState(false);
   const [lobbySettingsModalOpen, setLobbySettingsModalOpen] = useState(false);
   const [hostTransferDialogOpen, setHostTransferDialogOpen] = useState(false);
   const [pendingMidgameJoin, setPendingMidgameJoin] = useState<RoomJoinStatus | null>(null);
@@ -835,6 +851,9 @@ function App() {
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
   const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
   const [bangumiCatalogBrowserWords, setBangumiCatalogBrowserWords] = useState<string[]>([]);
+  const [bangumiCatalogBrowserQuery, setBangumiCatalogBrowserQuery] = useState('');
+  const [bangumiCatalogBrowserTotal, setBangumiCatalogBrowserTotal] = useState(0);
+  const [bangumiCatalogBrowserHasMore, setBangumiCatalogBrowserHasMore] = useState(false);
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
@@ -848,6 +867,18 @@ function App() {
   const [bangumiPopularYearMinDraft, setBangumiPopularYearMinDraft] = useState('');
   const [bangumiPopularYearMaxDraft, setBangumiPopularYearMaxDraft] = useState('');
   const [showAllRoundRecords, setShowAllRoundRecords] = useState(false);
+  const [usageDebugCounters, setUsageDebugCounters] = useState<UsageDebugCounters>({
+    session: 0,
+    snapshotGet: 0,
+    actionPost: 0,
+    catalogGet: 0,
+    otherGet: 0,
+    otherPost: 0,
+    wsOpen: 0,
+    wsClose: 0,
+    wsSnapshot: 0,
+    fallbackPoll: 0,
+  });
   const [optimisticLobbySettings, setOptimisticLobbySettings] = useState<LobbySettingsOptimistic | null>(null);
   const [teamWordFeedbackDraft, setTeamWordFeedbackDraft] = useState<{
     requestId: string | null;
@@ -935,34 +966,188 @@ function App() {
     if (!roomId) {
       snapshotRequestIdRef.current += 1;
       setSnapshot(null);
+      setRoomRealtimeConnected(false);
+      setSyncFallbackUntil(null);
       return;
     }
 
+    let active = true;
+    let isLeader = false;
+    let subscription: { unsubscribe(): void } | null = null;
+    const tabId = crypto.randomUUID();
+    const leaderKey = `decrypto-room-leader-${roomId}`;
+    const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`decrypto-room-${roomId}`) : null;
+    setRoomRealtimeConnected(false);
+
     const handleSubscriptionStatus = (status: RoomSubscriptionStatus) => {
+      if (!active) {
+        return;
+      }
+
       if (status === 'SUBSCRIBED') {
+        setRoomRealtimeConnected(true);
         setSyncFallbackUntil(null);
         return;
       }
 
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setRoomRealtimeConnected(false);
         setSyncFallbackUntil(Date.now() + 10_000);
       }
     };
 
-    const channel = subscribeToRoom(
-      roomId,
-      (nextSnapshot) => {
-        const applied = applyServerSnapshot(nextSnapshot);
-        if (applied && showAllRoundRecordsRef.current) {
-          void refreshRoomSnapshot(nextSnapshot.room.id, { silentError: true, force: true });
-        }
-      },
-      () => resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE),
-      handleSubscriptionStatus,
-    );
+    if (!channel) {
+      const directSubscription = subscribeToRoom(
+        roomId,
+        (nextSnapshot) => {
+          const applied = applyServerSnapshot(nextSnapshot);
+          if (applied && showAllRoundRecordsRef.current) {
+            void refreshRoomSnapshot(nextSnapshot.room.id, { silentError: true, force: true });
+          }
+        },
+        () => resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE),
+        handleSubscriptionStatus,
+      );
+
+      return () => {
+        active = false;
+        directSubscription.unsubscribe();
+      };
+    }
+
+    const readLeader = (): { tabId: string; expiresAt: number } | null => {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(leaderKey) ?? 'null') as { tabId?: string; expiresAt?: number } | null;
+        return parsed?.tabId && typeof parsed.expiresAt === 'number' ? { tabId: parsed.tabId, expiresAt: parsed.expiresAt } : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const writeLeader = () => {
+      localStorage.setItem(leaderKey, JSON.stringify({ tabId, expiresAt: Date.now() + 6000 }));
+      channel?.postMessage({ type: 'leader-alive' });
+    };
+
+    const releaseLeadership = () => {
+      if (!isLeader) {
+        return;
+      }
+
+      isLeader = false;
+      const leader = readLeader();
+      if (leader?.tabId === tabId) {
+        localStorage.removeItem(leaderKey);
+      }
+      subscription?.unsubscribe();
+      subscription = null;
+      channel.postMessage({ type: 'leader-vacated' });
+    };
+
+    const handleLeaderSubscriptionStatus = (status: RoomSubscriptionStatus) => {
+      if (!active) {
+        return;
+      }
+
+      if (status === 'SUBSCRIBED') {
+        setRoomRealtimeConnected(true);
+        setSyncFallbackUntil(null);
+        return;
+      }
+
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setRoomRealtimeConnected(false);
+        setSyncFallbackUntil(Date.now() + 10_000);
+        releaseLeadership();
+      }
+    };
+
+    const applyRoomSnapshot = (nextSnapshot: RoomSnapshot) => {
+      rememberSnapshotContext(nextSnapshot);
+      const applied = applyServerSnapshot(nextSnapshot);
+      if (applied && showAllRoundRecordsRef.current) {
+        void refreshRoomSnapshot(nextSnapshot.room.id, { silentError: true, force: true });
+      }
+    };
+
+    const becomeLeader = () => {
+      if (isLeader || !active) {
+        return;
+      }
+
+      isLeader = true;
+      writeLeader();
+      subscription = subscribeToRoom(
+        roomId,
+        (nextSnapshot) => {
+          applyRoomSnapshot(nextSnapshot);
+          channel?.postMessage({ type: 'snapshot', snapshot: nextSnapshot });
+        },
+        (reason) => {
+          channel?.postMessage({ type: 'room-closed', reason });
+          resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+        },
+        handleLeaderSubscriptionStatus,
+      );
+    };
+
+    const tryClaimLeadership = () => {
+      const leader = readLeader();
+      if (!leader || leader.expiresAt <= Date.now() || leader.tabId === tabId) {
+        writeLeader();
+        becomeLeader();
+      } else if (active) {
+        setRoomRealtimeConnected(true);
+      }
+    };
+
+    channel?.addEventListener('message', (event) => {
+      const payload = event.data as { type?: string; snapshot?: RoomSnapshot; reason?: string };
+      if (payload.type === 'snapshot' && payload.snapshot && !isLeader) {
+        applyRoomSnapshot(payload.snapshot);
+        setRoomRealtimeConnected(true);
+      } else if (payload.type === 'room-closed') {
+        resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+      } else if (payload.type === 'leader-alive' && !isLeader) {
+        setRoomRealtimeConnected(true);
+      } else if (payload.type === 'leader-vacated' && !isLeader) {
+        setRoomRealtimeConnected(false);
+        setSyncFallbackUntil(Date.now() + 10_000);
+        tryClaimLeadership();
+      } else if (payload.type === 'request-snapshot' && isLeader && snapshotRef.current) {
+        channel.postMessage({ type: 'snapshot', snapshot: snapshotRef.current });
+      }
+    });
+
+    tryClaimLeadership();
+    if (!isLeader) {
+      channel.postMessage({ type: 'request-snapshot' });
+    }
+
+    const heartbeat = window.setInterval(() => {
+      if (isLeader) {
+        writeLeader();
+      }
+    }, 2000);
+
+    const election = window.setInterval(() => {
+      if (!isLeader) {
+        tryClaimLeadership();
+      }
+    }, 3000);
 
     return () => {
-      void channel.unsubscribe();
+      active = false;
+      window.clearInterval(heartbeat);
+      window.clearInterval(election);
+      subscription?.unsubscribe();
+      channel?.close();
+      if (isLeader) {
+        const leader = readLeader();
+        if (leader?.tabId === tabId) {
+          localStorage.removeItem(leaderKey);
+        }
+      }
     };
   }, [roomId, sessionUserId]);
 
@@ -1130,6 +1315,7 @@ function App() {
         return;
       }
 
+      setUsageDebugCounters((current) => ({ ...current, fallbackPoll: current.fallbackPoll + 1 }));
       void refreshRoomSnapshot(roomId, { silentError: true });
     }, 7000);
 
@@ -1151,6 +1337,27 @@ function App() {
     return () => {
       data.subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const handleMetric = (event: Event) => {
+      const kind = (event as CustomEvent<{ kind?: keyof UsageDebugCounters }>).detail?.kind;
+      if (!kind) {
+        return;
+      }
+
+      setUsageDebugCounters((current) => ({
+        ...current,
+        [kind]: current[kind] + 1,
+      }));
+    };
+
+    window.addEventListener('decrypto-usage-metric', handleMetric);
+    return () => window.removeEventListener('decrypto-usage-metric', handleMetric);
   }, []);
 
   useEffect(() => {
@@ -1793,7 +2000,7 @@ function App() {
     try {
       const result = await action();
 
-      if (options?.refreshRoomId && syncFallbackUntil !== null) {
+      if (options?.refreshRoomId && !roomRealtimeConnected) {
         const refreshed = await refreshRoomSnapshot(options.refreshRoomId, { force: true });
         if (!refreshed) {
           return null;
@@ -1981,18 +2188,52 @@ function App() {
       return;
     }
 
-    const words = await withAction('load-bangumi-catalog-browser', () => fetchBangumiCatalogWords(snapshot.room.id));
-    if (words === null) {
+    setBangumiCatalogBrowserQuery('');
+    const loaded = await loadBangumiCatalogBrowserPage(0, '', true);
+    if (!loaded) {
       return;
     }
 
-    setBangumiCatalogBrowserWords(words.slice().sort((left, right) => left.localeCompare(right, 'zh-CN')));
     setBangumiCatalogBrowserOpen(true);
+  }
+
+  async function loadBangumiCatalogBrowserPage(offset: number, query: string, replace = false) {
+    if (!snapshot) {
+      return false;
+    }
+
+    const page = await withAction('load-bangumi-catalog-browser', () =>
+      fetchBangumiCatalogWords(snapshot.room.id, {
+        offset,
+        limit: BANGUMI_CATALOG_BROWSER_PAGE_SIZE,
+        query,
+      }),
+    );
+    if (page === null) {
+      return false;
+    }
+
+    setBangumiCatalogBrowserWords((current) => (replace ? page.words : [...current, ...page.words]));
+    setBangumiCatalogBrowserTotal(page.total);
+    setBangumiCatalogBrowserHasMore(page.hasMore);
+    return true;
+  }
+
+  function handleBangumiCatalogBrowserSearch(value: string) {
+    setBangumiCatalogBrowserQuery(value);
+    void loadBangumiCatalogBrowserPage(0, value, true);
+  }
+
+  function handleBangumiCatalogBrowserLoadMore() {
+    void loadBangumiCatalogBrowserPage(bangumiCatalogBrowserWords.length, bangumiCatalogBrowserQuery, false);
   }
 
   function closeBangumiCatalogBrowser() {
     setBangumiCatalogBrowserOpen(false);
     setBangumiCatalogBrowserWords([]);
+    setBangumiCatalogBrowserQuery('');
+    setBangumiCatalogBrowserTotal(0);
+    setBangumiCatalogBrowserHasMore(false);
   }
 
   async function handleRoundRecordsToggle() {
@@ -3160,6 +3401,18 @@ function App() {
 
   return (
     <main className="app-shell">
+      {import.meta.env.DEV ? (
+        <aside className="usage-debug-panel" aria-label="Cloudflare usage debug">
+          <span>session {usageDebugCounters.session}</span>
+          <span>action {usageDebugCounters.actionPost}</span>
+          <span>snapshot {usageDebugCounters.snapshotGet}</span>
+          <span>catalog {usageDebugCounters.catalogGet}</span>
+          <span>ws {usageDebugCounters.wsOpen}/{usageDebugCounters.wsClose}</span>
+          <span>push {usageDebugCounters.wsSnapshot}</span>
+          <span>fallback {usageDebugCounters.fallbackPoll}</span>
+        </aside>
+      ) : null}
+
       <section className="top-bar">
         <div className="brand-block">
           <div className="brand-copy">
@@ -4770,7 +5023,16 @@ function App() {
             </div>
 
             <div className="catalog-browser-summary">
-              <div className="tag">词数：{bangumiCatalogBrowserWords.length}</div>
+              <div className="tag">
+                已加载：{bangumiCatalogBrowserWords.length}/{bangumiCatalogBrowserTotal}
+              </div>
+              <input
+                aria-label="搜索 Bangumi 词库"
+                className="catalog-browser-search"
+                onChange={(event) => handleBangumiCatalogBrowserSearch(event.target.value)}
+                placeholder="搜索词条"
+                value={bangumiCatalogBrowserQuery}
+              />
             </div>
 
             <div className="catalog-browser-list" role="list">
@@ -4780,6 +5042,19 @@ function App() {
                 </span>
               ))}
             </div>
+
+            {bangumiCatalogBrowserHasMore ? (
+              <div className="modal-footer">
+                <button
+                  className="ghost-button"
+                  disabled={busyKey === 'load-bangumi-catalog-browser'}
+                  onClick={handleBangumiCatalogBrowserLoadMore}
+                  type="button"
+                >
+                  加载更多
+                </button>
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

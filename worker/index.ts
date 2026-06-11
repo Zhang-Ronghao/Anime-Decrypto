@@ -47,37 +47,59 @@ interface RoomSocketAttachment {
   fullRoundHistory?: boolean;
 }
 
+interface RoomMeta {
+  lastActivityAt: string;
+  expiresAt: string;
+  d1PersistPending: boolean;
+  actionCleanupAt?: number | null;
+}
+
+interface StoredActionResult {
+  userId: string;
+  clientActionId: string;
+  actionType: string;
+  createdAt: number;
+  result: unknown;
+}
+
+interface RateLimitBucket {
+  windowStart: number;
+  count: number;
+}
+
 type Action =
-  | { type: 'initRoom'; playerName: string; desiredRoomCode?: string | null }
-  | { type: 'joinRoom'; playerName: string }
-  | { type: 'joinMidgameRoom'; playerName: string; team: Team }
-  | { type: 'joinAsSpectator'; playerName: string }
-  | { type: 'cleanupExpiredRooms' }
-  | { type: 'leaveRoom' }
-  | { type: 'transferHost'; playerId: string }
-  | { type: 'disbandRoom' }
-  | { type: 'kickPlayer'; playerId: string }
-  | { type: 'updateRoomLobbySettings'; payload: LobbySettingsPayload }
-  | { type: 'updateSelfSeat'; team: Team | null; teamSeat: number | null }
-  | { type: 'updateSelfSpectator'; enabled: boolean }
-  | { type: 'clearAllSeats' }
-  | { type: 'startGame' }
-  | { type: 'generateTeamWords'; team: Team }
-  | { type: 'replaceTeamWordSlot'; team: Team; index: number }
-  | { type: 'loadBangumiCatalog'; payload: LoadBangumiCatalogPayload }
-  | { type: 'saveTeamWords'; team: Team; words: string[] }
-  | { type: 'confirmTeamWords'; team: Team; words: string[]; slots: TeamWordSlot[] }
-  | { type: 'requestTeamWordFeedback'; team: Team; words: string[]; slots: TeamWordSlot[] }
-  | { type: 'submitTeamWordFeedbackBatch'; requestId: string; feedback: boolean[] }
-  | { type: 'extractBangumiCharacters'; team: Team }
-  | { type: 'submitClues'; team: Team; clues: string[] }
-  | { type: 'submitOwnGuess'; team: Team; guess: string }
-  | { type: 'submitInterceptGuess'; targetTeam: Team; guess: string }
-  | { type: 'skipFirstIntercept' }
-  | { type: 'submitRoundGuessFeedbackBatch'; phase: RoundGuessFeedbackPhase; team: Team; guessDigits: string[] }
-  | { type: 'advanceRound' }
-  | { type: 'restartRoom' }
-  | { type: 'terminateGame' };
+  (
+    | { type: 'initRoom'; playerName: string; desiredRoomCode?: string | null }
+    | { type: 'joinRoom'; playerName: string }
+    | { type: 'joinMidgameRoom'; playerName: string; team: Team }
+    | { type: 'joinAsSpectator'; playerName: string }
+    | { type: 'cleanupExpiredRooms' }
+    | { type: 'leaveRoom' }
+    | { type: 'transferHost'; playerId: string }
+    | { type: 'disbandRoom' }
+    | { type: 'kickPlayer'; playerId: string }
+    | { type: 'updateRoomLobbySettings'; payload: LobbySettingsPayload }
+    | { type: 'updateSelfSeat'; team: Team | null; teamSeat: number | null }
+    | { type: 'updateSelfSpectator'; enabled: boolean }
+    | { type: 'clearAllSeats' }
+    | { type: 'startGame' }
+    | { type: 'generateTeamWords'; team: Team }
+    | { type: 'replaceTeamWordSlot'; team: Team; index: number }
+    | { type: 'loadBangumiCatalog'; payload: LoadBangumiCatalogPayload }
+    | { type: 'saveTeamWords'; team: Team; words: string[] }
+    | { type: 'confirmTeamWords'; team: Team; words: string[]; slots: TeamWordSlot[] }
+    | { type: 'requestTeamWordFeedback'; team: Team; words: string[]; slots: TeamWordSlot[] }
+    | { type: 'submitTeamWordFeedbackBatch'; requestId: string; feedback: boolean[] }
+    | { type: 'extractBangumiCharacters'; team: Team }
+    | { type: 'submitClues'; team: Team; clues: string[] }
+    | { type: 'submitOwnGuess'; team: Team; guess: string }
+    | { type: 'submitInterceptGuess'; targetTeam: Team; guess: string }
+    | { type: 'skipFirstIntercept' }
+    | { type: 'submitRoundGuessFeedbackBatch'; phase: RoundGuessFeedbackPhase; team: Team; guessDigits: string[] }
+    | { type: 'advanceRound' }
+    | { type: 'restartRoom' }
+    | { type: 'terminateGame' }
+  ) & { clientActionId?: string };
 
 interface LobbySettingsPayload {
   seatCount: number;
@@ -169,6 +191,13 @@ const BANGUMI_API_BASE = 'https://api.bgm.tv/v0';
 const BANGUMI_LEGACY_API_BASE = 'https://api.bgm.tv';
 const BANGUMI_PAGE_SIZE = 50;
 const D1_PERSIST_DEBOUNCE_MS = 10_000;
+const ROOM_LOBBY_TTL_MS = 24 * 60 * 60 * 1000;
+const ROOM_ACTIVE_TTL_MS = 72 * 60 * 60 * 1000;
+const ACTION_IDEMPOTENCY_TTL_MS = 10_000;
+const ACTION_RATE_LIMIT_WINDOW_MS = 10_000;
+const ACTION_RATE_LIMIT_MAX = 30;
+const CATALOG_PAGE_DEFAULT_LIMIT = 200;
+const CATALOG_PAGE_MAX_LIMIT = 500;
 const BANGUMI_SOURCE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BANGUMI_CHARACTER_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -212,6 +241,30 @@ function json(data: unknown, init: ResponseInit = {}, request?: Request, env?: E
       ...init.headers,
     },
   });
+}
+
+function jsonWithDebug(
+  data: unknown,
+  debug: { endpoint?: string; action?: string; roomId?: string; revision?: number | null } = {},
+  init: ResponseInit = {},
+  request?: Request,
+  env?: Env,
+): Response {
+  const headers = new Headers(init.headers);
+  if (debug.endpoint) {
+    headers.set('x-decrypto-endpoint', debug.endpoint);
+  }
+  if (debug.action) {
+    headers.set('x-decrypto-action', debug.action);
+  }
+  if (debug.roomId) {
+    headers.set('x-room-id', debug.roomId);
+  }
+  if (typeof debug.revision === 'number') {
+    headers.set('x-room-revision', String(debug.revision));
+  }
+
+  return json(data, { ...init, headers }, request, env);
 }
 
 function corsHeaders(request?: Request, env?: Env): HeadersInit {
@@ -305,6 +358,19 @@ function ensureRevision(state: RoomState): RoomState {
   }
 
   return state;
+}
+
+function roomTtlMs(state: RoomState): number {
+  return state.room.status === 'active' ? ROOM_ACTIVE_TTL_MS : ROOM_LOBBY_TTL_MS;
+}
+
+function roomExpiry(state: RoomState, from = Date.now()): string {
+  return new Date(from + roomTtlMs(state)).toISOString();
+}
+
+function sanitizeClientActionId(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && /^[A-Za-z0-9:_-]{8,120}$/.test(trimmed) ? trimmed : null;
 }
 
 function otherTeam(team: Team): Team {
@@ -970,19 +1036,32 @@ export class RoomDurableObject {
       if (request.method === 'GET') {
         const fullRoundHistory = url.searchParams.get('fullRoundHistory') === 'true';
         const current = await this.requireState(roomId);
-        return json(publicSnapshot(current, userId, fullRoundHistory), {}, request, this.env);
+        return jsonWithDebug(
+          publicSnapshot(current, userId, fullRoundHistory),
+          { endpoint: 'snapshot', roomId: current.room.id, revision: current.room.revision },
+          {},
+          request,
+          this.env,
+        );
       }
 
       const body = (await request.json()) as Action;
       const result = await this.applyAction(roomId, userId, body);
-      return json({ data: result }, {}, request, this.env);
+      const current = this.stateCache?.room.id === roomId ? this.stateCache : null;
+      return jsonWithDebug(
+        { data: result },
+        { endpoint: 'action', action: body.type, roomId, revision: current?.room.revision ?? null },
+        {},
+        request,
+        this.env,
+      );
     } catch (error) {
       return errorResponse(error, request, this.env);
     }
   }
 
   async alarm(): Promise<void> {
-    await this.flushD1Persist();
+    await this.handleAlarm();
   }
 
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
@@ -1018,6 +1097,7 @@ export class RoomDurableObject {
     if (fromStorage?.room.id === roomId) {
       const state = ensureRevision(fromStorage);
       this.stateCache = state;
+      await this.ensureMeta(state);
       return state;
     }
 
@@ -1028,7 +1108,54 @@ export class RoomDurableObject {
 
     this.stateCache = fromD1;
     await this.state.storage.put('state', fromD1);
+    await this.ensureMeta(fromD1);
     return fromD1;
+  }
+
+  private async ensureMeta(current: RoomState): Promise<RoomMeta> {
+    const existing = await this.state.storage.get<RoomMeta>('meta');
+    if (existing?.lastActivityAt && existing.expiresAt) {
+      return existing;
+    }
+
+    const timestamp = nowIso();
+    const meta: RoomMeta = {
+      lastActivityAt: current.room.updated_at || timestamp,
+      expiresAt: roomExpiry(current, Date.parse(current.room.updated_at || timestamp) || Date.now()),
+      d1PersistPending: false,
+      actionCleanupAt: null,
+    };
+    await this.state.storage.put('meta', meta);
+    await this.scheduleNextAlarm(meta);
+    return meta;
+  }
+
+  private async updateMeta(current: RoomState, d1PersistPending: boolean): Promise<void> {
+    const timestamp = nowIso();
+    const existing = await this.state.storage.get<RoomMeta>('meta');
+    const meta: RoomMeta = {
+      lastActivityAt: timestamp,
+      expiresAt: roomExpiry(current),
+      d1PersistPending,
+      actionCleanupAt: existing?.actionCleanupAt ?? null,
+    };
+    await this.state.storage.put('meta', meta);
+    await this.scheduleNextAlarm(meta);
+  }
+
+  private async scheduleNextAlarm(meta: RoomMeta): Promise<void> {
+    const dueTimes = [Date.parse(meta.expiresAt)];
+    if (meta.d1PersistPending) {
+      dueTimes.push(Date.now() + D1_PERSIST_DEBOUNCE_MS);
+    }
+    if (typeof meta.actionCleanupAt === 'number') {
+      dueTimes.push(meta.actionCleanupAt);
+    }
+
+    const next = Math.min(...dueTimes.filter((value) => Number.isFinite(value)));
+    if (Number.isFinite(next)) {
+      await this.state.storage.setAlarm(next);
+    }
   }
 
   private async save(
@@ -1043,8 +1170,9 @@ export class RoomDurableObject {
     await this.state.storage.put('state', current);
     if (options.persistImmediately) {
       await this.flushD1Persist(current);
+      await this.updateMeta(current, false);
     } else {
-      await this.state.storage.setAlarm(Date.now() + D1_PERSIST_DEBOUNCE_MS);
+      await this.updateMeta(current, true);
     }
     this.broadcastSnapshots(current);
   }
@@ -1057,7 +1185,44 @@ export class RoomDurableObject {
 
     ensureRevision(state);
     await persistState(this.env, state);
-    await this.state.storage.deleteAlarm();
+    const meta = (await this.state.storage.get<RoomMeta>('meta')) ?? {
+      lastActivityAt: state.room.updated_at,
+      expiresAt: roomExpiry(state),
+      d1PersistPending: false,
+    };
+    await this.state.storage.put('meta', { ...meta, d1PersistPending: false });
+    await this.scheduleNextAlarm({ ...meta, d1PersistPending: false });
+  }
+
+  private async handleAlarm(): Promise<void> {
+    const current = this.stateCache ?? (await this.state.storage.get<RoomState>('state'));
+    if (!current) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+
+    ensureRevision(current);
+    this.stateCache = current;
+    const meta = await this.ensureMeta(current);
+    if (meta.d1PersistPending) {
+      await this.flushD1Persist(current);
+    }
+
+    let latestMeta = (await this.state.storage.get<RoomMeta>('meta')) ?? meta;
+    if (typeof latestMeta.actionCleanupAt === 'number' && Date.now() >= latestMeta.actionCleanupAt) {
+      await this.cleanupExpiredActionResults();
+      latestMeta = (await this.state.storage.get<RoomMeta>('meta')) ?? latestMeta;
+    }
+
+    if (Date.now() >= Date.parse(latestMeta.expiresAt)) {
+      await deleteState(this.env, current.room.id);
+      await this.state.storage.deleteAll();
+      this.stateCache = null;
+      this.broadcastRoomClosed('expired');
+      return;
+    }
+
+    await this.scheduleNextAlarm(latestMeta);
   }
 
   private socketAttachment(socket: WebSocket): RoomSocketAttachment | null {
@@ -1112,7 +1277,118 @@ export class RoomDurableObject {
     }
   }
 
+  private async enforceActionRateLimit(userId: string): Promise<void> {
+    const key = `rate:${userId}`;
+    const now = Date.now();
+    const bucket = (await this.state.storage.get<RateLimitBucket>(key)) ?? { windowStart: now, count: 0 };
+    const next =
+      now - bucket.windowStart >= ACTION_RATE_LIMIT_WINDOW_MS
+        ? { windowStart: now, count: 1 }
+        : { windowStart: bucket.windowStart, count: bucket.count + 1 };
+
+    if (next.count > ACTION_RATE_LIMIT_MAX) {
+      throw new HttpError(429, '操作过于频繁，请稍后再试。');
+    }
+
+    await this.state.storage.put(key, next);
+  }
+
+  private async scheduleActionResultCleanup(cleanupAt: number): Promise<void> {
+    const current = this.stateCache ?? (await this.state.storage.get<RoomState>('state'));
+    if (!current) {
+      return;
+    }
+
+    const meta = await this.ensureMeta(current);
+    const nextCleanupAt =
+      typeof meta.actionCleanupAt === 'number' && meta.actionCleanupAt > Date.now()
+        ? Math.min(meta.actionCleanupAt, cleanupAt)
+        : cleanupAt;
+    const nextMeta: RoomMeta = { ...meta, actionCleanupAt: nextCleanupAt };
+    await this.state.storage.put('meta', nextMeta);
+    await this.scheduleNextAlarm(nextMeta);
+  }
+
+  private async cleanupExpiredActionResults(): Promise<void> {
+    const now = Date.now();
+    const entries = await this.state.storage.list<StoredActionResult>({ prefix: 'action:' });
+    const expiredKeys: string[] = [];
+    let nextCleanupAt: number | null = null;
+
+    for (const [key, stored] of entries) {
+      const createdAt = typeof stored?.createdAt === 'number' ? stored.createdAt : 0;
+      const cleanupAt = createdAt + ACTION_IDEMPOTENCY_TTL_MS;
+      if (!createdAt || now >= cleanupAt) {
+        expiredKeys.push(key);
+      } else {
+        nextCleanupAt = nextCleanupAt === null ? cleanupAt : Math.min(nextCleanupAt, cleanupAt);
+      }
+    }
+
+    if (expiredKeys.length > 0) {
+      await this.state.storage.delete(expiredKeys);
+    }
+
+    const current = this.stateCache ?? (await this.state.storage.get<RoomState>('state'));
+    if (!current) {
+      return;
+    }
+
+    const meta = await this.ensureMeta(current);
+    const nextMeta: RoomMeta = { ...meta, actionCleanupAt: nextCleanupAt };
+    await this.state.storage.put('meta', nextMeta);
+    await this.scheduleNextAlarm(nextMeta);
+  }
+
+  private async readActionResult(userId: string, action: Action): Promise<unknown | undefined> {
+    const clientActionId = sanitizeClientActionId(action.clientActionId);
+    if (!clientActionId) {
+      return undefined;
+    }
+
+    const stored = await this.state.storage.get<StoredActionResult>(`action:${userId}:${clientActionId}`);
+    if (!stored || stored.userId !== userId || stored.actionType !== action.type) {
+      return undefined;
+    }
+
+    if (Date.now() - stored.createdAt > ACTION_IDEMPOTENCY_TTL_MS) {
+      await this.state.storage.delete(`action:${userId}:${clientActionId}`);
+      return undefined;
+    }
+
+    return stored.result;
+  }
+
+  private async rememberActionResult(userId: string, action: Action, result: unknown): Promise<void> {
+    const clientActionId = sanitizeClientActionId(action.clientActionId);
+    if (!clientActionId) {
+      return;
+    }
+
+    const createdAt = Date.now();
+    await this.state.storage.put(`action:${userId}:${clientActionId}`, {
+      userId,
+      clientActionId,
+      actionType: action.type,
+      createdAt,
+      result,
+    } satisfies StoredActionResult);
+    await this.scheduleActionResultCleanup(createdAt + ACTION_IDEMPOTENCY_TTL_MS);
+  }
+
   private async applyAction(roomId: string, userId: string, action: Action): Promise<unknown> {
+    await this.enforceActionRateLimit(userId);
+    const existingResult = await this.readActionResult(userId, action);
+    if (existingResult !== undefined) {
+      return existingResult;
+    }
+
+    const result = await this.performAction(roomId, userId, action);
+    await this.rememberActionResult(userId, action, result);
+    return result;
+  }
+
+  private async performAction(roomId: string, userId: string, action: Action): Promise<unknown> {
     if (action.type === 'initRoom') {
       if ((await loadStateById(this.env, roomId)) || (await this.state.storage.get('state'))) {
         throw new HttpError(409, '房间已经存在。');
@@ -1241,7 +1517,7 @@ export class RoomDurableObject {
       case 'loadBangumiCatalog': {
         requireHost(current, userId);
         const result = await this.loadBangumiCatalog(current, action.payload);
-        await this.save(current, ['rooms']);
+        await this.save(current, ['rooms'], { persistImmediately: true });
         return result;
       }
       case 'saveTeamWords':
@@ -1867,6 +2143,44 @@ function normalizePopularYear(value: number | null): number | null {
   return year >= 1900 && year <= 2100 ? year : null;
 }
 
+function normalizeCatalogOffset(value: string | null): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function normalizeCatalogLimit(value: string | null): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return CATALOG_PAGE_DEFAULT_LIMIT;
+  }
+
+  return Math.min(CATALOG_PAGE_MAX_LIMIT, parsed);
+}
+
+function catalogPage(entries: Array<{ subjectId: number; title: string }>, url: URL): {
+  words: string[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+} {
+  const offset = normalizeCatalogOffset(url.searchParams.get('offset'));
+  const limit = normalizeCatalogLimit(url.searchParams.get('limit'));
+  const query = (url.searchParams.get('query') ?? '').trim().toLocaleLowerCase('zh-CN');
+  const words = entries
+    .map((entry) => entry.title)
+    .filter((title) => !query || title.toLocaleLowerCase('zh-CN').includes(query))
+    .sort((left, right) => left.localeCompare(right, 'zh-CN'));
+  const page = words.slice(offset, offset + limit);
+  return {
+    words: page,
+    total: words.length,
+    offset,
+    limit,
+    hasMore: offset + page.length < words.length,
+  };
+}
+
 async function fetchBangumiJson<T>(url: URL | string): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -2207,7 +2521,7 @@ export default {
 
       const userId = requireSession(request);
       if (url.pathname === '/api/rooms' && request.method === 'POST') {
-        const body = (await request.json()) as { playerName?: string; desiredRoomCode?: string | null };
+        const body = (await request.json()) as { playerName?: string; desiredRoomCode?: string | null; clientActionId?: string };
         const roomId = id();
         const roomRequest = new Request(new URL(`/room/${roomId}`, url.origin), {
           method: 'POST',
@@ -2216,6 +2530,7 @@ export default {
             type: 'initRoom',
             playerName: body.playerName ?? '',
             desiredRoomCode: body.desiredRoomCode ?? null,
+            clientActionId: body.clientActionId,
           } satisfies Action),
         });
         return proxyToRoom(env, roomId, roomRequest);
@@ -2235,17 +2550,29 @@ export default {
       }
 
       if (url.pathname === '/api/rooms/join' && request.method === 'POST') {
-        const body = (await request.json()) as { roomCode?: string; playerName?: string; team?: Team; spectator?: boolean; midgame?: boolean };
+        const body = (await request.json()) as {
+          roomCode?: string;
+          playerName?: string;
+          team?: Team;
+          spectator?: boolean;
+          midgame?: boolean;
+          clientActionId?: string;
+        };
         const roomCode = validateRoomCode(body.roomCode ?? '');
         const roomId = await roomIdByCode(env, roomCode);
         if (!roomId) {
           throw new HttpError(404, '房间不存在。');
         }
         const action: Action = body.spectator
-          ? { type: 'joinAsSpectator', playerName: body.playerName ?? '' }
+          ? { type: 'joinAsSpectator', playerName: body.playerName ?? '', clientActionId: body.clientActionId }
           : body.midgame
-            ? { type: 'joinMidgameRoom', playerName: body.playerName ?? '', team: validateTeam(body.team as Team) }
-            : { type: 'joinRoom', playerName: body.playerName ?? '' };
+            ? {
+                type: 'joinMidgameRoom',
+                playerName: body.playerName ?? '',
+                team: validateTeam(body.team as Team),
+                clientActionId: body.clientActionId,
+              }
+            : { type: 'joinRoom', playerName: body.playerName ?? '', clientActionId: body.clientActionId };
         return proxyToRoom(
           env,
           roomId,
@@ -2266,7 +2593,7 @@ export default {
           if (!state || !state.players.some((player) => player.auth_user_id === userId)) {
             throw new HttpError(403, '你不在该房间中。');
           }
-          return json(state.bangumiCatalogEntries.map((entry) => entry.title), {}, request, env);
+          return jsonWithDebug(catalogPage(state.bangumiCatalogEntries, url), { endpoint: 'catalog', roomId, revision: state.room.revision }, {}, request, env);
         }
 
         const roomUrl = new URL(`/room/${roomId}`, url.origin);

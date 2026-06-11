@@ -10,6 +10,15 @@ import { getSessionIdForRequest } from './session';
 
 const DEFAULT_ROUND_HISTORY_ROW_LIMIT = 16;
 let lastRoomId: string | null = null;
+let actionSequence = 0;
+
+function emitUsageMetric(kind: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent('decrypto-usage-metric', { detail: { kind } }));
+}
 
 function apiBase(): string {
   return (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -33,7 +42,27 @@ function wsUrl(path: string): string {
   return url.toString();
 }
 
+function clientActionId(type: string): string {
+  actionSequence += 1;
+  return `${getSessionIdForRequest()}:${Date.now().toString(36)}:${actionSequence.toString(36)}:${type}`;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = init.method ?? 'GET';
+  const metric =
+    path.includes('/snapshot')
+      ? 'snapshotGet'
+      : path.includes('/action')
+        ? 'actionPost'
+        : path.includes('/catalog')
+          ? 'catalogGet'
+          : path === '/api/session'
+            ? 'session'
+            : method === 'POST'
+              ? 'otherPost'
+              : 'otherGet';
+  emitUsageMetric(metric);
+
   const response = await fetch(apiUrl(path), {
     ...init,
     credentials: 'include',
@@ -59,7 +88,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 async function action<T = null>(roomId: string, payload: Record<string, unknown>): Promise<T> {
   return request<T>(`/api/rooms/${encodeURIComponent(roomId)}/action`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...payload,
+      clientActionId: clientActionId(String(payload.type ?? 'action')),
+    }),
   });
 }
 
@@ -69,6 +101,7 @@ export async function createRoom(playerName: string, desiredRoomCode?: string) {
     body: JSON.stringify({
       playerName: playerName.trim(),
       desiredRoomCode: desiredRoomCode?.trim().toUpperCase() || null,
+      clientActionId: clientActionId('create-room'),
     }),
   });
 }
@@ -79,6 +112,7 @@ export async function joinRoom(roomCode: string, playerName: string) {
     body: JSON.stringify({
       roomCode: roomCode.trim().toUpperCase(),
       playerName: playerName.trim(),
+      clientActionId: clientActionId('join-room'),
     }),
   });
 }
@@ -95,6 +129,7 @@ export async function joinMidgameRoom(roomCode: string, playerName: string, team
       playerName: playerName.trim(),
       team,
       midgame: true,
+      clientActionId: clientActionId('join-midgame-room'),
     }),
   });
 }
@@ -106,6 +141,7 @@ export async function joinAsSpectator(roomCode: string, playerName: string) {
       roomCode: roomCode.trim().toUpperCase(),
       playerName: playerName.trim(),
       spectator: true,
+      clientActionId: clientActionId('join-spectator-room'),
     }),
   });
 }
@@ -297,8 +333,7 @@ export async function fetchRoomSnapshot(
   const snapshot = await request<RoomSnapshot>(
     `/api/rooms/${encodeURIComponent(roomId)}/snapshot?fullRoundHistory=${options.fullRoundHistory === true ? 'true' : 'false'}`,
   );
-  lastRoomId = snapshot.room.id;
-  rememberFeedbackRequestRooms(snapshot);
+  rememberSnapshotContext(snapshot);
   return snapshot;
 }
 
@@ -310,8 +345,26 @@ export async function fetchRoundSubmissions(
   return options.full ? submissions : submissions.slice(0, DEFAULT_ROUND_HISTORY_ROW_LIMIT);
 }
 
-export async function fetchBangumiCatalogWords(roomId: string): Promise<string[]> {
-  return request<string[]>(`/api/rooms/${encodeURIComponent(roomId)}/catalog`);
+export interface BangumiCatalogWordsPage {
+  words: string[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export async function fetchBangumiCatalogWords(
+  roomId: string,
+  options: { offset?: number; limit?: number; query?: string } = {},
+): Promise<BangumiCatalogWordsPage> {
+  const params = new URLSearchParams();
+  params.set('offset', String(options.offset ?? 0));
+  params.set('limit', String(options.limit ?? 200));
+  if (options.query?.trim()) {
+    params.set('query', options.query.trim());
+  }
+
+  return request<BangumiCatalogWordsPage>(`/api/rooms/${encodeURIComponent(roomId)}/catalog?${params.toString()}`);
 }
 
 export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
@@ -332,6 +385,7 @@ export function subscribeToRoom(
 
   socket.addEventListener('open', () => {
     opened = true;
+    emitUsageMetric('wsOpen');
     onStatus?.('SUBSCRIBED');
   });
 
@@ -343,8 +397,8 @@ export function subscribeToRoom(
     try {
       const payload = JSON.parse(event.data) as { type?: string; snapshot?: RoomSnapshot; reason?: string; message?: string };
       if (payload.type === 'snapshot' && payload.snapshot) {
-        lastRoomId = payload.snapshot.room.id;
-        rememberFeedbackRequestRooms(payload.snapshot);
+        emitUsageMetric('wsSnapshot');
+        rememberSnapshotContext(payload.snapshot);
         onSnapshot(payload.snapshot);
       } else if (payload.type === 'room_closed') {
         onRoomClosed?.(payload.reason ?? 'closed');
@@ -361,6 +415,7 @@ export function subscribeToRoom(
   });
 
   socket.addEventListener('close', () => {
+    emitUsageMetric('wsClose');
     onStatus?.(opened ? 'CLOSED' : 'TIMED_OUT');
   });
 
@@ -382,6 +437,11 @@ export function subscribeToSelfNotifications(
       // Kicks are detected by the room snapshot membership check after room_players changes.
     },
   };
+}
+
+export function rememberSnapshotContext(snapshot: RoomSnapshot): void {
+  lastRoomId = snapshot.room.id;
+  rememberFeedbackRequestRooms(snapshot);
 }
 
 function rememberFeedbackRequestRooms(snapshot: RoomSnapshot): void {
