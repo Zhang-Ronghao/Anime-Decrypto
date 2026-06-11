@@ -285,6 +285,7 @@ function corsHeaders(request?: Request, env?: Env): HeadersInit {
     'access-control-allow-credentials': 'true',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-allow-headers': 'content-type,x-decrypto-session',
+    'access-control-max-age': '86400',
   };
 }
 
@@ -929,6 +930,42 @@ function drawTeamSlots(state: RoomState, team: Team): TeamWordSlot[] {
   return slots;
 }
 
+function drawTeamWordSlot(state: RoomState, team: Team, index: number): TeamWordSlot {
+  if (!Number.isInteger(index) || index < 0 || index > 3) {
+    throw new HttpError(400, '词语位置无效。');
+  }
+
+  const ownRecord = teamWordRecord(state, team);
+  const blocked = new Set([
+    ...teamWordRecord(state, otherTeam(team)).words.filter(Boolean),
+    ...ownRecord.seen_words.filter(Boolean),
+    ...ownRecord.words.filter((word, wordIndex) => wordIndex !== index && Boolean(word)),
+  ]);
+  const catalogPool = state.bangumiCatalogEntries.map((entry) => entry.title);
+  const sourcePool = catalogPool.length > 0 ? catalogPool : DEFAULT_WORD_POOL;
+  const picked = shuffle(sourcePool.filter((word) => !blocked.has(word)))[0];
+  if (!picked) {
+    throw new HttpError(409, '可用词语不足，请手动填写或重新载入词库。');
+  }
+
+  const entry = state.bangumiCatalogEntries.find((item) => item.title === picked);
+  const slot = {
+    text: picked,
+    subjectId: entry?.subjectId ?? null,
+    sourceTitle: entry?.title ?? null,
+    showSourceTitle: false,
+    characterOptions: [],
+  };
+  const nextSlots = Array.from({ length: 4 }, (_, slotIndex) =>
+    normalizeSlot(ownRecord.word_slots[slotIndex] ?? { text: ownRecord.words[slotIndex] ?? '' }),
+  );
+  nextSlots[index] = slot;
+  ownRecord.word_slots = nextSlots;
+  ownRecord.words = nextSlots.map((nextSlot) => nextSlot.text);
+  ownRecord.seen_words = Array.from(new Set([...ownRecord.seen_words, picked]));
+  return slot;
+}
+
 async function extractCharactersFromSlots(env: Env, record: TeamWordsRecord): Promise<{ slots: TeamWordSlot[]; failedTitles: string[] }> {
   const failedTitles: string[] = [];
   const slots: TeamWordSlot[] = [];
@@ -1023,7 +1060,9 @@ export class RoomDurableObject {
   async fetch(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url);
-      const roomId = url.pathname.split('/').filter(Boolean).at(-1);
+      const pathParts = url.pathname.split('/').filter(Boolean);
+      const roomId = pathParts[1] ?? pathParts.at(-1);
+      const target = pathParts[2] ?? 'snapshot';
       if (!roomId) {
         throw new HttpError(400, '缺少房间 ID。');
       }
@@ -1033,6 +1072,25 @@ export class RoomDurableObject {
       }
 
       const userId = requireSession(request);
+      if (request.method === 'GET' && target === 'catalog') {
+        const current = await this.requireState(roomId);
+        if (!current.players.some((player) => player.auth_user_id === userId)) {
+          throw new HttpError(403, '你不在该房间中。');
+        }
+        /*
+          throw new HttpError(403, '浣犱笉鍦ㄨ鎴块棿涓€?);
+        }
+
+        */
+        return jsonWithDebug(
+          catalogPage(current.bangumiCatalogEntries, url),
+          { endpoint: 'catalog', roomId: current.room.id, revision: current.room.revision },
+          {},
+          request,
+          this.env,
+        );
+      }
+
       if (request.method === 'GET') {
         const fullRoundHistory = url.searchParams.get('fullRoundHistory') === 'true';
         const current = await this.requireState(roomId);
@@ -1508,9 +1566,7 @@ export class RoomDurableObject {
       case 'replaceTeamWordSlot': {
         this.requireTeamEncoder(current, userId, action.team);
         const record = teamWordRecord(current, action.team);
-        const slots = drawTeamSlots(current, action.team);
-        record.word_slots[action.index] = slots[action.index] ?? record.word_slots[action.index];
-        record.words = record.word_slots.map((slot) => slot.text);
+        drawTeamWordSlot(current, action.team, action.index);
         await this.save(current, ['team_words', 'rooms']);
         return record.word_slots;
       }
@@ -2494,6 +2550,25 @@ async function proxyToRoom(env: Env, roomId: string, request: Request): Promise<
   return env.ROOM_OBJECTS.get(id).fetch(request);
 }
 
+function roomProxyRequest(request: Request, url: URL, roomId: string, target?: string, userId?: string): Request {
+  const roomUrl = new URL(target ? `/room/${roomId}/${target}` : `/room/${roomId}`, url.origin);
+  roomUrl.search = url.search;
+  const headers = new Headers(request.headers);
+  if (userId) {
+    headers.set('x-decrypto-session', userId);
+  }
+
+  return new Request(roomUrl, {
+    body: request.body,
+    cf: request.cf,
+    duplex: 'half',
+    headers,
+    method: request.method,
+    redirect: request.redirect,
+    signal: request.signal,
+  } as RequestInit & { cf?: IncomingRequestCfProperties; duplex?: 'half' });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -2589,18 +2664,17 @@ export default {
         const roomId = roomMatch[1];
         const target = roomMatch[2] ?? 'snapshot';
         if (target === 'catalog') {
+          return proxyToRoom(env, roomId, roomProxyRequest(request, url, roomId, 'catalog', userId));
+          /*
           const state = await loadStateById(env, roomId);
           if (!state || !state.players.some((player) => player.auth_user_id === userId)) {
             throw new HttpError(403, '你不在该房间中。');
           }
           return jsonWithDebug(catalogPage(state.bangumiCatalogEntries, url), { endpoint: 'catalog', roomId, revision: state.room.revision }, {}, request, env);
+          */
         }
 
-        const roomUrl = new URL(`/room/${roomId}`, url.origin);
-        if (target === 'snapshot') {
-          roomUrl.search = url.search;
-        }
-        return proxyToRoom(env, roomId, new Request(roomUrl, request));
+        return proxyToRoom(env, roomId, roomProxyRequest(request, url, roomId, undefined, userId));
       }
 
       throw new HttpError(404, '接口不存在。');

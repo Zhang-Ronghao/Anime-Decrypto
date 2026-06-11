@@ -818,6 +818,8 @@ function App() {
   const snapshotRef = useRef<RoomSnapshot | null>(null);
   const refreshInFlightRef = useRef<Promise<boolean> | null>(null);
   const lastFullRefreshAtRef = useRef(0);
+  const lastHiddenAtRef = useRef<number | null>(null);
+  const roomRealtimeConnectedRef = useRef(false);
   const foregroundResyncTimerRef = useRef<number | null>(null);
   const showAllRoundRecordsRef = useRef(false);
   const teamWordDraftRevisionRef = useRef(0);
@@ -902,8 +904,16 @@ function App() {
   }
 
   function beginSyncFallback(durationMs = 10_000) {
+    if (roomRealtimeConnectedRef.current) {
+      return;
+    }
+
     setSyncFallbackUntil(Date.now() + durationMs);
   }
+
+  useEffect(() => {
+    roomRealtimeConnectedRef.current = roomRealtimeConnected;
+  }, [roomRealtimeConnected]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1196,7 +1206,11 @@ function App() {
       return;
     }
 
-    const resyncForegroundState = () => {
+    const resyncForegroundState = (options: { force?: boolean } = {}) => {
+      if (!options.force && roomRealtimeConnectedRef.current) {
+        return;
+      }
+
       if (foregroundResyncTimerRef.current !== null) {
         window.clearTimeout(foregroundResyncTimerRef.current);
       }
@@ -1213,8 +1227,14 @@ function App() {
     };
 
     const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHiddenAtRef.current = Date.now();
+        return;
+      }
+
       if (document.visibilityState === 'visible') {
-        resyncForegroundState();
+        const hiddenForMs = lastHiddenAtRef.current === null ? 0 : Date.now() - lastHiddenAtRef.current;
+        resyncForegroundState({ force: hiddenForMs > 60_000 });
       }
     };
 
@@ -1227,7 +1247,7 @@ function App() {
     };
 
     const handleOnline = () => {
-      resyncForegroundState();
+      resyncForegroundState({ force: true });
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);

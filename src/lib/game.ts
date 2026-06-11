@@ -28,6 +28,10 @@ function apiUrl(path: string): string {
   return `${apiBase()}${path}`;
 }
 
+function pathWithSession(path: string): string {
+  return `${path}${path.includes('?') ? '&' : '?'}session=${encodeURIComponent(getSessionIdForRequest())}`;
+}
+
 function wsUrl(path: string): string {
   const withSession = `${path}${path.includes('?') ? '&' : '?'}session=${encodeURIComponent(getSessionIdForRequest())}`;
   const base = apiBase();
@@ -49,6 +53,7 @@ function clientActionId(type: string): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? 'GET';
+  const isGet = method.toUpperCase() === 'GET';
   const metric =
     path.includes('/snapshot')
       ? 'snapshotGet'
@@ -63,14 +68,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
               : 'otherGet';
   emitUsageMetric(metric);
 
-  const response = await fetch(apiUrl(path), {
+  const headers = new Headers(init.headers);
+  if (!isGet || init.body) {
+    headers.set('content-type', headers.get('content-type') ?? 'application/json');
+    headers.set('x-decrypto-session', headers.get('x-decrypto-session') ?? getSessionIdForRequest());
+  }
+
+  const response = await fetch(apiUrl(isGet ? pathWithSession(path) : path), {
     ...init,
     credentials: 'include',
-    headers: {
-      'content-type': 'application/json',
-      'x-decrypto-session': getSessionIdForRequest(),
-      ...init.headers,
-    },
+    headers,
   });
 
   const payload = (await response.json().catch(() => null)) as { data?: T; error?: string } | T | null;

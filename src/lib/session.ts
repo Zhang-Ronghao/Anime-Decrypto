@@ -54,11 +54,8 @@ export function getSessionIdForRequest(): string {
 
 export async function ensureSession(): Promise<Session | null> {
   const sessionId = getStoredSessionId();
-  const response = await fetch(`${apiBase()}/api/session`, {
+  const response = await fetch(`${apiBase()}/api/session?session=${encodeURIComponent(sessionId)}`, {
     credentials: 'include',
-    headers: {
-      'x-decrypto-session': sessionId,
-    },
   });
 
   if (!response.ok) {
