@@ -20,7 +20,7 @@ import type {
 import {
   BANGUMI_POPULAR_ANIME,
   BANGUMI_POPULAR_ANIME_SOURCE_DATE,
-} from '../supabase/functions/load-bangumi-catalog/bangumi-popular-anime';
+} from './data/bangumi-popular-anime';
 
 export interface Env {
   DB: D1Database;
@@ -38,6 +38,13 @@ interface RoomState {
   roundCodes: RoundCodeRecord[];
   submissions: RoundSubmissionRecord[];
   bangumiCatalogEntries: Array<{ subjectId: number; title: string }>;
+}
+
+interface RoomSocketAttachment {
+  userId: string;
+  roomId: string;
+  connectionId: string;
+  fullRoundHistory?: boolean;
 }
 
 type Action =
@@ -161,6 +168,9 @@ const USER_AGENT = 'Zhang-Ronghao/Anime-Decrypto (https://github.com/Zhang-Rongh
 const BANGUMI_API_BASE = 'https://api.bgm.tv/v0';
 const BANGUMI_LEGACY_API_BASE = 'https://api.bgm.tv';
 const BANGUMI_PAGE_SIZE = 50;
+const D1_PERSIST_DEBOUNCE_MS = 10_000;
+const BANGUMI_SOURCE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const BANGUMI_CHARACTER_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface BangumiCatalogSource {
   kind: 'user' | 'index';
@@ -221,7 +231,7 @@ function corsHeaders(request?: Request, env?: Env): HeadersInit {
     'access-control-allow-origin': allowOrigin,
     'access-control-allow-credentials': 'true',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type,x-decrypto-session',
   };
 }
 
@@ -287,6 +297,14 @@ function nowIso(): string {
 
 function id(): string {
   return crypto.randomUUID();
+}
+
+function ensureRevision(state: RoomState): RoomState {
+  if (!Number.isInteger(state.room.revision) || state.room.revision < 0) {
+    state.room.revision = 0;
+  }
+
+  return state;
 }
 
 function otherTeam(team: Team): Team {
@@ -419,6 +437,7 @@ function createRoomState(roomId: string, roomCode: string, hostUserId: string, p
   const timestamp = nowIso();
   const room: RoomRecord = {
     id: roomId,
+    revision: 1,
     room_code: roomCode,
     host_user_id: hostUserId,
     status: 'lobby',
@@ -844,7 +863,7 @@ function drawTeamSlots(state: RoomState, team: Team): TeamWordSlot[] {
   return slots;
 }
 
-async function extractCharactersFromSlots(record: TeamWordsRecord): Promise<{ slots: TeamWordSlot[]; failedTitles: string[] }> {
+async function extractCharactersFromSlots(env: Env, record: TeamWordsRecord): Promise<{ slots: TeamWordSlot[]; failedTitles: string[] }> {
   const failedTitles: string[] = [];
   const slots: TeamWordSlot[] = [];
 
@@ -871,7 +890,7 @@ async function extractCharactersFromSlots(record: TeamWordsRecord): Promise<{ sl
 
     let options: string[] = [];
     try {
-      options = await fetchCharacterNames(normalized.subjectId);
+      options = await fetchCharacterNames(env, normalized.subjectId);
     } catch {
       options = [];
     }
@@ -919,23 +938,12 @@ async function deleteState(env: Env, roomId: string): Promise<void> {
 
 async function loadStateById(env: Env, roomId: string): Promise<RoomState | null> {
   const row = await env.DB.prepare('select state_json from rooms where id = ?').bind(roomId).first<{ state_json: string }>();
-  return row ? (JSON.parse(row.state_json) as RoomState) : null;
+  return row ? ensureRevision(JSON.parse(row.state_json) as RoomState) : null;
 }
 
 async function roomIdByCode(env: Env, roomCode: string): Promise<string | null> {
   const row = await env.DB.prepare('select id from rooms where room_code = ?').bind(roomCode).first<{ id: string }>();
   return row?.id ?? null;
-}
-
-function broadcast(state: DurableObjectState, tables: readonly RoomTable[] = ROOM_TABLES): void {
-  const message = JSON.stringify({ type: 'changed', tables });
-  for (const socket of state.getWebSockets()) {
-    try {
-      socket.send(message);
-    } catch {
-      socket.close();
-    }
-  }
 }
 
 export class RoomDurableObject {
@@ -955,7 +963,7 @@ export class RoomDurableObject {
       }
 
       if (request.headers.get('upgrade') === 'websocket') {
-        return this.handleWebSocket(request);
+        return this.handleWebSocket(request, roomId);
       }
 
       const userId = requireSession(request);
@@ -973,18 +981,31 @@ export class RoomDurableObject {
     }
   }
 
+  async alarm(): Promise<void> {
+    await this.flushD1Persist();
+  }
+
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
     if (message === 'ping') {
       socket.send('pong');
     }
   }
 
-  private handleWebSocket(request: Request): Response {
-    requireSession(request);
+  private async handleWebSocket(request: Request, roomId: string): Promise<Response> {
+    const userId = requireSession(request);
+    const current = await this.requireState(roomId);
+    publicSnapshot(current, userId);
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.state.acceptWebSocket(server);
-    server.send(JSON.stringify({ type: 'ready' }));
+    server.serializeAttachment({
+      userId,
+      roomId,
+      connectionId: id(),
+      fullRoundHistory: false,
+    } satisfies RoomSocketAttachment);
+    this.sendSnapshot(server, current);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -995,8 +1016,9 @@ export class RoomDurableObject {
 
     const fromStorage = await this.state.storage.get<RoomState>('state');
     if (fromStorage?.room.id === roomId) {
-      this.stateCache = fromStorage;
-      return fromStorage;
+      const state = ensureRevision(fromStorage);
+      this.stateCache = state;
+      return state;
     }
 
     const fromD1 = await loadStateById(this.env, roomId);
@@ -1009,12 +1031,85 @@ export class RoomDurableObject {
     return fromD1;
   }
 
-  private async save(current: RoomState, tables: readonly RoomTable[] = ROOM_TABLES): Promise<void> {
+  private async save(
+    current: RoomState,
+    tables: readonly RoomTable[] = ROOM_TABLES,
+    options: { persistImmediately?: boolean } = {},
+  ): Promise<void> {
+    ensureRevision(current);
+    current.room.revision += 1;
     touch(current);
     this.stateCache = current;
     await this.state.storage.put('state', current);
-    await persistState(this.env, current);
-    broadcast(this.state, tables);
+    if (options.persistImmediately) {
+      await this.flushD1Persist(current);
+    } else {
+      await this.state.storage.setAlarm(Date.now() + D1_PERSIST_DEBOUNCE_MS);
+    }
+    this.broadcastSnapshots(current);
+  }
+
+  private async flushD1Persist(current = this.stateCache): Promise<void> {
+    const state = current ?? (await this.state.storage.get<RoomState>('state'));
+    if (!state) {
+      return;
+    }
+
+    ensureRevision(state);
+    await persistState(this.env, state);
+    await this.state.storage.deleteAlarm();
+  }
+
+  private socketAttachment(socket: WebSocket): RoomSocketAttachment | null {
+    const attachment = socket.deserializeAttachment() as Partial<RoomSocketAttachment> | null;
+    if (!attachment?.userId || !attachment.roomId) {
+      return null;
+    }
+
+    return {
+      userId: attachment.userId,
+      roomId: attachment.roomId,
+      connectionId: attachment.connectionId ?? '',
+      fullRoundHistory: attachment.fullRoundHistory === true,
+    };
+  }
+
+  private sendSnapshot(socket: WebSocket, current: RoomState): void {
+    const attachment = this.socketAttachment(socket);
+    if (!attachment || attachment.roomId !== current.room.id) {
+      socket.close();
+      return;
+    }
+
+    try {
+      socket.send(
+        JSON.stringify({
+          type: 'snapshot',
+          revision: current.room.revision,
+          snapshot: publicSnapshot(current, attachment.userId, attachment.fullRoundHistory),
+        }),
+      );
+    } catch {
+      socket.close();
+    }
+  }
+
+  private broadcastSnapshots(current: RoomState): void {
+    for (const socket of this.state.getWebSockets()) {
+      this.sendSnapshot(socket, current);
+    }
+  }
+
+  private broadcastRoomClosed(reason: string): void {
+    const message = JSON.stringify({ type: 'room_closed', reason });
+    for (const socket of this.state.getWebSockets()) {
+      try {
+        socket.send(message);
+        socket.close();
+      } catch {
+        socket.close();
+      }
+    }
   }
 
   private async applyAction(roomId: string, userId: string, action: Action): Promise<unknown> {
@@ -1031,7 +1126,7 @@ export class RoomDurableObject {
 
       const created = createRoomState(roomId, roomCode, userId, playerName);
       this.stateCache = created;
-      await this.save(created);
+      await this.save(created, ROOM_TABLES, { persistImmediately: true });
       return { room_id: created.room.id, room_code: created.room.room_code };
     }
 
@@ -1049,7 +1144,7 @@ export class RoomDurableObject {
           }
           upsertPlayer(current, userId, assertPlayerName(action.playerName));
         }
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return { room_id: current.room.id, room_code: current.room.room_code };
       }
       case 'joinMidgameRoom': {
@@ -1068,7 +1163,7 @@ export class RoomDurableObject {
         player.team_seat = seat;
         player.role = 'member';
         player.is_spectator = false;
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return { room_id: current.room.id, room_code: current.room.room_code };
       }
       case 'joinAsSpectator': {
@@ -1077,41 +1172,42 @@ export class RoomDurableObject {
         player.team_seat = null;
         player.role = null;
         player.is_spectator = true;
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return { room_id: current.room.id, room_code: current.room.room_code };
       }
       case 'cleanupExpiredRooms':
         return null;
       case 'leaveRoom':
         this.leaveRoom(current, userId);
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'transferHost':
         this.transferHost(current, userId, action.playerId);
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'kickPlayer':
         this.kickPlayer(current, userId, action.playerId);
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'disbandRoom':
         requireHost(current, userId);
         await deleteState(this.env, current.room.id);
         await this.state.storage.deleteAll();
+        await this.state.storage.deleteAlarm();
         this.stateCache = null;
-        broadcast(this.state, ['rooms', 'room_players']);
+        this.broadcastRoomClosed('disbanded');
         return null;
       case 'updateRoomLobbySettings':
         this.updateRoomLobbySettings(current, userId, action.payload);
-        await this.save(current, ['rooms', 'room_players']);
+        await this.save(current, ['rooms', 'room_players'], { persistImmediately: true });
         return null;
       case 'updateSelfSeat':
         this.updateSelfSeat(current, userId, action.team, action.teamSeat);
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'updateSelfSpectator':
         this.updateSelfSpectator(current, userId, action.enabled);
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'clearAllSeats':
         requireHost(current, userId);
@@ -1121,11 +1217,11 @@ export class RoomDurableObject {
           player.role = null;
           player.is_spectator = false;
         }
-        await this.save(current, ['room_players', 'rooms']);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'startGame':
         this.startGame(current, userId);
-        await this.save(current);
+        await this.save(current, ROOM_TABLES, { persistImmediately: true });
         return null;
       case 'generateTeamWords': {
         this.requireTeamEncoder(current, userId, action.team);
@@ -1170,7 +1266,7 @@ export class RoomDurableObject {
         if (!current.room.bangumi_character_extract_enabled) {
           throw new HttpError(409, '当前房间未开启角色名提取。');
         }
-        const result = await extractCharactersFromSlots(teamWordRecord(current, action.team));
+        const result = await extractCharactersFromSlots(this.env, teamWordRecord(current, action.team));
         await this.save(current, ['team_words', 'rooms']);
         return result;
       }
@@ -1196,15 +1292,15 @@ export class RoomDurableObject {
         return null;
       case 'advanceRound':
         this.advanceRound(current, userId);
-        await this.save(current, ['round_codes', 'round_submissions', 'room_players', 'rooms']);
+        await this.save(current, ['round_codes', 'round_submissions', 'room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'restartRoom':
         this.restartRoom(current, userId, true);
-        await this.save(current);
+        await this.save(current, ROOM_TABLES, { persistImmediately: true });
         return null;
       case 'terminateGame':
         this.restartRoom(current, userId, false);
-        await this.save(current);
+        await this.save(current, ROOM_TABLES, { persistImmediately: true });
         return null;
       default:
         throw new HttpError(400, '未知操作。');
@@ -1498,7 +1594,7 @@ export class RoomDurableObject {
       throw new HttpError(400, '至少需要 1 个 Bangumi 用户/目录来源，或勾选热门榜单。');
     }
 
-    const collections = await Promise.all(sources.map((source) => fetchCatalogForSource(source, collectionTypes)));
+    const collections = await Promise.all(sources.map((source) => fetchCatalogForSource(this.env, source, collectionTypes)));
     const popularEntries = popularCatalogEntries(popularLimit, popularYearMin, popularYearMax);
     if (popularEntries.length > 0) {
       collections.push(new Map(popularEntries.map((entry) => [entry.subjectId, entry])));
@@ -1858,17 +1954,78 @@ function collectionItemToCatalogEntry(item: BangumiCollectionItem): { subjectId:
   return subjectToCatalogEntry(item.subject ?? null);
 }
 
+function cacheExpiry(ttlMs: number): string {
+  return new Date(Date.now() + ttlMs).toISOString();
+}
+
+function bangumiSourceCacheKey(source: BangumiCatalogSource, collectionTypes: number[]): string {
+  return `${source.kind}:${source.id}:types:${collectionTypes.join(',')}`;
+}
+
+async function readBangumiSourceCache(
+  env: Env,
+  cacheKey: string,
+): Promise<Array<{ subjectId: number; title: string }> | null> {
+  try {
+    const row = await env.DB.prepare(
+      'select payload_json from bangumi_source_cache where cache_key = ? and expires_at > ?',
+    )
+      .bind(cacheKey, nowIso())
+      .first<{ payload_json: string }>();
+    if (!row) {
+      return null;
+    }
+
+    const payload = JSON.parse(row.payload_json) as Array<{ subjectId: number; title: string }>;
+    return Array.isArray(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeBangumiSourceCache(
+  env: Env,
+  cacheKey: string,
+  entries: Array<{ subjectId: number; title: string }>,
+): Promise<void> {
+  try {
+    const timestamp = nowIso();
+    await env.DB.prepare(
+      `insert into bangumi_source_cache (cache_key, payload_json, updated_at, expires_at)
+       values (?, ?, ?, ?)
+       on conflict(cache_key) do update set
+         payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at,
+         expires_at = excluded.expires_at`,
+    )
+      .bind(cacheKey, JSON.stringify(entries), timestamp, cacheExpiry(BANGUMI_SOURCE_CACHE_TTL_MS))
+      .run();
+  } catch {
+    // Cache writes are best-effort; game flow should not depend on the cache table.
+  }
+}
+
 async function fetchCatalogForSource(
+  env: Env,
   source: BangumiCatalogSource,
   collectionTypes: number[],
 ): Promise<Map<number, { subjectId: number; title: string }>> {
+  const cacheKey = bangumiSourceCacheKey(source, collectionTypes);
+  const cached = await readBangumiSourceCache(env, cacheKey);
   const entries =
-    source.kind === 'index'
-      ? (await fetchSubjectsForIndex(source.id)).map(subjectToCatalogEntry)
-      : (await fetchCollectionsForUser(source.id, collectionTypes)).map(collectionItemToCatalogEntry);
+    cached ??
+    (source.kind === 'index'
+      ? (await fetchSubjectsForIndex(source.id)).map(subjectToCatalogEntry).filter((entry): entry is { subjectId: number; title: string } => Boolean(entry))
+      : (await fetchCollectionsForUser(source.id, collectionTypes))
+          .map(collectionItemToCatalogEntry)
+          .filter((entry): entry is { subjectId: number; title: string } => Boolean(entry)));
+  if (!cached) {
+    await writeBangumiSourceCache(env, cacheKey, entries);
+  }
+
   const map = new Map<number, { subjectId: number; title: string }>();
   for (const entry of entries) {
-    if (entry && !map.has(entry.subjectId)) {
+    if (!map.has(entry.subjectId)) {
       map.set(entry.subjectId, entry);
     }
   }
@@ -1945,7 +2102,48 @@ function popularCatalogEntries(
     }));
 }
 
-async function fetchCharacterNames(subjectId: number): Promise<string[]> {
+async function readBangumiCharacterCache(env: Env, subjectId: number): Promise<string[] | null> {
+  try {
+    const row = await env.DB.prepare(
+      'select names_json from bangumi_character_cache where subject_id = ? and expires_at > ?',
+    )
+      .bind(subjectId, nowIso())
+      .first<{ names_json: string }>();
+    if (!row) {
+      return null;
+    }
+
+    const payload = JSON.parse(row.names_json) as string[];
+    return Array.isArray(payload) ? payload.filter((item): item is string => typeof item === 'string') : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeBangumiCharacterCache(env: Env, subjectId: number, names: string[]): Promise<void> {
+  try {
+    const timestamp = nowIso();
+    await env.DB.prepare(
+      `insert into bangumi_character_cache (subject_id, names_json, updated_at, expires_at)
+       values (?, ?, ?, ?)
+       on conflict(subject_id) do update set
+         names_json = excluded.names_json,
+         updated_at = excluded.updated_at,
+         expires_at = excluded.expires_at`,
+    )
+      .bind(subjectId, JSON.stringify(names), timestamp, cacheExpiry(BANGUMI_CHARACTER_CACHE_TTL_MS))
+      .run();
+  } catch {
+    // Cache writes are best-effort.
+  }
+}
+
+async function fetchCharacterNames(env: Env, subjectId: number): Promise<string[]> {
+  const cached = await readBangumiCharacterCache(env, subjectId);
+  if (cached) {
+    return cached;
+  }
+
   const payload = await fetchBangumiJson<BangumiSubjectPayload>(
     `${BANGUMI_LEGACY_API_BASE}/subject/${encodeURIComponent(String(subjectId))}?responseGroup=large`,
   );
@@ -1964,6 +2162,7 @@ async function fetchCharacterNames(subjectId: number): Promise<string[]> {
     }
   }
 
+  await writeBangumiCharacterCache(env, subjectId, result);
   return result;
 }
 

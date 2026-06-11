@@ -1,17 +1,10 @@
 import type {
   BangumiCatalogMergeMode,
-  PlayerRecord,
   RoomJoinStatus,
-  RoomRecord,
   RoomSnapshot,
-  RoundCodeRecord,
-  RoundGuessFeedbackResponseRecord,
   RoundSubmissionRecord,
   Team,
-  TeamWordFeedbackRequestRecord,
-  TeamWordFeedbackResponseRecord,
   TeamWordSlot,
-  TeamWordsRecord,
 } from '../types';
 import { getSessionIdForRequest } from './session';
 
@@ -309,22 +302,6 @@ export async function fetchRoomSnapshot(
   return snapshot;
 }
 
-export async function fetchRoomCore(roomId: string): Promise<RoomRecord> {
-  return (await fetchRoomSnapshot(roomId)).room;
-}
-
-export async function fetchRoomPlayers(roomId: string): Promise<PlayerRecord[]> {
-  return (await fetchRoomSnapshot(roomId)).players;
-}
-
-export async function fetchTeamWords(roomId: string): Promise<TeamWordsRecord[]> {
-  return (await fetchRoomSnapshot(roomId)).teamWords;
-}
-
-export async function fetchRoundCodes(roomId: string): Promise<RoundCodeRecord[]> {
-  return (await fetchRoomSnapshot(roomId)).roundCodes;
-}
-
 export async function fetchRoundSubmissions(
   roomId: string,
   options: { full?: boolean } = {},
@@ -333,32 +310,11 @@ export async function fetchRoundSubmissions(
   return options.full ? submissions : submissions.slice(0, DEFAULT_ROUND_HISTORY_ROW_LIMIT);
 }
 
-export async function fetchTeamWordFeedbackRequests(roomId: string): Promise<TeamWordFeedbackRequestRecord[]> {
-  return (await fetchRoomSnapshot(roomId)).teamWordFeedbackRequests;
-}
-
-export async function fetchTeamWordFeedbackResponses(roomId: string): Promise<TeamWordFeedbackResponseRecord[]> {
-  return (await fetchRoomSnapshot(roomId)).teamWordFeedbackResponses;
-}
-
-export async function fetchRoundGuessFeedbackResponses(roomId: string): Promise<RoundGuessFeedbackResponseRecord[]> {
-  return (await fetchRoomSnapshot(roomId)).roundGuessFeedbackResponses;
-}
-
 export async function fetchBangumiCatalogWords(roomId: string): Promise<string[]> {
   return request<string[]>(`/api/rooms/${encodeURIComponent(roomId)}/catalog`);
 }
 
 export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
-export type RoomSubscriptionTable =
-  | 'rooms'
-  | 'room_players'
-  | 'team_words'
-  | 'round_codes'
-  | 'round_submissions'
-  | 'team_word_feedback_requests'
-  | 'team_word_feedback_responses'
-  | 'round_guess_feedback_responses';
 export type SelfNotificationKind = 'kicked';
 
 export interface RoomSubscription {
@@ -367,7 +323,8 @@ export interface RoomSubscription {
 
 export function subscribeToRoom(
   roomId: string,
-  onChange: (table: RoomSubscriptionTable) => void,
+  onSnapshot: (snapshot: RoomSnapshot) => void,
+  onRoomClosed?: (reason: string) => void,
   onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
 ): RoomSubscription {
   const socket = new WebSocket(wsUrl(`/api/rooms/${encodeURIComponent(roomId)}/ws`));
@@ -384,11 +341,15 @@ export function subscribeToRoom(
     }
 
     try {
-      const payload = JSON.parse(event.data) as { type?: string; tables?: RoomSubscriptionTable[] };
-      if (payload.type === 'changed' && Array.isArray(payload.tables)) {
-        for (const table of payload.tables) {
-          onChange(table);
-        }
+      const payload = JSON.parse(event.data) as { type?: string; snapshot?: RoomSnapshot; reason?: string; message?: string };
+      if (payload.type === 'snapshot' && payload.snapshot) {
+        lastRoomId = payload.snapshot.room.id;
+        rememberFeedbackRequestRooms(payload.snapshot);
+        onSnapshot(payload.snapshot);
+      } else if (payload.type === 'room_closed') {
+        onRoomClosed?.(payload.reason ?? 'closed');
+      } else if (payload.type === 'error') {
+        onStatus?.('CHANNEL_ERROR', new Error(payload.message ?? '鎴块棿瀹炴椂杩炴帴澶辫触'));
       }
     } catch {
       // Ignore keepalive and malformed messages.

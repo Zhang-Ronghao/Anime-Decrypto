@@ -19,6 +19,7 @@ export interface TeamWordSlot {
 
 export interface RoomRecord {
   id: string;
+  revision: number;
   room_code: string;
   host_user_id: string;
   status: RoomStatus;

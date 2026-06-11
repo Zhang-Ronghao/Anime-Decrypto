@@ -9,15 +9,8 @@ import {
   disbandRoom,
   extractBangumiCharacters,
   fetchBangumiCatalogWords,
-  fetchRoomCore,
   fetchRoomSnapshot,
-  fetchRoomPlayers,
-  fetchRoundCodes,
   fetchRoundSubmissions,
-  fetchRoundGuessFeedbackResponses,
-  fetchTeamWordFeedbackRequests,
-  fetchTeamWordFeedbackResponses,
-  fetchTeamWords,
   getRoomJoinStatus,
   generateTeamWords,
   joinRoom,
@@ -38,7 +31,6 @@ import {
   submitTeamWordFeedbackBatch,
   subscribeToSelfNotifications,
   subscribeToRoom,
-  type RoomSubscriptionTable,
   type RoomSubscriptionStatus,
   terminateGame,
   transferHost,
@@ -169,7 +161,6 @@ const DEFAULT_LOBBY_TIMER_SETTINGS: LobbyTimerSettings = {
 };
 const GUESS_NUMBER_NOTE = '线索按正确编号归位；括号内是队友猜错时选的编号';
 const FULL_REFRESH_MIN_INTERVAL_MS = 800;
-const REALTIME_REFRESH_DEBOUNCE_MS = 400;
 
 type LobbySettingsOptimistic = Partial<
   Pick<RoomRecord, 'life_mode_enabled' | 'life_points' | 'bangumi_character_extract_enabled'>
@@ -810,10 +801,9 @@ function isRoomMembershipLostError(error: unknown): boolean {
 function App() {
   const snapshotRequestIdRef = useRef(0);
   const snapshotRef = useRef<RoomSnapshot | null>(null);
-  const realtimeRefreshTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef<Promise<boolean> | null>(null);
   const lastFullRefreshAtRef = useRef(0);
-  const pendingRealtimeTablesRef = useRef<Set<RoomSubscriptionTable>>(new Set());
+  const foregroundResyncTimerRef = useRef<number | null>(null);
   const showAllRoundRecordsRef = useRef(false);
   const teamWordDraftRevisionRef = useRef(0);
   const teamWordServerSyncFreezeUntilRef = useRef(0);
@@ -948,25 +938,9 @@ function App() {
       return;
     }
 
-    const scheduleRealtimeRefresh = (table: RoomSubscriptionTable) => {
-      pendingRealtimeTablesRef.current.add(table);
-
-      if (realtimeRefreshTimerRef.current !== null) {
-        window.clearTimeout(realtimeRefreshTimerRef.current);
-      }
-
-      realtimeRefreshTimerRef.current = window.setTimeout(() => {
-        realtimeRefreshTimerRef.current = null;
-        const tables = Array.from(pendingRealtimeTablesRef.current);
-        pendingRealtimeTablesRef.current.clear();
-        void refreshRoomParts(roomId, tables, { silentError: true });
-      }, REALTIME_REFRESH_DEBOUNCE_MS);
-    };
-
     const handleSubscriptionStatus = (status: RoomSubscriptionStatus) => {
       if (status === 'SUBSCRIBED') {
         setSyncFallbackUntil(null);
-        void refreshRoomSnapshot(roomId, { silentError: true });
         return;
       }
 
@@ -975,19 +949,47 @@ function App() {
       }
     };
 
-    const channel = subscribeToRoom(roomId, scheduleRealtimeRefresh, handleSubscriptionStatus);
-
-    void refreshRoomSnapshot(roomId);
+    const channel = subscribeToRoom(
+      roomId,
+      (nextSnapshot) => {
+        const applied = applyServerSnapshot(nextSnapshot);
+        if (applied && showAllRoundRecordsRef.current) {
+          void refreshRoomSnapshot(nextSnapshot.room.id, { silentError: true, force: true });
+        }
+      },
+      () => resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE),
+      handleSubscriptionStatus,
+    );
 
     return () => {
-      if (realtimeRefreshTimerRef.current !== null) {
-        window.clearTimeout(realtimeRefreshTimerRef.current);
-        realtimeRefreshTimerRef.current = null;
-      }
-      pendingRealtimeTablesRef.current.clear();
       void channel.unsubscribe();
     };
   }, [roomId, sessionUserId]);
+
+  function applyServerSnapshot(nextSnapshot: RoomSnapshot, options?: { allowSameRevision?: boolean }): boolean {
+    if (sessionUserId && !nextSnapshot.players.some((player) => player.auth_user_id === sessionUserId)) {
+      resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
+      return false;
+    }
+
+    setSnapshot((current) => {
+      if (current && current.room.id !== nextSnapshot.room.id) {
+        return current;
+      }
+
+      if (current && nextSnapshot.room.revision < current.room.revision) {
+        return current;
+      }
+
+      if (current && !options?.allowSameRevision && nextSnapshot.room.revision === current.room.revision) {
+        return current;
+      }
+
+      return nextSnapshot;
+    });
+
+    return true;
+  }
 
   useEffect(() => {
     if (!snapshot) {
@@ -1010,12 +1012,19 @@ function App() {
     }
 
     const resyncForegroundState = () => {
-      beginSyncFallback(12_000);
-      void refreshRoomSnapshot(roomId, { silentError: true }).then((success) => {
-        if (success) {
-          setSyncFallbackUntil(null);
-        }
-      });
+      if (foregroundResyncTimerRef.current !== null) {
+        window.clearTimeout(foregroundResyncTimerRef.current);
+      }
+
+      foregroundResyncTimerRef.current = window.setTimeout(() => {
+        foregroundResyncTimerRef.current = null;
+        beginSyncFallback(12_000);
+        void refreshRoomSnapshot(roomId, { silentError: true }).then((success) => {
+          if (success) {
+            setSyncFallbackUntil(null);
+          }
+        });
+      }, 2000);
     };
 
     const handleVisibilityChange = () => {
@@ -1046,6 +1055,10 @@ function App() {
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('pageshow', handlePageShow);
       window.removeEventListener('online', handleOnline);
+      if (foregroundResyncTimerRef.current !== null) {
+        window.clearTimeout(foregroundResyncTimerRef.current);
+        foregroundResyncTimerRef.current = null;
+      }
     };
   }, [roomId, sessionUserId]);
 
@@ -1072,13 +1085,7 @@ function App() {
           return true;
         }
 
-        if (sessionUserId && !nextSnapshot.players.some((player) => player.auth_user_id === sessionUserId)) {
-          resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
-          return false;
-        }
-
-        setSnapshot(nextSnapshot);
-        return true;
+        return applyServerSnapshot(nextSnapshot, { allowSameRevision: options?.force === true });
       } catch (error) {
         if (snapshotRequestIdRef.current !== requestId) {
           return true;
@@ -1105,90 +1112,6 @@ function App() {
     }
   }
 
-  async function refreshRoomParts(
-    nextRoomId: string,
-    tables: RoomSubscriptionTable[],
-    options?: { silentError?: boolean },
-  ) {
-    if (tables.length === 0) {
-      return true;
-    }
-
-    if (!snapshotRef.current) {
-      return refreshRoomSnapshot(nextRoomId, { silentError: options?.silentError });
-    }
-
-    const tableSet = new Set(tables);
-    const requestId = snapshotRequestIdRef.current + 1;
-    snapshotRequestIdRef.current = requestId;
-
-    try {
-      const [
-        room,
-        players,
-        teamWords,
-        roundCodes,
-        submissions,
-        teamWordFeedbackRequests,
-        teamWordFeedbackResponses,
-        roundGuessFeedbackResponses,
-      ] = await Promise.all([
-        tableSet.has('rooms') ? fetchRoomCore(nextRoomId) : Promise.resolve(null),
-        tableSet.has('room_players') ? fetchRoomPlayers(nextRoomId) : Promise.resolve(null),
-        tableSet.has('rooms') || tableSet.has('team_words') ? fetchTeamWords(nextRoomId) : Promise.resolve(null),
-        tableSet.has('round_codes') ? fetchRoundCodes(nextRoomId) : Promise.resolve(null),
-        tableSet.has('round_submissions')
-          ? fetchRoundSubmissions(nextRoomId, { full: showAllRoundRecordsRef.current })
-          : Promise.resolve(null),
-        tableSet.has('team_word_feedback_requests') ? fetchTeamWordFeedbackRequests(nextRoomId) : Promise.resolve(null),
-        tableSet.has('team_word_feedback_responses') ? fetchTeamWordFeedbackResponses(nextRoomId) : Promise.resolve(null),
-        tableSet.has('round_guess_feedback_responses')
-          ? fetchRoundGuessFeedbackResponses(nextRoomId)
-          : Promise.resolve(null),
-      ]);
-
-      if (snapshotRequestIdRef.current !== requestId) {
-        return true;
-      }
-
-      if (sessionUserId && players && !players.some((player) => player.auth_user_id === sessionUserId)) {
-        resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
-        return false;
-      }
-
-      setSnapshot((current) => {
-        if (!current || current.room.id !== nextRoomId) {
-          return current;
-        }
-
-        return {
-          room: room ?? current.room,
-          players: players ?? current.players,
-          teamWords: teamWords ?? current.teamWords,
-          roundCodes: roundCodes ?? current.roundCodes,
-          submissions: submissions ?? current.submissions,
-          teamWordFeedbackRequests: teamWordFeedbackRequests ?? current.teamWordFeedbackRequests,
-          teamWordFeedbackResponses: teamWordFeedbackResponses ?? current.teamWordFeedbackResponses,
-          roundGuessFeedbackResponses: roundGuessFeedbackResponses ?? current.roundGuessFeedbackResponses,
-        };
-      });
-
-      return true;
-    } catch (error) {
-      if (snapshotRequestIdRef.current !== requestId) {
-        return true;
-      }
-
-      if (isRoomMembershipLostError(error)) {
-        resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
-      } else if (!options?.silentError) {
-        setActionError(getErrorMessage(error, '读取房间失败'));
-      }
-
-      return false;
-    }
-  }
-
   useEffect(() => {
     if (!roomId || !syncFallbackUntil) {
       return;
@@ -1208,7 +1131,7 @@ function App() {
       }
 
       void refreshRoomSnapshot(roomId, { silentError: true });
-    }, 2500);
+    }, 7000);
 
     const stopper = window.setTimeout(() => {
       setSyncFallbackUntil(null);
@@ -1870,7 +1793,7 @@ function App() {
     try {
       const result = await action();
 
-      if (options?.refreshRoomId) {
+      if (options?.refreshRoomId && syncFallbackUntil !== null) {
         const refreshed = await refreshRoomSnapshot(options.refreshRoomId, { force: true });
         if (!refreshed) {
           return null;
@@ -1899,10 +1822,9 @@ function App() {
     snapshotRequestIdRef.current += 1;
     snapshotRef.current = null;
     refreshInFlightRef.current = null;
-    pendingRealtimeTablesRef.current.clear();
-    if (realtimeRefreshTimerRef.current !== null) {
-      window.clearTimeout(realtimeRefreshTimerRef.current);
-      realtimeRefreshTimerRef.current = null;
+    if (foregroundResyncTimerRef.current !== null) {
+      window.clearTimeout(foregroundResyncTimerRef.current);
+      foregroundResyncTimerRef.current = null;
     }
     setRoomId(null);
     setSnapshot(null);
@@ -2707,7 +2629,6 @@ function App() {
         : current,
     );
     setBangumiCatalogModalOpen(false);
-    await refreshRoomSnapshot(snapshot.room.id, { silentError: true, force: true });
   }
 
   async function handleConfirmWords() {

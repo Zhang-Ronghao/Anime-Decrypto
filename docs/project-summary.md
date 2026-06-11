@@ -1,4 +1,4 @@
-# 项目摘要
+﻿# 项目摘要
 
 Anime Decrypto 是一个基于 React、Vite 和 Cloudflare 的网页多人截码战原型。前端只负责展示和调用接口，房间状态、权限、实时同步和隐藏信息控制放在 Cloudflare Worker / Durable Object 里处理，D1 负责持久化。
 
@@ -16,6 +16,7 @@ Anime Decrypto 是一个基于 React、Vite 和 Cloudflare 的网页多人截码
 - [`src/lib/game.ts`](../src/lib/game.ts)：前端游戏 API 客户端，封装 HTTP 和 WebSocket。
 - [`src/lib/session.ts`](../src/lib/session.ts)：Cloudflare 匿名会话 bootstrap。
 - [`worker/index.ts`](../worker/index.ts)：Worker 路由、Durable Object 房间状态机、权限过滤、D1 持久化。
+- [`worker/data/bangumi-popular-anime.ts`](../worker/data/bangumi-popular-anime.ts)：Bangumi 热门动画离线榜单数据。
 - [`d1/migrations/0001_initial.sql`](../d1/migrations/0001_initial.sql)：D1 表结构。
 - [`wrangler.toml`](../wrangler.toml)：Worker、Durable Object、D1 绑定配置。
 - [`src/types.ts`](../src/types.ts)：前后端共享领域类型。
@@ -25,7 +26,7 @@ Anime Decrypto 是一个基于 React、Vite 和 Cloudflare 的网页多人截码
 ## 数据流
 
 1. 前端调用 `src/lib/session.ts` 的 `ensureSession()`。
-2. Worker 通过 HttpOnly cookie 建立匿名玩家会话。
+2. Worker 通过本地匿名 session id 建立玩家会话。
 3. 前端通过 `src/lib/game.ts` 调用 `/api/*`。
 4. Worker 把房间请求路由到对应 Durable Object。
 5. Durable Object 串行处理房间操作并广播 WebSocket 变更。
@@ -49,6 +50,7 @@ Anime Decrypto 是一个基于 React、Vite 和 Cloudflare 的网页多人截码
 - 身份轮换、阶段倒计时、失误上限、生命模式。
 - `lobby -> word_assignment -> encrypt -> decode -> intercept -> result -> finished` 主流程。
 - 队伍词语确认、词语反馈、猜测反馈。
+- Bangumi 用户/目录词库、热门榜单和角色提取。
 - WebSocket 房间同步。
 - D1 持久化房间状态。
 
@@ -61,4 +63,4 @@ Anime Decrypto 是一个基于 React、Vite 和 Cloudflare 的网页多人截码
 - Supabase RLS -> Worker/Durable Object 权限过滤
 - Postgres 表 -> D1 `rooms` 表中的状态快照
 
-`supabase/` 目录目前保留为历史参考，不再是当前部署必需文件。
+旧版 Supabase 目录已删除；当前部署只需要 Cloudflare 相关文件。

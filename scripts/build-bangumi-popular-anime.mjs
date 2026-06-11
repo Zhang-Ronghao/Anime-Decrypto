@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 const SOURCE_PATH =
   process.argv[2] ?? 'C:\\Users\\Hu_care\\Downloads\\dump-2026-05-19.210434Z\\subject.jsonlines';
 const OUTPUT_PATH =
-  process.argv[3] ?? 'supabase/functions/load-bangumi-catalog/bangumi-popular-anime.ts';
+  process.argv[3] ?? 'worker/data/bangumi-popular-anime.ts';
 
 function favoriteCount(favorite) {
   if (!favorite || typeof favorite !== 'object') {
