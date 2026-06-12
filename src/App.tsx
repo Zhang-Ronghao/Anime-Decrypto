@@ -831,6 +831,9 @@ function App() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
   const [timerNow, setTimerNow] = useState(() => Date.now());
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
+  const serverClockOffsetInitializedRef = useRef(false);
+  const serverClockCalibratedRef = useRef(false);
   const [displayName, setDisplayName] = useState(() => localStorage.getItem('decrypto-name') ?? '');
   const [joinCode, setJoinCode] = useState(() => new URLSearchParams(window.location.search).get('room') ?? '');
   const [actionError, setActionError] = useState<string | null>(null);
@@ -982,6 +985,9 @@ function App() {
       setSnapshot(null);
       setRoomRealtimeConnected(false);
       setSyncFallbackUntil(null);
+      serverClockOffsetInitializedRef.current = false;
+      serverClockCalibratedRef.current = false;
+      setServerClockOffsetMs(0);
       return;
     }
 
@@ -992,6 +998,10 @@ function App() {
     const leaderKey = `decrypto-room-leader-${roomId}`;
     const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`decrypto-room-${roomId}`) : null;
     setRoomRealtimeConnected(false);
+    serverClockOffsetInitializedRef.current = false;
+    serverClockCalibratedRef.current = false;
+    setServerClockOffsetMs(0);
+    void refreshRoomSnapshot(roomId, { silentError: true, force: true });
 
     const handleSubscriptionStatus = (status: RoomSubscriptionStatus) => {
       if (!active) {
@@ -1165,11 +1175,41 @@ function App() {
     };
   }, [roomId, sessionUserId]);
 
-  function applyServerSnapshot(nextSnapshot: RoomSnapshot, options?: { allowSameRevision?: boolean }): boolean {
+  function syncServerClock(
+    nextSnapshot: RoomSnapshot,
+    timing?: { requestStartedAt: number; responseReceivedAt: number },
+  ): void {
+    const serverNowMs = Date.parse(nextSnapshot.server_now);
+    if (!Number.isFinite(serverNowMs)) {
+      return;
+    }
+
+    const localReferenceMs = timing
+      ? (timing.requestStartedAt + timing.responseReceivedAt) / 2
+      : serverClockCalibratedRef.current || serverClockOffsetInitializedRef.current
+        ? null
+        : Date.now();
+    if (localReferenceMs === null) {
+      return;
+    }
+
+    serverClockOffsetInitializedRef.current = true;
+    if (timing) {
+      serverClockCalibratedRef.current = true;
+    }
+    setServerClockOffsetMs(serverNowMs - localReferenceMs);
+  }
+
+  function applyServerSnapshot(
+    nextSnapshot: RoomSnapshot,
+    options?: { allowSameRevision?: boolean; clockSync?: { requestStartedAt: number; responseReceivedAt: number } },
+  ): boolean {
     if (sessionUserId && !nextSnapshot.players.some((player) => player.auth_user_id === sessionUserId)) {
       resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
       return false;
     }
+
+    syncServerClock(nextSnapshot, options?.clockSync);
 
     setSnapshot((current) => {
       if (current && current.room.id !== nextSnapshot.room.id) {
@@ -1287,14 +1327,19 @@ function App() {
       lastFullRefreshAtRef.current = Date.now();
 
       try {
+        const requestStartedAt = Date.now();
         const nextSnapshot = await fetchRoomSnapshot(nextRoomId, {
           fullRoundHistory: showAllRoundRecordsRef.current,
         });
+        const responseReceivedAt = Date.now();
         if (snapshotRequestIdRef.current !== requestId) {
           return true;
         }
 
-        return applyServerSnapshot(nextSnapshot, { allowSameRevision: options?.force === true });
+        return applyServerSnapshot(nextSnapshot, {
+          allowSameRevision: options?.force === true,
+          clockSync: { requestStartedAt, responseReceivedAt },
+        });
       } catch (error) {
         if (snapshotRequestIdRef.current !== requestId) {
           return true;
@@ -1917,9 +1962,10 @@ function App() {
       : effectiveProgressText;
   const activeTimedPhase = snapshot && isTimedPhase(snapshot.room.phase) ? snapshot.room.phase : null;
   const countdownHasDeadline = Boolean(activeTimedPhase && snapshot?.room.phase_deadline_at);
+  const estimatedServerNow = timerNow + serverClockOffsetMs;
   const countdownSeconds =
     countdownHasDeadline && snapshot?.room.phase_deadline_at
-      ? Math.max(0, Math.ceil((new Date(snapshot.room.phase_deadline_at).getTime() - timerNow) / 1000))
+      ? Math.max(0, Math.ceil((new Date(snapshot.room.phase_deadline_at).getTime() - estimatedServerNow) / 1000))
       : 0;
   const countdownExpired = countdownHasDeadline && countdownSeconds === 0;
   const countdownTitle = activeTimedPhase ? `${timedPhaseLabel(activeTimedPhase)}倒计时` : '倒计时';

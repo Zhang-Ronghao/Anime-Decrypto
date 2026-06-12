@@ -148,6 +148,7 @@ export interface RoundSubmissionRecord {
 }
 
 export interface RoomSnapshot {
+  server_now: string;
   room: RoomRecord;
   players: PlayerRecord[];
   teamWords: TeamWordsRecord[];

@@ -3,9 +3,13 @@
 
 Anime Decrypto 是一个基于 React 和 Cloudflare 的网页多人「动漫高手——截码战」
 
-[游戏链接](https://anime-decrypto.pages.dev/) （更稳定，但需要挂梯子）
+[游戏链接](https://anime-decrypto.pages.dev/) （推荐，更流畅）
 
 [备用连接](https://anime-decrypto.netlify.app/)
+
+**两个链接房间数据不互通！！**
+
+**部分地区可能需要开梯子才能访问**
 
 和群 u 的动漫高手不知不觉也开到 4.0 了，靠 AI 水了个动漫高手版截码战。
 

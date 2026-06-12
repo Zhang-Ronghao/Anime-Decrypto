@@ -624,6 +624,7 @@ function publicSnapshot(state: RoomState, userId: string, fullRoundHistory = fal
     .sort((left, right) => right.round_number - left.round_number || left.team.localeCompare(right.team));
 
   return {
+    server_now: nowIso(),
     room: state.room,
     players: [...state.players].sort(sortPlayers),
     teamWords: state.teamWords.filter((record) => canSeeTeamWords(record.team, self)),
