@@ -21,7 +21,7 @@ database_id = "8544a886-dd92-4d10-8658-b9c58b3a621e"
 migrations_dir = "d1/migrations"
 
 [vars]
-ALLOWED_ORIGIN = "https://decrypto.animaster.dpdns.org"
+ALLOWED_ORIGIN = "https://decrypto.monight.dpdns.org"
 
 [observability]
 enabled = false
