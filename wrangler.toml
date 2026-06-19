@@ -23,5 +23,6 @@ migrations_dir = "d1/migrations"
 [vars]
 ALLOWED_ORIGIN = "https://decrypto.monight.dpdns.org"
 
-[observability]
+[observability.logs]
 enabled = false
+invocation_logs = true
