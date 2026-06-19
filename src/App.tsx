@@ -10,7 +10,6 @@ import {
   extractBangumiCharacters,
   fetchBangumiCatalogWords,
   fetchRoomSnapshot,
-  fetchRoundSubmissions,
   getRoomJoinStatus,
   generateTeamWords,
   joinRoom,
@@ -32,6 +31,7 @@ import {
   submitTeamWordFeedbackBatch,
   subscribeToSelfNotifications,
   subscribeToRoom,
+  type RoomSubscription,
   type RoomSubscriptionStatus,
   terminateGame,
   transferHost,
@@ -824,6 +824,8 @@ function App() {
   const roomRealtimeConnectedRef = useRef(false);
   const foregroundResyncTimerRef = useRef<number | null>(null);
   const showAllRoundRecordsRef = useRef(false);
+  const roomRealtimeChannelRef = useRef<BroadcastChannel | null>(null);
+  const roomSubscriptionRef = useRef<RoomSubscription | null>(null);
   const teamWordDraftRevisionRef = useRef(0);
   const teamWordServerSyncFreezeUntilRef = useRef(0);
   const [booting, setBooting] = useState(true);
@@ -993,10 +995,12 @@ function App() {
 
     let active = true;
     let isLeader = false;
-    let subscription: { unsubscribe(): void } | null = null;
+    let subscription: RoomSubscription | null = null;
     const tabId = crypto.randomUUID();
     const leaderKey = `decrypto-room-leader-${roomId}`;
     const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`decrypto-room-${roomId}`) : null;
+    roomRealtimeChannelRef.current = channel;
+    roomSubscriptionRef.current = null;
     setRoomRealtimeConnected(false);
     serverClockOffsetInitializedRef.current = false;
     serverClockCalibratedRef.current = false;
@@ -1024,18 +1028,23 @@ function App() {
       const directSubscription = subscribeToRoom(
         roomId,
         (nextSnapshot) => {
-          const applied = applyServerSnapshot(nextSnapshot);
-          if (applied && showAllRoundRecordsRef.current) {
-            void refreshRoomSnapshot(nextSnapshot.room.id, { silentError: true, force: true });
-          }
+          applyServerSnapshot(nextSnapshot);
         },
         () => resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE),
         handleSubscriptionStatus,
+        { fullRoundHistory: showAllRoundRecordsRef.current },
       );
+      roomSubscriptionRef.current = directSubscription;
 
       return () => {
         active = false;
         directSubscription.unsubscribe();
+        if (roomSubscriptionRef.current === directSubscription) {
+          roomSubscriptionRef.current = null;
+        }
+        if (roomRealtimeChannelRef.current === channel) {
+          roomRealtimeChannelRef.current = null;
+        }
       };
     }
 
@@ -1065,6 +1074,7 @@ function App() {
       }
       subscription?.unsubscribe();
       subscription = null;
+      roomSubscriptionRef.current = null;
       channel.postMessage({ type: 'leader-vacated' });
     };
 
@@ -1088,10 +1098,7 @@ function App() {
 
     const applyRoomSnapshot = (nextSnapshot: RoomSnapshot) => {
       rememberSnapshotContext(nextSnapshot);
-      const applied = applyServerSnapshot(nextSnapshot);
-      if (applied && showAllRoundRecordsRef.current) {
-        void refreshRoomSnapshot(nextSnapshot.room.id, { silentError: true, force: true });
-      }
+      applyServerSnapshot(nextSnapshot);
     };
 
     const becomeLeader = () => {
@@ -1112,7 +1119,9 @@ function App() {
           resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
         },
         handleLeaderSubscriptionStatus,
+        { fullRoundHistory: showAllRoundRecordsRef.current },
       );
+      roomSubscriptionRef.current = subscription;
     };
 
     const tryClaimLeadership = () => {
@@ -1126,7 +1135,7 @@ function App() {
     };
 
     channel?.addEventListener('message', (event) => {
-      const payload = event.data as { type?: string; snapshot?: RoomSnapshot; reason?: string };
+      const payload = event.data as { type?: string; snapshot?: RoomSnapshot; reason?: string; fullRoundHistory?: boolean };
       if (payload.type === 'snapshot' && payload.snapshot && !isLeader) {
         applyRoomSnapshot(payload.snapshot);
         setRoomRealtimeConnected(true);
@@ -1140,6 +1149,8 @@ function App() {
         tryClaimLeadership();
       } else if (payload.type === 'request-snapshot' && isLeader && snapshotRef.current) {
         channel.postMessage({ type: 'snapshot', snapshot: snapshotRef.current });
+      } else if (payload.type === 'subscription-options' && isLeader) {
+        subscription?.setFullRoundHistory(payload.fullRoundHistory === true);
       }
     });
 
@@ -1166,6 +1177,12 @@ function App() {
       window.clearInterval(election);
       subscription?.unsubscribe();
       channel?.close();
+      if (roomSubscriptionRef.current === subscription) {
+        roomSubscriptionRef.current = null;
+      }
+      if (roomRealtimeChannelRef.current === channel) {
+        roomRealtimeChannelRef.current = null;
+      }
       if (isLeader) {
         const leader = readLeader();
         if (leader?.tabId === tabId) {
@@ -2312,19 +2329,17 @@ function App() {
     }
 
     if (showAllRoundRecords) {
+      showAllRoundRecordsRef.current = false;
       setShowAllRoundRecords(false);
+      roomSubscriptionRef.current?.setFullRoundHistory(false);
+      roomRealtimeChannelRef.current?.postMessage({ type: 'subscription-options', fullRoundHistory: false });
       return;
     }
 
-    const submissions = await withAction('load-round-records', () =>
-      fetchRoundSubmissions(snapshot.room.id, { full: true }),
-    );
-    if (submissions === null) {
-      return;
-    }
-
-    setSnapshot((current) => (current && current.room.id === snapshot.room.id ? { ...current, submissions } : current));
+    showAllRoundRecordsRef.current = true;
     setShowAllRoundRecords(true);
+    roomSubscriptionRef.current?.setFullRoundHistory(true);
+    roomRealtimeChannelRef.current?.postMessage({ type: 'subscription-options', fullRoundHistory: true });
   }
 
   function updateBangumiCatalogInput(index: number, value: string) {

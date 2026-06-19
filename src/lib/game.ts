@@ -486,6 +486,7 @@ export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CH
 export type SelfNotificationKind = 'kicked';
 
 export interface RoomSubscription {
+  setFullRoundHistory(enabled: boolean): void;
   unsubscribe(): void;
 }
 
@@ -494,14 +495,22 @@ export function subscribeToRoom(
   onSnapshot: (snapshot: RoomSnapshot) => void,
   onRoomClosed?: (reason: string) => void,
   onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
+  options: { fullRoundHistory?: boolean } = {},
 ): RoomSubscription {
-  const socket = new WebSocket(wsUrl(`/api/rooms/${encodeURIComponent(roomId)}/ws`));
+  const initialFullRoundHistory = options.fullRoundHistory === true;
+  const socket = new WebSocket(
+    wsUrl(`/api/rooms/${encodeURIComponent(roomId)}/ws?fullRoundHistory=${initialFullRoundHistory ? 'true' : 'false'}`),
+  );
   const pendingActions = new Map<string, PendingWsAction>();
   let opened = false;
+  let requestedFullRoundHistory = initialFullRoundHistory;
 
   socket.addEventListener('open', () => {
     opened = true;
     registerActiveRoomSocket(roomId, socket, pendingActions);
+    if (requestedFullRoundHistory !== initialFullRoundHistory) {
+      socket.send(JSON.stringify({ type: 'subscription_options', fullRoundHistory: requestedFullRoundHistory }));
+    }
     emitUsageMetric('wsOpen');
     onStatus?.('SUBSCRIBED');
   });
@@ -548,6 +557,14 @@ export function subscribeToRoom(
   });
 
   return {
+    setFullRoundHistory(enabled: boolean) {
+      requestedFullRoundHistory = enabled;
+      if (socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      socket.send(JSON.stringify({ type: 'subscription_options', fullRoundHistory: enabled }));
+    },
     unsubscribe() {
       unregisterActiveRoomSocket(socket, 'WebSocket unsubscribed');
       socket.close();
@@ -562,6 +579,9 @@ export function subscribeToSelfNotifications(
 ): RoomSubscription {
   onStatus?.('SUBSCRIBED');
   return {
+    setFullRoundHistory() {
+      // Self-notification subscriptions do not carry room snapshots.
+    },
     unsubscribe() {
       // Kicks are detected by the room snapshot membership check after room_players changes.
     },

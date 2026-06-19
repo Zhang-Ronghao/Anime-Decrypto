@@ -1137,10 +1137,27 @@ export class RoomDurableObject {
       return;
     }
 
-    let payload: { type?: string; action?: Action } | null = null;
+    let payload: { type?: string; action?: Action; fullRoundHistory?: boolean } | null = null;
     try {
-      payload = JSON.parse(message) as { type?: string; action?: Action };
+      payload = JSON.parse(message) as { type?: string; action?: Action; fullRoundHistory?: boolean };
     } catch {
+      return;
+    }
+
+    if (payload?.type === 'subscription_options') {
+      const attachment = this.socketAttachment(socket);
+      if (!attachment) {
+        socket.close();
+        return;
+      }
+
+      socket.serializeAttachment({
+        ...attachment,
+        fullRoundHistory: payload.fullRoundHistory === true,
+      } satisfies RoomSocketAttachment);
+
+      const current = await this.requireState(attachment.roomId);
+      this.sendSnapshot(socket, current);
       return;
     }
 
@@ -1176,6 +1193,7 @@ export class RoomDurableObject {
   }
 
   private async handleWebSocket(request: Request, roomId: string): Promise<Response> {
+    const url = new URL(request.url);
     const userId = requireSession(request);
     const current = await this.requireState(roomId);
     publicSnapshot(current, userId);
@@ -1187,7 +1205,7 @@ export class RoomDurableObject {
       userId,
       roomId,
       connectionId: id(),
-      fullRoundHistory: false,
+      fullRoundHistory: url.searchParams.get('fullRoundHistory') === 'true',
     } satisfies RoomSocketAttachment);
     this.sendSnapshot(server, current);
     return new Response(null, { status: 101, webSocket: client });
