@@ -21,6 +21,7 @@ import {
   BANGUMI_POPULAR_ANIME,
   BANGUMI_POPULAR_ANIME_SOURCE_DATE,
 } from './data/bangumi-popular-anime';
+import { handleRoomChatMessage, RoomChatRateLimiter } from './roomChat';
 
 export interface Env {
   DB: D1Database;
@@ -122,6 +123,7 @@ interface LoadBangumiCatalogPayload {
 }
 
 const SESSION_COOKIE = 'decrypto_session';
+const CHAT_ENVELOPE_ENCODER = new TextEncoder();
 const ROOM_TABLES = [
   'rooms',
   'room_players',
@@ -1052,6 +1054,7 @@ async function roomIdByCode(env: Env, roomCode: string): Promise<string | null> 
 
 export class RoomDurableObject {
   private stateCache: RoomState | null = null;
+  private readonly roomChatRateLimiter = new RoomChatRateLimiter();
 
   constructor(
     private readonly state: DurableObjectState,
@@ -1137,10 +1140,45 @@ export class RoomDurableObject {
       return;
     }
 
-    let payload: { type?: string; action?: Action; fullRoundHistory?: boolean } | null = null;
+    let payload: {
+      type?: string;
+      action?: Action;
+      fullRoundHistory?: boolean;
+      clientMessageId?: unknown;
+      text?: unknown;
+    } | null = null;
     try {
-      payload = JSON.parse(message) as { type?: string; action?: Action; fullRoundHistory?: boolean };
+      payload = JSON.parse(message) as {
+        type?: string;
+        action?: Action;
+        fullRoundHistory?: boolean;
+        clientMessageId?: unknown;
+        text?: unknown;
+      };
     } catch {
+      return;
+    }
+
+    if (payload?.type === 'chat_send') {
+      const attachment = this.socketAttachment(socket);
+      if (!attachment) {
+        socket.close();
+        return;
+      }
+
+      const current = await this.requireState(attachment.roomId);
+      handleRoomChatMessage({
+        socket,
+        envelope: payload,
+        envelopeBytes: CHAT_ENVELOPE_ENCODER.encode(message).byteLength,
+        sockets: this.state.getWebSockets(),
+        context: {
+          roomId: current.room.id,
+          phase: current.room.phase,
+          players: current.players,
+        },
+        rateLimiter: this.roomChatRateLimiter,
+      });
       return;
     }
 

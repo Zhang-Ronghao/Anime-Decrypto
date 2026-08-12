@@ -27,6 +27,9 @@ Browser
 - `src/lib/session.ts`：匿名 session bootstrap。
 - `src/types.ts`：前后端共享领域类型。
 - `src/lib/utils.ts`：队伍、身份、阶段、猜测格式等工具函数。
+- `src/components/RoomChat.tsx`：底部聊天栏、展开记录、阶段语境和观战视角展示。
+- `src/lib/roomChat.ts`：聊天临时历史、去重、阶段与队伍过滤。
+- `src/types/chat.ts`：聊天 WebSocket 协议类型。
 
 前端不会直接写数据库，也不会自己决定隐藏信息能否被读取。
 
@@ -111,6 +114,25 @@ POST /api/rooms/:id/action
 ```
 
 `clientActionId` 保证回退时不会重复执行已完成的 action。
+
+## 房间聊天
+
+聊天复用房间现有 WebSocket，不创建独立连接，也不使用 HTTP fallback。客户端只发送正文意图：
+
+```json
+{
+  "type": "chat_send",
+  "clientMessageId": "session:uuid:chat",
+  "channel": "team",
+  "text": "消息正文"
+}
+```
+
+Durable Object 根据客户端选择的频道以及当前权威阶段、发送者身份和队伍决定接收范围：大厅、回合结算和游戏结束仅使用房间频道；词语分配、加密、解码和拦截默认队内频道，已入队玩家可切换房间频道。队内消息只向发送者队伍与所有观战者广播，房间消息向全房广播。解码阶段的加密/拦截者以及对局阶段的观战者不能发送。普通玩家不会收到对方队伍消息，观战客户端收到两队消息后按当前观战视角展示，并同时显示房间消息。
+
+聊天消息不进入 `RoomState`，不增加 room revision，不触发 snapshot、D1 或 Durable Object storage 写入。浏览器仅在当前标签页的 `sessionStorage` 中保留每个房间最近 100 条消息。
+
+同一浏览器多标签页继续共用 BroadcastChannel leader：follower 把聊天发送意图转交 leader，leader 通过唯一房间 WebSocket 发送；收到聊天事件后再转发给其他标签页，并按 `messageId` 去重。
 
 ## 低 request 策略
 

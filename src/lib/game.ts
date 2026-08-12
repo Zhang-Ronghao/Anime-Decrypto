@@ -6,6 +6,7 @@ import type {
   Team,
   TeamWordSlot,
 } from '../types';
+import type { RoomChatServerEvent } from '../types/chat';
 import { getSessionIdForRequest } from './session';
 
 const DEFAULT_ROUND_HISTORY_ROW_LIMIT = 16;
@@ -486,6 +487,7 @@ export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CH
 export type SelfNotificationKind = 'kicked';
 
 export interface RoomSubscription {
+  sendChat(clientMessageId: string, channel: 'room' | 'team', text: string): boolean;
   setFullRoundHistory(enabled: boolean): void;
   unsubscribe(): void;
 }
@@ -495,7 +497,7 @@ export function subscribeToRoom(
   onSnapshot: (snapshot: RoomSnapshot) => void,
   onRoomClosed?: (reason: string) => void,
   onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
-  options: { fullRoundHistory?: boolean } = {},
+  options: { fullRoundHistory?: boolean; onChatEvent?: (event: RoomChatServerEvent) => void } = {},
 ): RoomSubscription {
   const initialFullRoundHistory = options.fullRoundHistory === true;
   const socket = new WebSocket(
@@ -536,6 +538,8 @@ export function subscribeToRoom(
         onSnapshot(payload.snapshot);
       } else if (payload.type === 'action_result') {
         handleWsActionResult(payload, pendingActions);
+      } else if (payload.type === 'chat_message' || payload.type === 'chat_error') {
+        options.onChatEvent?.(payload as RoomChatServerEvent);
       } else if (payload.type === 'room_closed') {
         onRoomClosed?.(payload.reason ?? 'closed');
       } else if (payload.type === 'error') {
@@ -557,6 +561,18 @@ export function subscribeToRoom(
   });
 
   return {
+    sendChat(clientMessageId: string, channel: 'room' | 'team', text: string) {
+      if (socket.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+
+      try {
+        socket.send(JSON.stringify({ type: 'chat_send', clientMessageId, channel, text }));
+        return true;
+      } catch {
+        return false;
+      }
+    },
     setFullRoundHistory(enabled: boolean) {
       requestedFullRoundHistory = enabled;
       if (socket.readyState !== WebSocket.OPEN) {
@@ -579,6 +595,9 @@ export function subscribeToSelfNotifications(
 ): RoomSubscription {
   onStatus?.('SUBSCRIBED');
   return {
+    sendChat() {
+      return false;
+    },
     setFullRoundHistory() {
       // Self-notification subscriptions do not carry room snapshots.
     },

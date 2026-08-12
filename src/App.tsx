@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useRef } from 'react';
+import { RoomChat } from './components/RoomChat';
 import {
   advanceRound,
   cleanupExpiredRooms,
@@ -39,6 +40,12 @@ import {
   updateSelfSpectator,
   updateSelfSeat,
 } from './lib/game';
+import {
+  appendRoomChatMessage,
+  clearRoomChatMessages,
+  loadRoomChatMessages,
+  saveRoomChatMessages,
+} from './lib/roomChat';
 import { backendAuth, ensureSession, isBackendConfigured } from './lib/session';
 import {
   cn,
@@ -69,6 +76,7 @@ import type {
   TeamWordSlot,
   TeamWordsRecord,
 } from './types';
+import type { RoomChatAudience, RoomChatMessage, RoomChatServerEvent } from './types/chat';
 
 interface SeatCardProps {
   team: Team;
@@ -826,6 +834,8 @@ function App() {
   const showAllRoundRecordsRef = useRef(false);
   const roomRealtimeChannelRef = useRef<BroadcastChannel | null>(null);
   const roomSubscriptionRef = useRef<RoomSubscription | null>(null);
+  const roomRealtimeTabIdRef = useRef<string | null>(null);
+  const roomChatPendingRef = useRef(new Map<string, number>());
   const teamWordDraftRevisionRef = useRef(0);
   const teamWordServerSyncFreezeUntilRef = useRef(0);
   const [booting, setBooting] = useState(true);
@@ -857,6 +867,8 @@ function App() {
   const [hostTransferDialogOpen, setHostTransferDialogOpen] = useState(false);
   const [pendingMidgameJoin, setPendingMidgameJoin] = useState<RoomJoinStatus | null>(null);
   const [spectatorTeamView, setSpectatorTeamView] = useState<Team>('A');
+  const [roomChatMessages, setRoomChatMessages] = useState<RoomChatMessage[]>([]);
+  const [roomChatError, setRoomChatError] = useState('');
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
   const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
   const [bangumiCatalogBrowserWords, setBangumiCatalogBrowserWords] = useState<string[]>([]);
@@ -901,6 +913,24 @@ function App() {
   }, [snapshot]);
 
   useEffect(() => {
+    for (const timeoutId of roomChatPendingRef.current.values()) {
+      window.clearTimeout(timeoutId);
+    }
+    roomChatPendingRef.current.clear();
+    setRoomChatMessages(roomId ? loadRoomChatMessages(roomId) : []);
+    setRoomChatError('');
+  }, [roomId]);
+
+  useEffect(() => {
+    if (!roomChatError) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => setRoomChatError(''), 4000);
+    return () => window.clearTimeout(timeoutId);
+  }, [roomChatError]);
+
+  useEffect(() => {
     showAllRoundRecordsRef.current = showAllRoundRecords;
   }, [showAllRoundRecords]);
 
@@ -918,6 +948,71 @@ function App() {
     }
 
     setSyncFallbackUntil(Date.now() + durationMs);
+  }
+
+  function clearRoomChatPending(clientMessageId: string): boolean {
+    const timeoutId = roomChatPendingRef.current.get(clientMessageId);
+    if (timeoutId === undefined) {
+      return false;
+    }
+
+    window.clearTimeout(timeoutId);
+    roomChatPendingRef.current.delete(clientMessageId);
+    return true;
+  }
+
+  function failRoomChatPending(clientMessageId: string, message: string): void {
+    if (clearRoomChatPending(clientMessageId)) {
+      setRoomChatError(message);
+    }
+  }
+
+  function handleRoomChatEvent(event: RoomChatServerEvent): void {
+    if (event.type === 'chat_error') {
+      if (event.clientMessageId) {
+        failRoomChatPending(event.clientMessageId, event.message);
+      }
+      return;
+    }
+
+    if (event.roomId !== roomId) {
+      return;
+    }
+
+    clearRoomChatPending(event.clientMessageId);
+    setRoomChatMessages((current) => {
+      const next = appendRoomChatMessage(current, event);
+      saveRoomChatMessages(event.roomId, next);
+      return next;
+    });
+  }
+
+  function handleRoomChatSend(audience: RoomChatAudience, text: string): boolean {
+    const normalizedText = text.trim();
+    if (!roomId || !normalizedText || !roomRealtimeConnected) {
+      setRoomChatError('聊天连接尚未就绪，请稍后再试。');
+      return false;
+    }
+
+    const clientMessageId = `${sessionUserId ?? 'session'}:${crypto.randomUUID()}:chat`;
+    const timeoutId = window.setTimeout(() => {
+      failRoomChatPending(clientMessageId, '聊天消息发送超时，请重试。');
+    }, 4000);
+    roomChatPendingRef.current.set(clientMessageId, timeoutId);
+
+    if (roomSubscriptionRef.current?.sendChat(clientMessageId, audience, normalizedText)) {
+      return true;
+    }
+
+    const channel = roomRealtimeChannelRef.current;
+    const tabId = roomRealtimeTabIdRef.current;
+    if (channel && tabId) {
+      channel.postMessage({ type: 'chat-send-request', channel: audience, clientMessageId, text: normalizedText, tabId });
+      return true;
+    }
+
+    failRoomChatPending(clientMessageId, '聊天连接尚未就绪，请稍后再试。');
+    return false;
   }
 
   useEffect(() => {
@@ -997,6 +1092,7 @@ function App() {
     let isLeader = false;
     let subscription: RoomSubscription | null = null;
     const tabId = crypto.randomUUID();
+    roomRealtimeTabIdRef.current = tabId;
     const leaderKey = `decrypto-room-leader-${roomId}`;
     const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`decrypto-room-${roomId}`) : null;
     roomRealtimeChannelRef.current = channel;
@@ -1032,7 +1128,7 @@ function App() {
         },
         () => resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE),
         handleSubscriptionStatus,
-        { fullRoundHistory: showAllRoundRecordsRef.current },
+        { fullRoundHistory: showAllRoundRecordsRef.current, onChatEvent: handleRoomChatEvent },
       );
       roomSubscriptionRef.current = directSubscription;
 
@@ -1044,6 +1140,9 @@ function App() {
         }
         if (roomRealtimeChannelRef.current === channel) {
           roomRealtimeChannelRef.current = null;
+        }
+        if (roomRealtimeTabIdRef.current === tabId) {
+          roomRealtimeTabIdRef.current = null;
         }
       };
     }
@@ -1119,7 +1218,13 @@ function App() {
           resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
         },
         handleLeaderSubscriptionStatus,
-        { fullRoundHistory: showAllRoundRecordsRef.current },
+        {
+          fullRoundHistory: showAllRoundRecordsRef.current,
+          onChatEvent: (event) => {
+            handleRoomChatEvent(event);
+            channel.postMessage({ type: 'chat-event', event });
+          },
+        },
       );
       roomSubscriptionRef.current = subscription;
     };
@@ -1135,10 +1240,46 @@ function App() {
     };
 
     channel?.addEventListener('message', (event) => {
-      const payload = event.data as { type?: string; snapshot?: RoomSnapshot; reason?: string; fullRoundHistory?: boolean };
+      const payload = event.data as {
+        type?: string;
+        snapshot?: RoomSnapshot;
+        reason?: string;
+        fullRoundHistory?: boolean;
+        event?: RoomChatServerEvent;
+        clientMessageId?: string;
+        channel?: RoomChatAudience;
+        text?: string;
+        tabId?: string;
+        targetTabId?: string;
+        message?: string;
+      };
       if (payload.type === 'snapshot' && payload.snapshot && !isLeader) {
         applyRoomSnapshot(payload.snapshot);
         setRoomRealtimeConnected(true);
+      } else if (payload.type === 'chat-event' && payload.event && !isLeader) {
+        handleRoomChatEvent(payload.event);
+      } else if (
+        payload.type === 'chat-send-request' &&
+        isLeader &&
+        payload.clientMessageId &&
+        (payload.channel === 'room' || payload.channel === 'team') &&
+        typeof payload.text === 'string' &&
+        payload.tabId
+      ) {
+        if (!subscription?.sendChat(payload.clientMessageId, payload.channel, payload.text)) {
+          channel.postMessage({
+            type: 'chat-send-unavailable',
+            clientMessageId: payload.clientMessageId,
+            targetTabId: payload.tabId,
+            message: '聊天连接尚未就绪，请稍后再试。',
+          });
+        }
+      } else if (
+        payload.type === 'chat-send-unavailable' &&
+        payload.targetTabId === tabId &&
+        payload.clientMessageId
+      ) {
+        failRoomChatPending(payload.clientMessageId, payload.message ?? '聊天消息发送失败。');
       } else if (payload.type === 'room-closed') {
         resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE);
       } else if (payload.type === 'leader-alive' && !isLeader) {
@@ -1182,6 +1323,9 @@ function App() {
       }
       if (roomRealtimeChannelRef.current === channel) {
         roomRealtimeChannelRef.current = null;
+      }
+      if (roomRealtimeTabIdRef.current === tabId) {
+        roomRealtimeTabIdRef.current = null;
       }
       if (isLeader) {
         const leader = readLeader();
@@ -2113,6 +2257,13 @@ function App() {
   }
 
   function resetRoomState(message?: string) {
+    if (roomId) {
+      clearRoomChatMessages(roomId);
+    }
+    for (const timeoutId of roomChatPendingRef.current.values()) {
+      window.clearTimeout(timeoutId);
+    }
+    roomChatPendingRef.current.clear();
     snapshotRequestIdRef.current += 1;
     snapshotRef.current = null;
     refreshInFlightRef.current = null;
@@ -2122,6 +2273,8 @@ function App() {
     }
     setRoomId(null);
     setSnapshot(null);
+    setRoomChatMessages([]);
+    setRoomChatError('');
     setSyncFallbackUntil(null);
     setJoinCode('');
     setClueForm(['', '', '']);
@@ -3877,6 +4030,16 @@ function App() {
             </article>
           </section>
 
+          <RoomChat
+            connected={roomRealtimeConnected}
+            error={roomChatError}
+            messages={roomChatMessages}
+            onSend={handleRoomChatSend}
+            phase={snapshot.room.phase}
+            self={self}
+            spectatorTeamView={spectatorTeamView}
+          />
+
           <footer className="home-footer" aria-label="相关信息">
             <div className="home-footer-grid">
               <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
@@ -4714,6 +4877,16 @@ function App() {
               </section>
             </article>
           </section>
+
+          <RoomChat
+            connected={roomRealtimeConnected}
+            error={roomChatError}
+            messages={roomChatMessages}
+            onSend={handleRoomChatSend}
+            phase={snapshot.room.phase}
+            self={self}
+            spectatorTeamView={spectatorTeamView}
+          />
 
           <section className="game-footer-actions">
             <small className="game-footer-note">页面切换刷新偶尔会失败，请尝试按F5手动刷新</small>
