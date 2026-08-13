@@ -287,6 +287,7 @@ export async function updateRoomLobbySettings(
   seatCount: number,
   roleRotationEnabled: boolean,
   timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number },
+  forcePhaseTimeoutEnabled: boolean,
   miscommunicationLimit: number,
   lifeModeEnabled: boolean,
   lifePoints: number,
@@ -299,6 +300,7 @@ export async function updateRoomLobbySettings(
       seatCount,
       roleRotationEnabled,
       timers,
+      forcePhaseTimeoutEnabled,
       miscommunicationLimit,
       lifeModeEnabled,
       lifePoints,
@@ -306,6 +308,16 @@ export async function updateRoomLobbySettings(
       bangumiCharacterExtractEnabled,
     },
   });
+}
+
+export async function submitTimeoutDraft(
+  roomId: string,
+  phase: 'encrypt' | 'decode' | 'intercept',
+  roundNumber: number,
+  phaseDeadlineAt: string,
+  draft: { kind: 'clues'; values: string[] } | { kind: 'guess'; digits: Array<string | null> },
+) {
+  await action(roomId, { type: 'submitTimeoutDraft', phase, roundNumber, phaseDeadlineAt, draft });
 }
 
 export async function updateSelfSeat(roomId: string, team: Team | null, teamSeat: number | null) {

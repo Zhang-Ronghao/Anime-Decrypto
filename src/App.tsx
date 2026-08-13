@@ -30,6 +30,7 @@ import {
   submitOwnGuess,
   submitRoundGuessFeedbackBatch,
   submitTeamWordFeedbackBatch,
+  submitTimeoutDraft,
   subscribeToSelfNotifications,
   subscribeToRoom,
   type RoomSubscription,
@@ -173,7 +174,7 @@ const GUESS_NUMBER_NOTE = '线索按正确编号归位；括号内是队友猜�
 const FULL_REFRESH_MIN_INTERVAL_MS = 800;
 
 type LobbySettingsOptimistic = Partial<
-  Pick<RoomRecord, 'life_mode_enabled' | 'life_points' | 'bangumi_character_extract_enabled'>
+  Pick<RoomRecord, 'life_mode_enabled' | 'life_points' | 'bangumi_character_extract_enabled' | 'force_phase_timeout_enabled'>
 >;
 
 interface UsageDebugCounters {
@@ -466,7 +467,7 @@ function guessDigits(value: string): string[] {
   const digits = value
     .split('-')
     .slice(0, 3)
-    .map((digit) => (['1', '2', '3', '4'].includes(digit) ? digit : ''));
+    .map((digit) => (['1', '2', '3', '4', 'x'].includes(digit) ? digit : ''));
 
   return [digits[0] ?? '', digits[1] ?? '', digits[2] ?? ''];
 }
@@ -838,6 +839,7 @@ function App() {
   const roomChatPendingRef = useRef(new Map<string, number>());
   const teamWordDraftRevisionRef = useRef(0);
   const teamWordServerSyncFreezeUntilRef = useRef(0);
+  const timeoutDraftAttemptedRef = useRef(new Set<string>());
   const [booting, setBooting] = useState(true);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
@@ -1739,6 +1741,8 @@ function App() {
   const lifePoints = optimisticLobbySettings?.life_points ?? lifePointsFromRoom(snapshot?.room);
   const bangumiCharacterExtractEnabled =
     optimisticLobbySettings?.bangumi_character_extract_enabled ?? (snapshot?.room.bangumi_character_extract_enabled === true);
+  const forcePhaseTimeoutEnabled =
+    optimisticLobbySettings?.force_phase_timeout_enabled ?? (snapshot?.room.force_phase_timeout_enabled === true);
   const bangumiPopularRangePercent =
     ((bangumiPopularCatalogLimit - BANGUMI_POPULAR_LIMIT_MIN) / (BANGUMI_POPULAR_LIMIT_MAX - BANGUMI_POPULAR_LIMIT_MIN)) *
     100;
@@ -1917,10 +1921,23 @@ function App() {
   );
   const canSubmitTeamWordFeedbackDraft =
     canSubmitTeamWordFeedback && teamWordFeedbackDraftComplete && teamWordFeedbackDraftChanged;
-  const canSubmitClues = !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
-  const canSubmitDecode = !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
+  const forcedPhaseExpired = Boolean(
+    forcePhaseTimeoutEnabled &&
+      snapshot?.room.phase_deadline_at &&
+      timerNow + serverClockOffsetMs >= new Date(snapshot.room.phase_deadline_at).getTime(),
+  );
+  const canSubmitClues =
+    !forcedPhaseExpired && !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
+  const showClueForm = !isSpectator && isCurrentEncryptPhase && self?.role === 'encoder' && !myTeamSubmission?.clues;
+  const canSubmitDecode =
+    !forcedPhaseExpired && !isSpectator && isDecodePhase && self?.role === 'decoder' && !myTeamSubmission?.own_guess;
   const canSubmitIntercept =
-    !isSpectator && isInterceptPhase && !isFirstRoundInterceptSkip && self?.role === 'encoder' && !opponentSubmission?.intercept_guess;
+    !forcedPhaseExpired &&
+    !isSpectator &&
+    isInterceptPhase &&
+    !isFirstRoundInterceptSkip &&
+    self?.role === 'encoder' &&
+    !opponentSubmission?.intercept_guess;
   const decodeFeedbackResponses = useMemo(
     () =>
       currentRoundGuessFeedbackResponses.filter(
@@ -1983,7 +2000,8 @@ function App() {
     self && [0, 1, 2].some((clueIndex) => activeGuessFeedbackByPlayerClue[roundGuessFeedbackKey(self.id, clueIndex)]),
   );
   const canSubmitDecodeFeedback = Boolean(
-    !isSpectator &&
+    !forcedPhaseExpired &&
+      !isSpectator &&
       isDecodePhase &&
       self?.team &&
       self.role === 'member' &&
@@ -1991,7 +2009,8 @@ function App() {
       (myTeamSubmission?.clues?.length ?? 0) > 0,
   );
   const canSubmitInterceptFeedback = Boolean(
-    !isSpectator &&
+    !forcedPhaseExpired &&
+      !isSpectator &&
       isInterceptPhase &&
       !isFirstRoundInterceptSkip &&
       self?.team &&
@@ -2020,11 +2039,33 @@ function App() {
   const guessChoiceLabel = isDecodePhase ? '选择线索对应词语' : '猜测线索对应词语';
   const guessFeedbackButtonLabel = isDecodePhase ? '发送解密建议' : '发送拦截建议';
   const hasActiveGuessFeedback = activeGuessVoteResponses.length > 0;
-  const canSkipFirstIntercept = Boolean(isFirstRoundInterceptSkip && self?.is_host);
+  const canSkipFirstIntercept = Boolean(!forcedPhaseExpired && isFirstRoundInterceptSkip && self?.is_host);
   const displayedDecodeDigits = myTeamSubmission?.own_guess ? guessDigits(myTeamSubmission.own_guess) : decodeDigits;
   const displayedInterceptDigits = opponentSubmission?.intercept_guess
     ? guessDigits(opponentSubmission.intercept_guess)
     : interceptDigits;
+  const submittedCluesKey = myTeamSubmission?.clues?.join('\u0000') ?? null;
+  const submittedDecodeGuess = myTeamSubmission?.own_guess ?? null;
+  const submittedInterceptGuess = opponentSubmission?.intercept_guess ?? null;
+
+  useEffect(() => {
+    if (submittedCluesKey !== null) {
+      setClueForm(['', '', '']);
+    }
+  }, [submittedCluesKey]);
+
+  useEffect(() => {
+    if (submittedDecodeGuess !== null) {
+      setDecodeGuess('');
+    }
+  }, [submittedDecodeGuess]);
+
+  useEffect(() => {
+    if (submittedInterceptGuess !== null) {
+      setInterceptGuess('');
+    }
+  }, [submittedInterceptGuess]);
+
   const myTeamCluesSubmitted = Boolean(myTeamSubmission?.clues);
   const opponentCluesSubmitted = Boolean(opponentSubmission?.clues);
   const myTeamDecodeSubmitted = Boolean(myTeamSubmission?.own_guess);
@@ -2131,6 +2172,71 @@ function App() {
   const countdownExpired = countdownHasDeadline && countdownSeconds === 0;
   const countdownTitle = activeTimedPhase ? `${timedPhaseLabel(activeTimedPhase)}倒计时` : '倒计时';
   const countdownText = formatCountdown(countdownSeconds);
+  const countdownHint = forcePhaseTimeoutEnabled
+    ? countdownExpired
+      ? '自动提交中'
+      : '到时自动提交'
+    : countdownExpired
+      ? '请尽快确认'
+      : '\u00a0';
+
+  useEffect(() => {
+    if (
+      !snapshot ||
+      !self?.team ||
+      !forcePhaseTimeoutEnabled ||
+      !countdownExpired ||
+      !activeTimedPhase ||
+      !snapshot.room.phase_deadline_at
+    ) {
+      return;
+    }
+
+    const submission = activeTimedPhase === 'intercept' ? opponentSubmission : myTeamSubmission;
+    const isSubmitter =
+      activeTimedPhase === 'encrypt'
+        ? self.role === 'encoder' && !submission?.clues
+        : activeTimedPhase === 'decode'
+          ? self.role === 'decoder' && !submission?.own_guess
+          : snapshot.room.round_number > 1 && self.role === 'encoder' && !submission?.intercept_guess;
+    if (!isSubmitter) {
+      return;
+    }
+
+    const attemptKey = `${snapshot.room.id}:${snapshot.room.round_number}:${activeTimedPhase}:${snapshot.room.phase_deadline_at}`;
+    if (timeoutDraftAttemptedRef.current.has(attemptKey)) {
+      return;
+    }
+    timeoutDraftAttemptedRef.current.add(attemptKey);
+
+    const draft =
+      activeTimedPhase === 'encrypt'
+        ? { kind: 'clues' as const, values: clueForm }
+        : {
+            kind: 'guess' as const,
+            digits: guessDigits(activeTimedPhase === 'decode' ? decodeGuess : interceptGuess).map((digit) => digit || null),
+          };
+    void submitTimeoutDraft(
+      snapshot.room.id,
+      activeTimedPhase,
+      snapshot.room.round_number,
+      snapshot.room.phase_deadline_at,
+      draft,
+    ).catch(() => {
+      beginSyncFallback();
+    });
+  }, [
+    activeTimedPhase,
+    clueForm,
+    countdownExpired,
+    decodeGuess,
+    forcePhaseTimeoutEnabled,
+    interceptGuess,
+    myTeamSubmission,
+    opponentSubmission,
+    self,
+    snapshot,
+  ]);
   const lobbyStartHint = snapshot
     ? unassignedPlayerCount > 0
       ? '开始前，未入队玩家需要选择队伍或加入观战'
@@ -2685,6 +2791,7 @@ function App() {
         seatCount,
         snapshot.room.role_rotation_enabled,
         timers,
+        snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
@@ -2706,6 +2813,7 @@ function App() {
         snapshot.room.seat_count,
         enabled,
         timers,
+        snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
@@ -2742,6 +2850,7 @@ function App() {
         snapshot.room.seat_count,
         snapshot.room.role_rotation_enabled,
         nextTimers,
+        snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
@@ -2763,6 +2872,7 @@ function App() {
         snapshot.room.seat_count,
         snapshot.room.role_rotation_enabled,
         timers,
+        snapshot.room.force_phase_timeout_enabled,
         limit,
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
@@ -2785,6 +2895,7 @@ function App() {
         snapshot.room.seat_count,
         snapshot.room.role_rotation_enabled,
         timers,
+        snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
         enabled,
         lifePointsFromRoom(snapshot.room),
@@ -2794,6 +2905,33 @@ function App() {
     );
     if (result !== null) {
       patchSnapshotRoom({ life_mode_enabled: enabled });
+    }
+    setOptimisticLobbySettings(null);
+  }
+
+  async function handleForcePhaseTimeoutToggle(enabled: boolean) {
+    if (!snapshot || !self?.is_host || enabled === forcePhaseTimeoutEnabled) {
+      return;
+    }
+
+    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
+    setOptimisticLobbySettings((current) => ({ ...current, force_phase_timeout_enabled: enabled }));
+    const result = await withAction('lobby-force-timeout', () =>
+      updateRoomLobbySettings(
+        snapshot.room.id,
+        snapshot.room.seat_count,
+        snapshot.room.role_rotation_enabled,
+        timers,
+        enabled,
+        miscommunicationLimitFromRoom(snapshot.room),
+        snapshot.room.life_mode_enabled,
+        lifePointsFromRoom(snapshot.room),
+        snapshot.room.allow_midgame_join,
+        snapshot.room.bangumi_character_extract_enabled,
+      ),
+    );
+    if (result !== null) {
+      patchSnapshotRoom({ force_phase_timeout_enabled: enabled });
     }
     setOptimisticLobbySettings(null);
   }
@@ -2811,6 +2949,7 @@ function App() {
         snapshot.room.seat_count,
         snapshot.room.role_rotation_enabled,
         timers,
+        snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
         snapshot.room.life_mode_enabled,
         points,
@@ -2836,6 +2975,7 @@ function App() {
         snapshot.room.seat_count,
         snapshot.room.role_rotation_enabled,
         timers,
+        snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
@@ -2858,6 +2998,7 @@ function App() {
         snapshot.room.seat_count,
         snapshot.room.role_rotation_enabled,
         timers,
+        snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
         snapshot.room.life_mode_enabled,
         lifePointsFromRoom(snapshot.room),
@@ -3833,6 +3974,7 @@ function App() {
                     </select>
                   </label>
                 ))}
+
               </div>
 
               <div className="lobby-settings-block lobby-settings-catalog">
@@ -4428,6 +4570,7 @@ function App() {
                               value={displayedDecodeDigits[index] ?? ''}
                             >
                               <option value="">-</option>
+                              {displayedDecodeDigits[index] === 'x' ? <option value="x">x</option> : null}
                               {[1, 2, 3, 4].map((option) => (
                                 <option key={option} value={String(option)}>
                                   {option}
@@ -4469,6 +4612,7 @@ function App() {
                                 value={displayedDecodeDigits[index] ?? ''}
                               >
                                 <option value="">-</option>
+                                {displayedDecodeDigits[index] === 'x' ? <option value="x">x</option> : null}
                                 {[1, 2, 3, 4].map((option) => (
                                   <option key={option} value={String(option)}>
                                     {option}
@@ -4540,6 +4684,7 @@ function App() {
                               value={displayedInterceptDigits[index] ?? ''}
                             >
                               <option value="">-</option>
+                              {displayedInterceptDigits[index] === 'x' ? <option value="x">x</option> : null}
                               {[1, 2, 3, 4].map((option) => (
                                 <option key={option} value={String(option)}>
                                   {option}
@@ -4581,6 +4726,7 @@ function App() {
                                 value={displayedInterceptDigits[index] ?? ''}
                               >
                                 <option value="">-</option>
+                                {displayedInterceptDigits[index] === 'x' ? <option value="x">x</option> : null}
                                 {[1, 2, 3, 4].map((option) => (
                                   <option key={option} value={String(option)}>
                                     {option}
@@ -4630,10 +4776,14 @@ function App() {
                   <div className="wait-card">
                     <strong>跳过第一轮拦截</strong>
                     <p className="muted">
-                      {canSkipFirstIntercept ? '由于第一轮没有对方信息，房主点击左方按钮跳过第一轮拦截' : '等待房主跳过第一轮拦截'}
+                      {canSkipFirstIntercept
+                        ? '第一轮无拦截信息，请直接跳过'
+                        : forcedPhaseExpired
+                          ? '等待自动结算'
+                          : '等待房主跳过'}
                     </p>
                   </div>
-                ) : canSubmitClues ? (
+                ) : showClueForm ? (
                   <div className="action-lines">
                     <div className="action-line-head">
                       <span className="action-line-head-cell">本轮密码</span>
@@ -4646,6 +4796,7 @@ function App() {
                           <span>{row.word}</span>
                         </span>
                         <input
+                          disabled={forcedPhaseExpired}
                           maxLength={24}
                           onChange={(event) =>
                             setClueForm((current) =>
@@ -4688,7 +4839,7 @@ function App() {
                 >
                   <span>{countdownTitle}</span>
                   <strong>{countdownText}</strong>
-                  {countdownExpired ? <small>请尽快确认</small> : <small>&nbsp;</small>}
+                  <small>{countdownHint}</small>
                 </div>
                 <div className="action-progress-block">
                   <span>进度</span>
@@ -5052,6 +5203,19 @@ function App() {
 
               <label className="settings-toggle-row">
                 <input
+                  checked={forcePhaseTimeoutEnabled}
+                  disabled={!self?.is_host || busyKey !== null}
+                  onChange={(event) => void handleForcePhaseTimeoutToggle(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>强制倒计时</strong>
+                  <small>倒计时结束后，自动提交当前已填写的内容</small>
+                </span>
+              </label>
+
+              <label className="settings-toggle-row">
+                <input
                   checked={bangumiCharacterExtractEnabled}
                   disabled={!self?.is_host || busyKey !== null}
                   onChange={(event) => void handleBangumiCharacterExtractToggle(event.target.checked)}
@@ -5145,6 +5309,7 @@ function App() {
                     <span>{option.label}</span>
                   </label>
                 ))}
+
               </div>
 
               <div className="catalog-source-group" data-merge-label={bangumiCatalogMergeMode === 'union' ? '并集' : '交集'}>

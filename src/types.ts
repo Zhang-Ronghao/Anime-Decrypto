@@ -31,6 +31,7 @@ export interface RoomRecord {
   encrypt_phase_minutes: number;
   decode_phase_minutes: number;
   intercept_phase_minutes: number;
+  force_phase_timeout_enabled: boolean;
   miscommunication_limit: number;
   life_mode_enabled: boolean;
   life_points: number;
@@ -137,8 +138,11 @@ export interface RoundSubmissionRecord {
   team: Team;
   round_number: number;
   clues: string[] | null;
+  clues_auto_submitted: boolean;
   intercept_guess: string | null;
+  intercept_guess_auto_submitted: boolean;
   own_guess: string | null;
+  own_guess_auto_submitted: boolean;
   revealed_code: string | null;
   intercept_correct: boolean | null;
   own_correct: boolean | null;
