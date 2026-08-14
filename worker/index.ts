@@ -23,6 +23,7 @@ import {
 } from './data/bangumi-popular-anime';
 import { handleRoomChatMessage, RoomChatRateLimiter } from './roomChat';
 import { isCompleteGuess, PHASE_TIMEOUT_GRACE_MS, timeoutClues, timeoutGuess } from './phaseTimeout';
+import { canSeeTeamWords } from './teamWordVisibility';
 
 export interface Env {
   DB: D1Database;
@@ -665,17 +666,13 @@ function publicSnapshot(state: RoomState, userId: string, fullRoundHistory = fal
     server_now: nowIso(),
     room: state.room,
     players: [...state.players].sort(sortPlayers),
-    teamWords: state.teamWords.filter((record) => canSeeTeamWords(record.team, self)),
+    teamWords: state.teamWords.filter((record) => canSeeTeamWords(record.team, self, state.room.phase)),
     teamWordFeedbackRequests: state.teamWordFeedbackRequests.filter((record) => self.team === record.team),
     teamWordFeedbackResponses: state.teamWordFeedbackResponses.filter((record) => self.team === record.team),
     roundGuessFeedbackResponses: state.roundGuessFeedbackResponses.filter((record) => self.team === record.team),
     roundCodes: state.roundCodes.filter((record) => record.encoder_player_id === self.id),
     submissions: fullRoundHistory ? visibleSubmissions : visibleSubmissions.slice(0, 16),
   };
-}
-
-function canSeeTeamWords(team: Team, self: PlayerRecord): boolean {
-  return !self.is_spectator && self.team === team;
 }
 
 function filterSubmission(
