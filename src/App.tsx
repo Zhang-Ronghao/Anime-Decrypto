@@ -159,7 +159,11 @@ const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/mai
 const VIDEO_INTRO_URL =
   'https://www.bilibili.com/video/BV1z4Gt6rEFC/?share_source=copy_web&vd_source=adcd58a56c0c896937ee4c3fe22de339';
 const FEEDBACK_QQ_GROUP_URL = 'https://qm.qq.com/q/bHJQIRplmg';
-const OTHER_GAME_URL: string | null = null;
+const OTHER_GAME_URL = 'https://anipeek.animaster.dpdns.org/';
+const FRIEND_LINKS = [
+  { label: '二次元笑传之猜猜呗', href: 'https://ccb.baka.website/' },
+  { label: 'BakaGame', href: 'https://game.baka.website/' },
+] as const;
 const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
 const MISCOMMUNICATION_LIMIT_OPTIONS = [2, 3, 4] as const;
 const DEFAULT_MISCOMMUNICATION_LIMIT = 2;
@@ -196,6 +200,7 @@ interface HomeFooterLinkItemProps {
   label: string;
   href: string | null;
   icon: 'video' | 'rules' | 'github' | 'group' | 'spark';
+  external?: boolean;
   tooltip?: string;
   wide?: boolean;
 }
@@ -285,7 +290,7 @@ function RoleGroup({ team, players, selfId }: RoleGroupProps) {
   );
 }
 
-function HomeFooterLinkItem({ label, href, icon, tooltip, wide = false }: HomeFooterLinkItemProps) {
+function HomeFooterLinkItem({ label, href, icon, external = false, tooltip, wide = false }: HomeFooterLinkItemProps) {
   const iconNode =
     icon === 'video' ? (
       <svg aria-hidden="true" className="home-footer-icon" viewBox="0 0 24 24">
@@ -319,7 +324,15 @@ function HomeFooterLinkItem({ label, href, icon, tooltip, wide = false }: HomeFo
   const content = (
     <>
       {iconNode}
-      <span>{label}</span>
+      <span className="home-footer-link-text">
+        <span>{label}</span>
+        {external ? (
+          <svg aria-hidden="true" className="home-footer-external-mark" viewBox="0 0 16 16">
+            <path d="M5 11 11 5" />
+            <path d="M6.5 5H11v4.5" />
+          </svg>
+        ) : null}
+      </span>
     </>
   );
 
@@ -344,6 +357,34 @@ function HomeFooterLinkItem({ label, href, icon, tooltip, wide = false }: HomeFo
     >
       {content}
     </a>
+  );
+}
+
+function HomeFriendLinks() {
+  return (
+    <section className="home-friend-links" aria-labelledby="home-friend-links-title">
+      <h2 className="home-friend-links-title" id="home-friend-links-title">
+        友情链接
+      </h2>
+      <div className="home-friend-links-list">
+        {FRIEND_LINKS.map((link) => (
+          <a
+            aria-label={`${link.label}（在新标签页打开）`}
+            className="home-friend-link"
+            href={link.href}
+            key={link.href}
+            rel="noreferrer"
+            target="_blank"
+          >
+            <span>{link.label}</span>
+            <svg aria-hidden="true" className="home-friend-link-icon" viewBox="0 0 16 16">
+              <path d="M5 11 11 5" />
+              <path d="M6.5 5H11v4.5" />
+            </svg>
+          </a>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -3686,18 +3727,21 @@ function App() {
         </section>
 
         <footer className="home-footer" aria-label="相关信息">
-          <div className="home-footer-grid">
-            <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
-            <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
-            <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
-            <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
-            <HomeFooterLinkItem
-              href={OTHER_GAME_URL}
-              icon="spark"
-              label="作者其他动漫高手游戏：一眼顶针"
-              tooltip="即将公布，敬请期待"
-              wide
-            />
+          <div className="home-footer-content">
+            <div className="home-footer-grid">
+              <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
+              <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
+              <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
+              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="游戏QQ群" />
+              <HomeFooterLinkItem
+                external
+                href={OTHER_GAME_URL}
+                icon="spark"
+                label="更多游戏：动漫高手一眼顶针"
+                wide
+              />
+            </div>
+            <HomeFriendLinks />
           </div>
         </footer>
 
@@ -4187,12 +4231,12 @@ function App() {
               <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
               <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
               <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
-              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="交流反馈Q群" />
+              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="游戏QQ群" />
               <HomeFooterLinkItem
+                external
                 href={OTHER_GAME_URL}
                 icon="spark"
-                label="作者其他动漫高手游戏：一眼顶针"
-                tooltip="即将公布，敬请期待"
+                label="更多游戏：动漫高手一眼顶针"
                 wide
               />
             </div>
