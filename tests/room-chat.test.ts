@@ -118,7 +118,7 @@ function send(options: {
   const envelope = {
     type: 'chat_send',
     clientMessageId: `client-${options.now ?? 1000}`,
-    channel: options.channel ?? (['lobby', 'result', 'finished'].includes(options.phase) ? 'room' : 'team'),
+    channel: options.channel ?? (['lobby', 'finished'].includes(options.phase) ? 'room' : 'team'),
     text: options.text ?? '测试消息',
   };
   handleRoomChatMessage({
@@ -152,9 +152,11 @@ test('room chat history deduplicates, limits to 100, persists, and clears', () =
 test('visible history includes room messages and follows the selected team view during play', () => {
   const messages = [stored(1, 'room'), stored(2, 'team', 'A'), stored(3, 'team', 'B')];
 
-  for (const phase of ['lobby', 'result', 'finished'] as RoomPhase[]) {
+  for (const phase of ['lobby', 'finished'] as RoomPhase[]) {
     assert.deepEqual(visibleRoomChatMessages(messages, phase, 'A').map((message) => message.messageId), ['message-1']);
   }
+  assert.deepEqual(visibleRoomChatMessages(messages, 'result', 'A').map((message) => message.messageId), ['message-1', 'message-2']);
+  assert.deepEqual(visibleRoomChatMessages(messages, 'result', 'B').map((message) => message.messageId), ['message-1', 'message-3']);
   assert.deepEqual(visibleRoomChatMessages(messages, 'encrypt', 'A').map((message) => message.messageId), ['message-1', 'message-2']);
   assert.deepEqual(visibleRoomChatMessages(messages, 'encrypt', 'B').map((message) => message.messageId), ['message-1', 'message-3']);
   assert.deepEqual(visibleRoomChatMessages(messages, 'encrypt', null).map((message) => message.messageId), ['message-1']);
@@ -162,7 +164,7 @@ test('visible history includes room messages and follows the selected team view 
 
 test('authority resolves room phases, spectator read-only, and decode encoder mute', () => {
   assert.deepEqual(resolveRoomChatAudience('lobby', players[2]!, 'room'), { resolved: { audience: 'room' } });
-  assert.deepEqual(resolveRoomChatAudience('result', players[2]!, 'room'), { resolved: { audience: 'room' } });
+  assert.equal(resolveRoomChatAudience('result', players[2]!, 'room').error?.code, 'SPECTATOR_READ_ONLY');
   assert.equal(resolveRoomChatAudience('lobby', players[0]!, 'team').error?.code, 'TEAM_UNAVAILABLE');
   assert.equal(resolveRoomChatAudience('encrypt', players[2]!, 'team').error?.code, 'SPECTATOR_READ_ONLY');
   assert.equal(resolveRoomChatAudience('decode', players[0]!, 'room').error?.code, 'CHAT_MUTED');
@@ -170,6 +172,12 @@ test('authority resolves room phases, spectator read-only, and decode encoder mu
     resolved: { audience: 'team', team: 'A' },
   });
   assert.deepEqual(resolveRoomChatAudience('intercept', players[0]!, 'room'), {
+    resolved: { audience: 'room' },
+  });
+  assert.deepEqual(resolveRoomChatAudience('result', players[0]!, 'team'), {
+    resolved: { audience: 'team', team: 'A' },
+  });
+  assert.deepEqual(resolveRoomChatAudience('result', players[0]!, 'room'), {
     resolved: { audience: 'room' },
   });
 });
@@ -189,8 +197,8 @@ test('team messages reach the sender team and every spectator, but never the opp
   assert.equal(event.team, 'A');
 });
 
-test('room messages reach both teams and spectators during lobby and settlement', () => {
-  for (const phase of ['lobby', 'result', 'finished'] as RoomPhase[]) {
+test('room messages reach both teams and spectators during lobby and game end', () => {
+  for (const phase of ['lobby', 'finished'] as RoomPhase[]) {
     const sender = new TestSocket({ roomId: 'room-1', userId: 'user-s' });
     const teamA = new TestSocket({ roomId: 'room-1', userId: 'user-a' });
     const teamB = new TestSocket({ roomId: 'room-1', userId: 'user-b' });
@@ -198,6 +206,20 @@ test('room messages reach both teams and spectators during lobby and settlement'
     assert.deepEqual([sender.sent.length, teamA.sent.length, teamB.sent.length], [1, 1, 1]);
     assert.equal((JSON.parse(sender.sent[0]!) as RoomChatMessage).audience, 'room');
   }
+});
+
+test('round result keeps team messages isolated while still allowing room chat', () => {
+  const teamSender = new TestSocket({ roomId: 'room-1', userId: 'user-a' });
+  const opponent = new TestSocket({ roomId: 'room-1', userId: 'user-b' });
+  const spectator = new TestSocket({ roomId: 'room-1', userId: 'user-s' });
+  send({ sender: teamSender, sockets: [teamSender, opponent, spectator], phase: 'result', channel: 'team' });
+  assert.deepEqual([teamSender.sent.length, opponent.sent.length, spectator.sent.length], [1, 0, 1]);
+  assert.equal((JSON.parse(teamSender.sent[0]!) as RoomChatMessage).audience, 'team');
+
+  const roomSender = new TestSocket({ roomId: 'room-1', userId: 'user-a' });
+  send({ sender: roomSender, sockets: [roomSender, opponent, spectator], phase: 'result', channel: 'room' });
+  assert.deepEqual([roomSender.sent.length, opponent.sent.length, spectator.sent.length], [1, 1, 2]);
+  assert.equal((JSON.parse(roomSender.sent[0]!) as RoomChatMessage).audience, 'room');
 });
 
 test('room channel reaches both teams and spectators during active play', () => {

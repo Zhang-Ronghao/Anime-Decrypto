@@ -44,7 +44,7 @@ function isStoredRoomChatMessage(value: unknown): value is RoomChatMessage {
 }
 
 export function isRoomChatPhase(phase: RoomPhase): boolean {
-  return phase === 'lobby' || phase === 'result' || phase === 'finished';
+  return phase === 'lobby' || phase === 'finished';
 }
 
 export function appendRoomChatMessage(

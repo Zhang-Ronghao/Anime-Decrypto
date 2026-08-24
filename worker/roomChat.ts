@@ -113,7 +113,7 @@ function parseSendMessage(value: unknown): RoomChatSendMessage | null {
 }
 
 function isRoomAudiencePhase(phase: RoomPhase): boolean {
-  return phase === 'lobby' || phase === 'result' || phase === 'finished';
+  return phase === 'lobby' || phase === 'finished';
 }
 
 export function resolveRoomChatAudience(
