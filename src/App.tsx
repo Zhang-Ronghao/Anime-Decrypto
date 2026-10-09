@@ -163,6 +163,8 @@ const OTHER_GAME_URL = 'https://anipeek.animaster.dpdns.org/';
 const FRIEND_LINKS = [
   { label: '二次元笑传之猜猜呗', href: 'https://ccb.baka.website/' },
   { label: 'BakaGame', href: 'https://game.baka.website/' },
+  { label: '目标是Bangumi大师', href: 'https://bangumi-master.logicry.cc/' },
+  { label: '动画代号', href: 'https://anicode.logicry.cc/' },
 ] as const;
 const LOBBY_TIMER_MINUTE_OPTIONS = [1, 2, 3, 4, 5] as const;
 const MISCOMMUNICATION_LIMIT_OPTIONS = [2, 3, 4] as const;
