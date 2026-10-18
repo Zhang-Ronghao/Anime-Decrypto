@@ -4264,58 +4264,61 @@ function App() {
                 <p className="action-hint">{effectiveActionHint}</p>
               </div>
 
-              {isSpectator ? (
-                <button
-                  className="primary-button"
-                  disabled={busyKey !== null}
-                  onClick={() => setSpectatorTeamView((current) => otherTeam(current))}
-                  type="button"
-                >
-                  切换{displayTeamName(otherTeam(spectatorTeamView))}视角
-                </button>
-              ) : canEditWordAssignment ? (
-                <div className="action-header-actions">
+              <div className="action-header-actions">
+                {isSpectator && (
                   <button
-                    className="ghost-button"
-                    disabled={busyKey !== null || !canRequestTeamWordFeedback}
-                    onClick={() => void handleRequestTeamWordFeedback()}
+                    className="ghost-button spectator-view-button"
+                    disabled={busyKey !== null}
+                    onClick={() => setSpectatorTeamView((current) => otherTeam(current))}
                     type="button"
                   >
-                    询问队友
+                    切换{displayTeamName(otherTeam(spectatorTeamView))}视角
                   </button>
-                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleConfirmWords()} type="button">
-                    确认词语
+                )}
+                {canEditWordAssignment ? (
+                  <>
+                    <button
+                      className="ghost-button"
+                      disabled={busyKey !== null || !canRequestTeamWordFeedback}
+                      onClick={() => void handleRequestTeamWordFeedback()}
+                      type="button"
+                    >
+                      询问队友
+                    </button>
+                    <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleConfirmWords()} type="button">
+                      确认词语
+                    </button>
+                  </>
+                ) : canSubmitClues ? (
+                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleClueSubmit()} type="button">
+                    提交线索
                   </button>
-                </div>
-              ) : canSubmitClues ? (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleClueSubmit()} type="button">
-                  提交线索
-                </button>
-              ) : canSubmitDecode ? (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleDecodeSubmit()} type="button">
-                  提交解码
-                </button>
-              ) : canSkipFirstIntercept ? (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleSkipFirstIntercept()} type="button">
-                  跳过第一轮拦截
-                </button>
-              ) : canSubmitIntercept ? (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleInterceptSubmit()} type="button">
-                  提交截码
-                </button>
-              ) : snapshot.room.phase === 'result' && self.is_host ? (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleAdvanceRound()} type="button">
-                  下一回合
-                </button>
-              ) : snapshot.room.phase === 'finished' && self.is_host ? (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
-                  返回房间大厅
-                </button>
-              ) : (
-                <button className="primary-button" disabled type="button">
-                  等待中
-                </button>
-              )}
+                ) : canSubmitDecode ? (
+                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleDecodeSubmit()} type="button">
+                    提交解码
+                  </button>
+                ) : canSkipFirstIntercept ? (
+                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleSkipFirstIntercept()} type="button">
+                    跳过第一轮拦截
+                  </button>
+                ) : canSubmitIntercept ? (
+                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleInterceptSubmit()} type="button">
+                    提交截码
+                  </button>
+                ) : snapshot.room.phase === 'result' && self.is_host ? (
+                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleAdvanceRound()} type="button">
+                    下一回合
+                  </button>
+                ) : snapshot.room.phase === 'finished' && self.is_host ? (
+                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
+                    返回房间大厅
+                  </button>
+                ) : !isSpectator ? (
+                  <button className="primary-button" disabled type="button">
+                    等待中
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             <div className="action-body">

@@ -916,6 +916,18 @@ select:focus {
   max-width: none;
 }
 
+.action-header-actions .spectator-view-button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.action-header-actions .spectator-view-button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
 .action-body {
   min-width: 0;
   display: grid;
