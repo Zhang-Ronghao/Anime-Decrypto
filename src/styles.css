@@ -461,6 +461,47 @@ select:focus {
   letter-spacing: 0.03em;
 }
 
+.room-code-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.room-code-value {
+  min-width: 6ch;
+  font-family: 'IBM Plex Mono', 'Consolas', monospace;
+  letter-spacing: 0.03em;
+}
+
+.room-code-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--muted);
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.room-code-toggle:hover {
+  background: var(--line);
+  color: var(--text);
+}
+
+.room-code-toggle:active {
+  background: var(--line-strong);
+}
+
+.room-code-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .status-pills,
 .top-actions,
 .button-row,
@@ -918,14 +959,19 @@ select:focus {
 
 .action-header-actions .spectator-view-button {
   min-height: 44px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  font-weight: 700;
+  border: 1px solid oklch(72% 0.028 255);
+  background: oklch(91% 0.018 255);
+  color: var(--text);
+  font-weight: 800;
 }
 
 .action-header-actions .spectator-view-button:hover:not(:disabled) {
-  border-color: var(--line-strong);
-  color: var(--text);
+  border-color: oklch(62% 0.035 255);
+  background: oklch(87% 0.025 255);
+}
+
+.action-header-actions .spectator-view-button:active:not(:disabled) {
+  background: oklch(83% 0.028 255);
 }
 
 .action-body {

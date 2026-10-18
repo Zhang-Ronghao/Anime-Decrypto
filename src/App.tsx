@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useRef } from 'react';
 import { RoomChat } from './components/RoomChat';
+import { RoomCodeDisplay } from './components/RoomCodeDisplay';
 import {
   advanceRound,
   cleanupExpiredRooms,
@@ -3655,7 +3656,7 @@ function App() {
     return (
       <main className="app-shell">
         <section className="panel hero-panel">
-          <p className="eyebrow">房间 {joinCode}</p>
+          <RoomCodeDisplay className="eyebrow" code={joinCode} />
           <h1>正在同步房间状态...</h1>
           {actionError ? <p className="error-text">{actionError}</p> : null}
         </section>
@@ -3667,7 +3668,7 @@ function App() {
     return (
       <main className="app-shell">
         <section className="panel hero-panel">
-          <p className="eyebrow">房间 {snapshot.room.room_code}</p>
+          <RoomCodeDisplay className="eyebrow" code={snapshot.room.room_code} />
           <h1>你还没有加入这个房间</h1>
           <p className="muted">请返回首页重新加入，或检查匿名登录是否被浏览器重置</p>
         </section>
@@ -3843,7 +3844,7 @@ function App() {
         <div className="brand-block">
           <div className="brand-copy">
             <p className="app-title">动漫高手——截码战</p>
-            <p className="app-subtitle">房间号 {snapshot.room.room_code}</p>
+            <RoomCodeDisplay className="app-subtitle" code={snapshot.room.room_code} />
           </div>
         </div>
 
