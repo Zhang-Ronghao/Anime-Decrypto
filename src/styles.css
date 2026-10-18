@@ -959,19 +959,19 @@ select:focus {
 
 .action-header-actions .spectator-view-button {
   min-height: 44px;
-  border: 1px solid oklch(72% 0.028 255);
-  background: oklch(91% 0.018 255);
-  color: var(--text);
+  border: 1px solid var(--blue-line);
+  background: var(--blue-soft);
+  color: var(--blue);
   font-weight: 800;
 }
 
 .action-header-actions .spectator-view-button:hover:not(:disabled) {
-  border-color: oklch(62% 0.035 255);
-  background: oklch(87% 0.025 255);
+  border-color: var(--blue);
+  background: oklch(92% 0.045 260);
 }
 
 .action-header-actions .spectator-view-button:active:not(:disabled) {
-  background: oklch(83% 0.028 255);
+  background: oklch(88% 0.065 260);
 }
 
 .action-body {
