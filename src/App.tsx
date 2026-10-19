@@ -2,6 +2,7 @@
 import { useRef } from 'react';
 import { RoomChat } from './components/RoomChat';
 import { RoomCodeDisplay } from './components/RoomCodeDisplay';
+import { GrowingGameInput } from './components/GrowingGameInput';
 import {
   advanceRound,
   cleanupExpiredRooms,
@@ -100,6 +101,7 @@ interface ScoreTrackProps {
   kind: 'intercept' | 'miscomm' | 'life';
   limit: number;
   tone: 'red' | 'blue';
+  showValue?: boolean;
 }
 
 interface TeamLife {
@@ -226,7 +228,7 @@ function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: 
   );
 }
 
-function ScoreTrack({ count, kind, limit, tone }: ScoreTrackProps) {
+function ScoreTrack({ count, kind, limit, tone, showValue = false }: ScoreTrackProps) {
   const safeLimit = Math.max(1, limit);
   const filledCount = Math.min(Math.max(count, 0), safeLimit);
   const displayCount = kind === 'life' ? count : filledCount;
@@ -242,6 +244,11 @@ function ScoreTrack({ count, kind, limit, tone }: ScoreTrackProps) {
     <div className={cn('score-track', `score-track-${kind}`, filledCount >= safeLimit && 'score-track-full')} aria-label={label}>
       <span className="score-track-label" aria-hidden="true">
         {text}
+        {showValue ? (
+          <span className="score-track-value">
+            <strong>{displayCount}</strong><span>/{safeLimit}</span>
+          </span>
+        ) : null}
       </span>
 
       <span className="score-track-cells" aria-hidden="true">
@@ -258,6 +265,55 @@ function ScoreTrack({ count, kind, limit, tone }: ScoreTrackProps) {
       </span>
     </div>
   );
+}
+
+interface InfoScoreProps {
+  score: TeamScore;
+  life: number;
+  lifeMode: boolean;
+  lifePoints: number;
+  miscommunicationLimit: number;
+  tone: 'red' | 'blue';
+}
+
+function InfoScore({ score, life, lifeMode, lifePoints, miscommunicationLimit, tone }: InfoScoreProps) {
+  return (
+    <div className={cn('info-score', lifeMode && 'info-score-life')} aria-label="队伍战况">
+      {lifeMode ? (
+        <>
+          <div className="info-life-track">
+            <ScoreTrack count={life} kind="life" limit={lifePoints} tone={tone} showValue />
+          </div>
+          <div className="info-score-counts">
+            <span>拦截 <strong>{score.intercepts}</strong></span>
+            <span>失误 <strong>{score.miscomms}</strong></span>
+          </div>
+        </>
+      ) : (
+        <>
+          <ScoreTrack count={score.intercepts} kind="intercept" limit={2} tone={tone} showValue />
+          <ScoreTrack count={score.miscomms} kind="miscomm" limit={miscommunicationLimit} tone={tone} showValue />
+        </>
+      )}
+    </div>
+  );
+}
+
+const KEY_TEXT_SIZE_OPTIONS = [
+  { value: 'standard', label: '标准' },
+  { value: 'large', label: '大' },
+  { value: 'extra-large', label: '特大' },
+] as const;
+type KeyTextSize = (typeof KEY_TEXT_SIZE_OPTIONS)[number]['value'];
+const KEY_TEXT_SIZE_STORAGE_KEY = 'decrypto-key-text-size';
+
+function loadKeyTextSize(): KeyTextSize {
+  try {
+    const saved = localStorage.getItem(KEY_TEXT_SIZE_STORAGE_KEY);
+    return KEY_TEXT_SIZE_OPTIONS.find((option) => option.value === saved)?.value ?? 'standard';
+  } catch {
+    return 'standard';
+  }
 }
 
 function RoleGroup({ team, players, selfId }: RoleGroupProps) {
@@ -893,6 +949,7 @@ function App() {
   const serverClockOffsetInitializedRef = useRef(false);
   const serverClockCalibratedRef = useRef(false);
   const [displayName, setDisplayName] = useState(() => localStorage.getItem('decrypto-name') ?? '');
+  const [keyTextSize, setKeyTextSize] = useState<KeyTextSize>(loadKeyTextSize);
   const [joinCode, setJoinCode] = useState(() => new URLSearchParams(window.location.search).get('room') ?? '');
   const [actionError, setActionError] = useState<string | null>(null);
   const [wordAssignmentNotice, setWordAssignmentNotice] = useState<string | null>(null);
@@ -3826,7 +3883,7 @@ function App() {
     isWordAssignmentPhase && self.role !== 'encoder' && !myTeamConfirmed ? '待确认' : '等待发牌';
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-key-text-size={keyTextSize}>
       {import.meta.env.DEV ? (
         <aside className="usage-debug-panel" aria-label="Cloudflare usage debug">
           <span>session {usageDebugCounters.session}</span>
@@ -4261,7 +4318,12 @@ function App() {
                   {isSpectator ? <span className="identity-role">观战视角</span> : self.role ? <span className="identity-role">{roleName(self.role)}</span> : null}
                   {self.is_host ? <span className="identity-host-badge">房主</span> : null}
                 </div>
-                <h2>{actionTitle}</h2>
+                <h2 className="action-title-with-phase">
+                  <span className="action-phase-badge">
+                    {isTimedPhase(snapshot.room.phase) ? timedPhaseLabel(snapshot.room.phase) : phaseLabel(snapshot.room.phase)}
+                  </span>
+                  <span>{actionTitle}</span>
+                </h2>
                 <p className="action-hint">{effectiveActionHint}</p>
               </div>
 
@@ -4375,7 +4437,8 @@ function App() {
                           >
                             {teamWordDraftMode === 'characters' && slotShowsSourceTitle(slot) ? (
                               <div className="team-word-pair">
-                                <input
+                                <GrowingGameInput
+                                  sizeKey={keyTextSize}
                                   key={`team-word-title-${teamWordDraftMode}-${index}`}
                                   disabled={isWordAssignmentReadOnly || teamWordDraftMode === 'characters'}
                                   maxLength={48}
@@ -4399,7 +4462,8 @@ function App() {
                                     ))}
                                   </select>
                                 ) : (
-                                  <input
+                                  <GrowingGameInput
+                                    sizeKey={keyTextSize}
                                     key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
                                     disabled={isWordAssignmentReadOnly}
                                     maxLength={24}
@@ -4426,7 +4490,8 @@ function App() {
                               </select>
                             ) : slotShowsSourceTitle(slot) ? (
                               <div className="team-word-pair">
-                                <input
+                                <GrowingGameInput
+                                  sizeKey={keyTextSize}
                                   key={`team-word-title-${teamWordDraftMode}-${index}`}
                                   disabled={isWordAssignmentReadOnly}
                                   maxLength={48}
@@ -4435,7 +4500,8 @@ function App() {
                                   title={slot.sourceTitle ?? ''}
                                   value={slot.sourceTitle ?? ''}
                                 />
-                                <input
+                                <GrowingGameInput
+                                  sizeKey={keyTextSize}
                                   key={`team-word-input-dual-${teamWordDraftMode}-${index}`}
                                   disabled={isWordAssignmentReadOnly}
                                   maxLength={24}
@@ -4446,7 +4512,8 @@ function App() {
                                 />
                               </div>
                             ) : (
-                              <input
+                              <GrowingGameInput
+                                sizeKey={keyTextSize}
                                 key={`team-word-input-${teamWordDraftMode}-${index}`}
                                 maxLength={24}
                                 disabled={
@@ -4843,9 +4910,10 @@ function App() {
                       <label className="action-line" key={index}>
                         <span className={cn('code-word', `code-word-${teamTone(myTeam)}`)}>
                           <b>{row.digit || '-'}</b>
-                          <span>{row.word}</span>
+                          <span title={row.word}>{row.word}</span>
                         </span>
-                        <input
+                        <GrowingGameInput
+                          sizeKey={keyTextSize}
                           disabled={forcedPhaseExpired}
                           maxLength={24}
                           onChange={(event) =>
@@ -4918,15 +4986,14 @@ function App() {
                     <small className="header-note">{GUESS_NUMBER_NOTE}</small>
                   )}
                 </div>
-                <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
-                <div className="mini-stats">
-                  <span>
-                    拦截 <strong>{myScore.intercepts}</strong>
-                  </span>
-                  <span>
-                    失误 <strong>{myScore.miscomms}</strong>
-                  </span>
-                </div>
+                <InfoScore
+                  score={myScore}
+                  life={myLife.remaining}
+                  lifeMode={lifeModeEnabled}
+                  lifePoints={lifePoints}
+                  miscommunicationLimit={miscommunicationLimit}
+                  tone={teamTone(myTeam)}
+                />
               </header>
 
               <div className="clue-matrix">
@@ -5003,15 +5070,14 @@ function App() {
                   <h2>对方信息区</h2>
                   <small className="header-note">{GUESS_NUMBER_NOTE}</small>
                 </div>
-                <span className={cn('team-badge', `team-badge-${teamTone(opponentTeam)}`)}>{displayTeamName(opponentTeam)}</span>
-                <div className="mini-stats">
-                  <span>
-                    拦截 <strong>{opponentScore.intercepts}</strong>
-                  </span>
-                  <span>
-                    失误 <strong>{opponentScore.miscomms}</strong>
-                  </span>
-                </div>
+                <InfoScore
+                  score={opponentScore}
+                  life={opponentLife.remaining}
+                  lifeMode={lifeModeEnabled}
+                  lifePoints={lifePoints}
+                  miscommunicationLimit={miscommunicationLimit}
+                  tone={teamTone(opponentTeam)}
+                />
               </header>
 
               <div className="clue-matrix">
@@ -5091,11 +5157,31 @@ function App() {
 
           <section className="game-footer-actions">
             <small className="game-footer-note">页面切换刷新偶尔会失败，请尝试按F5手动刷新</small>
-            {canTerminateCurrentGame ? (
-              <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleTerminateGame()} type="button">
-                终止游戏
-              </button>
-            ) : null}
+            <div className="game-footer-tools">
+              {canTerminateCurrentGame ? (
+                <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleTerminateGame()} type="button">
+                  终止游戏
+                </button>
+              ) : null}
+              <div className="key-text-controls" role="group" aria-label="关键内容字号">
+                <span>字号</span>
+                {KEY_TEXT_SIZE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={keyTextSize === option.value}
+                    onClick={() => {
+                      setKeyTextSize(option.value);
+                      try {
+                        localStorage.setItem(KEY_TEXT_SIZE_STORAGE_KEY, option.value);
+                      } catch {
+                        // Keep the selected size for this session when storage is unavailable.
+                      }
+                    }}
+                  >{option.label}</button>
+                ))}
+              </div>
+            </div>
           </section>
         </>
       )}
