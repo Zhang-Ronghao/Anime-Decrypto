@@ -535,16 +535,27 @@ function formatCountdown(totalSeconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-function formatGuessResult(guess: string | null, correct: boolean | null): string {
+function RecordCode({ code }: { code: string }) {
+  return (
+    <span className="record-code">
+      {code.split(/(\d+)/).map((part, index) => (
+        <span className={/^\d+$/.test(part) ? 'record-code-digits' : 'record-code-symbol'} key={index}>{part}</span>
+      ))}
+    </span>
+  );
+}
+
+function formatGuessResult(guess: string | null, correct: boolean | null) {
   if (!guess) {
     return correct === false ? '已跳过' : '待提交';
   }
 
-  if (correct === null) {
-    return `${guess} (-)`;
-  }
-
-  return `${guess} (${correct ? '✓' : '×'})`;
+  return (
+    <span className="record-guess-result">
+      <RecordCode code={guess} />
+      <span className="record-guess-marker">({correct === null ? '-' : correct ? '✓' : '×'})</span>
+    </span>
+  );
 }
 
 function resultClass(guess: string | null, correct: boolean | null): string {
@@ -5055,7 +5066,7 @@ function App() {
                     <div className="record-row" key={entry.id}>
                       <span>{entry.round_number}</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
-                      <span>{entry.revealed_code ?? '未公开'}</span>
+                      <span>{entry.revealed_code ? <RecordCode code={entry.revealed_code} /> : '未公开'}</span>
                       <span className={resultClass(entry.own_guess, entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
                       <span className={resultClass(entry.intercept_guess, entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
                     </div>
@@ -5135,7 +5146,7 @@ function App() {
                     <div className="record-row" key={entry.id}>
                       <span>{entry.round_number}</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
-                      <span>{entry.revealed_code ?? '未公开'}</span>
+                      <span>{entry.revealed_code ? <RecordCode code={entry.revealed_code} /> : '未公开'}</span>
                       <span className={resultClass(entry.own_guess, entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
                       <span className={resultClass(entry.intercept_guess, entry.intercept_correct)}>{formatGuessResult(entry.intercept_guess, entry.intercept_correct)}</span>
                     </div>
@@ -5158,11 +5169,6 @@ function App() {
           <section className="game-footer-actions">
             <small className="game-footer-note">页面切换刷新偶尔会失败，请尝试按F5手动刷新</small>
             <div className="game-footer-tools">
-              {canTerminateCurrentGame ? (
-                <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleTerminateGame()} type="button">
-                  终止游戏
-                </button>
-              ) : null}
               <div className="key-text-controls" role="group" aria-label="关键内容字号">
                 <span>字号</span>
                 {KEY_TEXT_SIZE_OPTIONS.map((option) => (
@@ -5181,6 +5187,11 @@ function App() {
                   >{option.label}</button>
                 ))}
               </div>
+              {canTerminateCurrentGame ? (
+                <button className="danger-button" disabled={busyKey !== null} onClick={() => void handleTerminateGame()} type="button">
+                  终止游戏
+                </button>
+              ) : null}
             </div>
           </section>
         </>

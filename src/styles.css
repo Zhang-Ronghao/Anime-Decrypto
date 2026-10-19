@@ -2470,7 +2470,7 @@ select:focus {
 }
 
 .record-table {
-  overflow: hidden;
+  overflow-x: auto;
   border: 1px solid var(--info-accent-line);
   border-radius: 8px;
   background: var(--panel-raised);
@@ -2478,7 +2478,8 @@ select:focus {
 
 .record-row {
   display: grid;
-  grid-template-columns: minmax(0, 0.65fr) minmax(0, 2.7fr) repeat(3, minmax(0, 0.95fr));
+  grid-template-columns: 56px minmax(0, 1fr) 90px repeat(2, 120px);
+  min-width: 560px;
   min-height: 50px;
   border-top: 1px solid var(--info-accent-line);
 }
@@ -2487,7 +2488,7 @@ select:focus {
   border-top: 0;
 }
 
-.record-row span {
+.record-row > span {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -2506,7 +2507,7 @@ select:focus {
   font-variant-numeric: tabular-nums;
 }
 
-.record-row:not(.record-head) > span:nth-child(2) {
+.record-row:not(.record-head) > span:nth-child(-n + 2) {
   font-size: calc(1rem * var(--key-text-scale));
 }
 
@@ -2514,15 +2515,39 @@ select:focus {
   padding-inline: 8px;
 }
 
-.record-row span:first-child {
+.record-row > span:first-child {
   border-left: 0;
+  white-space: nowrap;
 }
 
-.record-head span {
+.record-head > span {
   justify-content: center;
   color: var(--info-accent-line);
   background: rgba(255, 255, 255, 0.55);
   font-weight: 900;
+}
+
+.record-code,
+.record-guess-result {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.record-guess-result {
+  gap: 4px;
+}
+
+.record-code-digits {
+  font-size: calc(1rem * var(--key-text-scale));
+}
+
+.record-code-symbol,
+.record-guess-marker {
+  font-size: 1rem;
 }
 
 .result-good {
@@ -4049,7 +4074,7 @@ code {
   }
 
   .record-row {
-    min-width: 0;
+    min-width: 560px;
   }
 }
 
