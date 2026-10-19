@@ -2502,7 +2502,16 @@ select:focus {
 }
 
 .record-row:not(.record-head) > span {
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-row:not(.record-head) > span:nth-child(2) {
   font-size: calc(1rem * var(--key-text-scale));
+}
+
+.record-row:not(.record-head) > span:not(:nth-child(2)) {
+  padding-inline: 8px;
 }
 
 .record-row span:first-child {

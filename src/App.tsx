@@ -5053,7 +5053,7 @@ function App() {
                   </div>
                   {visibleMySubmissions.map((entry) => (
                     <div className="record-row" key={entry.id}>
-                      <span>第 {entry.round_number} 轮</span>
+                      <span>{entry.round_number}</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
                       <span>{entry.revealed_code ?? '未公开'}</span>
                       <span className={resultClass(entry.own_guess, entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
@@ -5133,7 +5133,7 @@ function App() {
                   </div>
                   {visibleOpponentSubmissions.map((entry) => (
                     <div className="record-row" key={entry.id}>
-                      <span>第 {entry.round_number} 轮</span>
+                      <span>{entry.round_number}</span>
                       <span>{entry.clues?.join(' / ') ?? '待提交'}</span>
                       <span>{entry.revealed_code ?? '未公开'}</span>
                       <span className={resultClass(entry.own_guess, entry.own_correct)}>{formatGuessResult(entry.own_guess, entry.own_correct)}</span>
