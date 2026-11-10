@@ -3,6 +3,10 @@ import { useRef } from 'react';
 import { RoomChat } from './components/RoomChat';
 import { RoomCodeDisplay } from './components/RoomCodeDisplay';
 import { GrowingGameInput } from './components/GrowingGameInput';
+import { CollaborativeGuessInput, GuessSubmitterName } from './components/CollaborativeGuessInput';
+import { USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
+import { useGuessDrafts } from './hooks/useGuessDrafts';
+import type { GuessDraftClientEvent, GuessDraftStateEvent } from './types/guessDraft';
 import {
   advanceRound,
   cleanupExpiredRooms,
@@ -1129,6 +1133,15 @@ function App() {
     return false;
   }
 
+  function sendGuessDraft(event: GuessDraftClientEvent): boolean {
+    if (roomSubscriptionRef.current?.sendGuessDraft(event)) return true;
+    if (roomRealtimeChannelRef.current && roomRealtimeTabIdRef.current) {
+      roomRealtimeChannelRef.current.postMessage({ type: 'guess-draft-send', draftMessage: event });
+      return true;
+    }
+    return false;
+  }
+
   useEffect(() => {
     roomRealtimeConnectedRef.current = roomRealtimeConnected;
   }, [roomRealtimeConnected]);
@@ -1242,7 +1255,7 @@ function App() {
         },
         () => resetRoomState(ROOM_MEMBERSHIP_LOST_MESSAGE),
         handleSubscriptionStatus,
-        { fullRoundHistory: showAllRoundRecordsRef.current, onChatEvent: handleRoomChatEvent },
+        { fullRoundHistory: showAllRoundRecordsRef.current, onChatEvent: handleRoomChatEvent, onGuessDraftEvent: guessDraft.handleEvent },
       );
       roomSubscriptionRef.current = directSubscription;
 
@@ -1338,6 +1351,10 @@ function App() {
             handleRoomChatEvent(event);
             channel.postMessage({ type: 'chat-event', event });
           },
+          onGuessDraftEvent: (event) => {
+            guessDraft.handleEvent(event);
+            channel.postMessage({ type: 'guess-draft-event', draftEvent: event });
+          },
         },
       );
       roomSubscriptionRef.current = subscription;
@@ -1366,12 +1383,18 @@ function App() {
         tabId?: string;
         targetTabId?: string;
         message?: string;
+        draftEvent?: GuessDraftStateEvent;
+        draftMessage?: GuessDraftClientEvent;
       };
       if (payload.type === 'snapshot' && payload.snapshot && !isLeader) {
         applyRoomSnapshot(payload.snapshot);
         setRoomRealtimeConnected(true);
       } else if (payload.type === 'chat-event' && payload.event && !isLeader) {
         handleRoomChatEvent(payload.event);
+      } else if (payload.type === 'guess-draft-event' && payload.draftEvent && !isLeader) {
+        guessDraft.handleEvent(payload.draftEvent);
+      } else if (payload.type === 'guess-draft-send' && payload.draftMessage && isLeader) {
+        subscription?.sendGuessDraft(payload.draftMessage);
       } else if (
         payload.type === 'chat-send-request' &&
         isLeader &&
@@ -1404,10 +1427,25 @@ function App() {
         tryClaimLeadership();
       } else if (payload.type === 'request-snapshot' && isLeader && snapshotRef.current) {
         channel.postMessage({ type: 'snapshot', snapshot: snapshotRef.current });
+        if (USE_COLLABORATIVE_GUESS_INPUT) subscription?.sendGuessDraft({ type: 'guess_draft_request' });
       } else if (payload.type === 'subscription-options' && isLeader) {
         subscription?.setFullRoundHistory(payload.fullRoundHistory === true);
       }
     });
+
+    // React cleanup does not run on a browser refresh. Release the lease before
+    // leaving so the next document can connect without waiting for its expiry.
+    const handlePageHide = () => {
+      setRoomRealtimeConnected(false);
+      releaseLeadership();
+    };
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted || !active) return;
+      tryClaimLeadership();
+      if (!isLeader) channel.postMessage({ type: 'request-snapshot' });
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('pageshow', handlePageShow);
 
     tryClaimLeadership();
     if (!isLeader) {
@@ -1430,7 +1468,9 @@ function App() {
       active = false;
       window.clearInterval(heartbeat);
       window.clearInterval(election);
-      subscription?.unsubscribe();
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('pageshow', handlePageShow);
+      releaseLeadership();
       channel?.close();
       if (roomSubscriptionRef.current === subscription) {
         roomSubscriptionRef.current = null;
@@ -1440,12 +1480,6 @@ function App() {
       }
       if (roomRealtimeTabIdRef.current === tabId) {
         roomRealtimeTabIdRef.current = null;
-      }
-      if (isLeader) {
-        const leader = readLeader();
-        if (leader?.tabId === tabId) {
-          localStorage.removeItem(leaderKey);
-        }
       }
     };
   }, [roomId, sessionUserId]);
@@ -2159,6 +2193,18 @@ function App() {
   const submittedCluesKey = myTeamSubmission?.clues?.join('\u0000') ?? null;
   const submittedDecodeGuess = myTeamSubmission?.own_guess ?? null;
   const submittedInterceptGuess = opponentSubmission?.intercept_guess ?? null;
+  const guessDraft = useGuessDrafts(snapshot, self, myTeam, roomRealtimeConnected, sendGuessDraft, serverClockOffsetMs);
+  const collaborativeGuessTask = USE_COLLABORATIVE_GUESS_INPUT ? guessDraft.task : null;
+  const guessSubmitter = myTeamPlayers.find(player => player.id === collaborativeGuessTask?.submitterId);
+  const guessSubmitterRole = isDecodePhase ? '解密者' : '拦截者';
+  const isGuessSubmitter = Boolean(guessSubmitter && guessSubmitter.id === self?.id);
+  const isGuessReadOnly = isSpectator || (isDecodePhase && self?.role === 'encoder');
+  const liveGuessValue = guessDraft.digits.join('-');
+  useEffect(() => {
+    if (!USE_COLLABORATIVE_GUESS_INPUT || !guessDraft.task || guessDraft.task.locked || guessDraft.task.submitterId !== self?.id) return;
+    if (guessDraft.task.phase === 'decode') setDecodeGuess(liveGuessValue);
+    else setInterceptGuess(liveGuessValue);
+  }, [guessDraft.task?.key, guessDraft.task?.locked, self?.id, liveGuessValue]);
 
   useEffect(() => {
     if (submittedCluesKey !== null) {
@@ -2262,11 +2308,17 @@ function App() {
               : snapshot?.room.phase === 'finished'
                 ? '对局已结束'
                 : '等待房间同步';
+  const collaborativeGuessHint = !collaborativeGuessTask || collaborativeGuessTask.locked ? null :
+    !isSpectator && isDecodePhase && self?.role === 'encoder' ? '你是本轮加密者，仅可查看队友选择' :
+    isGuessSubmitter ? `你是${guessSubmitterRole}，负责提交最终答案` :
+    !guessSubmitter ? `等待本队${guessSubmitterRole}就位` : <>
+      由<strong>{guessSubmitterRole}·<GuessSubmitterName name={guessSubmitter.player_name} /></strong>提交最终答案
+    </>;
   const effectiveActionHint = isFirstRoundInterceptSkip
     ? canSkipFirstIntercept
       ? '第一轮拦截阶段无需提交，改由房主点击跳过'
       : '第一轮拦截阶段无需操作，等待房主跳过'
-    : actionHint;
+    : collaborativeGuessHint ?? actionHint;
   const effectiveProgressText = isFirstRoundInterceptSkip ? '等待房主跳过第一轮拦截' : progressText;
   const centerStatusText =
     snapshot?.room.phase === 'result'
@@ -3509,7 +3561,7 @@ function App() {
 
     const team = self.team;
 
-    const guess = normalizeGuess(decodeGuess);
+    const guess = normalizeGuess(USE_COLLABORATIVE_GUESS_INPUT ? liveGuessValue : decodeGuess);
     if (guess.length !== 5) {
       setActionError('解密密码格式应为 1-2-3');
       return;
@@ -3528,7 +3580,7 @@ function App() {
 
     const team = self.team;
 
-    const guess = normalizeGuess(interceptGuess);
+    const guess = normalizeGuess(USE_COLLABORATIVE_GUESS_INPUT ? liveGuessValue : interceptGuess);
     if (guess.length !== 5) {
       setActionError('拦截密码格式应为 1-2-3');
       return;
@@ -4326,7 +4378,7 @@ function App() {
               <div className="action-header-card">
                 <div className="identity-banner">
                   <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
-                  {isSpectator ? <span className="identity-role">观战视角</span> : self.role ? <span className="identity-role">{roleName(self.role)}</span> : null}
+                  {isSpectator ? <span className="identity-role">观战视角</span> : self.role ? <span className="identity-role">{collaborativeGuessTask && self.role === 'decoder' ? '解密者' : collaborativeGuessTask && isInterceptPhase && self.role === 'encoder' ? '拦截者' : roleName(self.role)}</span> : null}
                   {self.is_host ? <span className="identity-host-badge">房主</span> : null}
                 </div>
                 <h2 className="action-title-with-phase">
@@ -4335,7 +4387,7 @@ function App() {
                   </span>
                   <span>{actionTitle}</span>
                 </h2>
-                <p className="action-hint">{effectiveActionHint}</p>
+                <p className={cn('action-hint', collaborativeGuessTask && 'action-hint-guess')}>{effectiveActionHint}</p>
               </div>
 
               <div className="action-header-actions">
@@ -4368,16 +4420,16 @@ function App() {
                     提交线索
                   </button>
                 ) : canSubmitDecode ? (
-                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleDecodeSubmit()} type="button">
-                    提交解码
+                  <button className="primary-button" disabled={busyKey !== null || (USE_COLLABORATIVE_GUESS_INPUT && !guessDraft.digits.every(Boolean))} onClick={() => void handleDecodeSubmit()} type="button">
+                    {USE_COLLABORATIVE_GUESS_INPUT ? '提交解密答案' : '提交解码'}
                   </button>
                 ) : canSkipFirstIntercept ? (
                   <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleSkipFirstIntercept()} type="button">
                     跳过第一轮拦截
                   </button>
                 ) : canSubmitIntercept ? (
-                  <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleInterceptSubmit()} type="button">
-                    提交截码
+                  <button className="primary-button" disabled={busyKey !== null || (USE_COLLABORATIVE_GUESS_INPUT && !guessDraft.digits.every(Boolean))} onClick={() => void handleInterceptSubmit()} type="button">
+                    {USE_COLLABORATIVE_GUESS_INPUT ? '提交拦截答案' : '提交截码'}
                   </button>
                 ) : snapshot.room.phase === 'result' && self.is_host ? (
                   <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleAdvanceRound()} type="button">
@@ -4387,6 +4439,13 @@ function App() {
                   <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
                     返回房间大厅
                   </button>
+                ) : collaborativeGuessTask && !isSpectator ? (
+                  <p className="guess-submit-wait" role="status">
+                    {(isDecodePhase ? myTeamDecodeSubmitted : myTeamInterceptSubmitted) ? '本队答案已提交' :
+                      collaborativeGuessTask.locked ? '本轮答题已结束' : guessSubmitter ? <>
+                        等待<GuessSubmitterName name={guessSubmitter.player_name} />提交
+                      </> : `等待本队${guessSubmitterRole}就位`}
+                  </p>
                 ) : !isSpectator ? (
                   <button className="primary-button" disabled type="button">
                     等待中
@@ -4672,6 +4731,23 @@ function App() {
                       {myTeamConfirmed ? '本队词语已锁定，等待另一队加密者确认词语' : '等待本队加密者确认词语'}
                     </p>
                   </div>
+                ) : USE_COLLABORATIVE_GUESS_INPUT && (isDecodePhase || (isInterceptPhase && !isFirstRoundInterceptSkip)) &&
+                  ((isDecodePhase ? myTeamSubmission : opponentSubmission)?.clues?.length ?? 0) > 0 ? (
+                  <CollaborativeGuessInput
+                    clues={(isDecodePhase ? myTeamSubmission : opponentSubmission)?.clues ?? []}
+                    tone={teamTone(isDecodePhase ? myTeam : opponentTeam)}
+                    task={guessDraft.task}
+                    choices={guessDraft.choices}
+                    players={myTeamPlayers}
+                    selfId={self.id}
+                    digits={guessDraft.digits}
+                    submittedDigits={isDecodePhase ? myTeamSubmission?.own_guess ? displayedDecodeDigits : null : opponentSubmission?.intercept_guess ? displayedInterceptDigits : null}
+                    canEdit={guessDraft.canEdit && !forcedPhaseExpired}
+                    readOnly={isGuessReadOnly}
+                    busy={busyKey !== null}
+                    connected={roomRealtimeConnected}
+                    onSelect={guessDraft.select}
+                  />
                 ) : isDecodePhase && (myTeamSubmission?.clues?.length ?? 0) > 0 ? (
                   <div className="action-lines">
                     <div className={cn('action-line-head', isGuessFeedbackInputMode ? 'action-line-head-guess-input' : 'action-line-head-guess')}>

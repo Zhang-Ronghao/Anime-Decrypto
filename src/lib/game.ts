@@ -7,6 +7,7 @@ import type {
   TeamWordSlot,
 } from '../types';
 import type { RoomChatServerEvent } from '../types/chat';
+import type { GuessDraftClientEvent, GuessDraftStateEvent } from '../types/guessDraft';
 import { getSessionIdForRequest } from './session';
 
 const DEFAULT_ROUND_HISTORY_ROW_LIMIT = 16;
@@ -499,6 +500,7 @@ export type RoomSubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CH
 export type SelfNotificationKind = 'kicked';
 
 export interface RoomSubscription {
+  sendGuessDraft(event: GuessDraftClientEvent): boolean;
   sendChat(clientMessageId: string, channel: 'room' | 'team', text: string): boolean;
   setFullRoundHistory(enabled: boolean): void;
   unsubscribe(): void;
@@ -509,7 +511,7 @@ export function subscribeToRoom(
   onSnapshot: (snapshot: RoomSnapshot) => void,
   onRoomClosed?: (reason: string) => void,
   onStatus?: (status: RoomSubscriptionStatus, error?: Error) => void,
-  options: { fullRoundHistory?: boolean; onChatEvent?: (event: RoomChatServerEvent) => void } = {},
+  options: { fullRoundHistory?: boolean; onChatEvent?: (event: RoomChatServerEvent) => void; onGuessDraftEvent?: (event: GuessDraftStateEvent) => void } = {},
 ): RoomSubscription {
   const initialFullRoundHistory = options.fullRoundHistory === true;
   const socket = new WebSocket(
@@ -552,6 +554,8 @@ export function subscribeToRoom(
         handleWsActionResult(payload, pendingActions);
       } else if (payload.type === 'chat_message' || payload.type === 'chat_error') {
         options.onChatEvent?.(payload as RoomChatServerEvent);
+      } else if (payload.type === 'guess_draft_state') {
+        options.onGuessDraftEvent?.(payload as GuessDraftStateEvent);
       } else if (payload.type === 'room_closed') {
         onRoomClosed?.(payload.reason ?? 'closed');
       } else if (payload.type === 'error') {
@@ -573,6 +577,10 @@ export function subscribeToRoom(
   });
 
   return {
+    sendGuessDraft(event: GuessDraftClientEvent) {
+      if (socket.readyState !== WebSocket.OPEN) return false;
+      try { socket.send(JSON.stringify(event)); return true; } catch { return false; }
+    },
     sendChat(clientMessageId: string, channel: 'room' | 'team', text: string) {
       if (socket.readyState !== WebSocket.OPEN) {
         return false;
@@ -607,6 +615,7 @@ export function subscribeToSelfNotifications(
 ): RoomSubscription {
   onStatus?.('SUBSCRIBED');
   return {
+    sendGuessDraft() { return false; },
     sendChat() {
       return false;
     },

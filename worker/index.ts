@@ -24,6 +24,7 @@ import {
 import { handleRoomChatMessage, RoomChatRateLimiter } from './roomChat';
 import { isCompleteGuess, PHASE_TIMEOUT_GRACE_MS, timeoutClues, timeoutGuess } from './phaseTimeout';
 import { canSeeTeamWords } from './teamWordVisibility';
+import { GuessDrafts } from './guessDrafts';
 
 export interface Env {
   DB: D1Database;
@@ -1088,6 +1089,7 @@ async function roomIdByCode(env: Env, roomCode: string): Promise<string | null> 
 export class RoomDurableObject {
   private stateCache: RoomState | null = null;
   private readonly roomChatRateLimiter = new RoomChatRateLimiter();
+  private readonly guessDrafts = new GuessDrafts();
 
   constructor(
     private readonly state: DurableObjectState,
@@ -1159,13 +1161,13 @@ export class RoomDurableObject {
     await this.handleAlarm();
   }
 
-  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
+  async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (message === 'ping') {
       socket.send('pong');
       return;
     }
 
-    void this.handleWebSocketMessage(socket, message);
+    await this.handleWebSocketMessage(socket, message);
   }
 
   private async handleWebSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -1179,16 +1181,33 @@ export class RoomDurableObject {
       fullRoundHistory?: boolean;
       clientMessageId?: unknown;
       text?: unknown;
+      taskKey?: unknown;
+      digits?: unknown;
+      updatedAt?: unknown;
     } | null = null;
     try {
-      payload = JSON.parse(message) as {
-        type?: string;
-        action?: Action;
-        fullRoundHistory?: boolean;
-        clientMessageId?: unknown;
-        text?: unknown;
-      };
+      payload = JSON.parse(message);
     } catch {
+      return;
+    }
+
+    if (payload?.type === 'guess_draft_update' || payload?.type === 'guess_draft_request') {
+      // Transient channel: never use applyAction/save/idempotency storage here.
+      if (message.length > 2048) return;
+      const attachment = this.socketAttachment(socket);
+      if (!attachment) return;
+      try {
+        const current = await this.requireState(attachment.roomId);
+        this.syncGuessDrafts(current);
+        if (payload.type === 'guess_draft_update') {
+          if (this.guessDrafts.update(current, attachment.userId, payload)) this.broadcastGuessDrafts(current);
+          else this.sendGuessDrafts(socket, current);
+        } else {
+          this.sendGuessDrafts(socket, current, true);
+        }
+      } catch {
+        socket.close();
+      }
       return;
     }
 
@@ -1292,6 +1311,7 @@ export class RoomDurableObject {
       const state = ensureRevision(fromStorage);
       this.stateCache = state;
       await this.ensureMeta(state);
+      this.syncGuessDrafts(state);
       return state;
     }
 
@@ -1303,6 +1323,7 @@ export class RoomDurableObject {
     this.stateCache = fromD1;
     await this.state.storage.put('state', fromD1);
     await this.ensureMeta(fromD1);
+    this.syncGuessDrafts(fromD1);
     return fromD1;
   }
 
@@ -1401,6 +1422,7 @@ export class RoomDurableObject {
 
     ensureRevision(current);
     this.stateCache = current;
+    this.syncGuessDrafts(current);
     const meta = await this.ensureMeta(current);
     if (meta.d1PersistPending) {
       await this.flushD1Persist(current);
@@ -1458,15 +1480,34 @@ export class RoomDurableObject {
           snapshot: publicSnapshot(current, attachment.userId, attachment.fullRoundHistory),
         }),
       );
+      this.sendGuessDrafts(socket, current, true);
     } catch {
       socket.close();
     }
   }
 
   private broadcastSnapshots(current: RoomState): void {
+    this.syncGuessDrafts(current);
     for (const socket of this.state.getWebSockets()) {
       this.sendSnapshot(socket, current);
     }
+  }
+
+  private syncGuessDrafts(current: RoomState): void {
+    const result = this.guessDrafts.reconcile(current);
+    if (result.changed) this.broadcastGuessDrafts(current, result.requestSync);
+  }
+
+  private sendGuessDrafts(socket: WebSocket, current: RoomState, requestSync = false): void {
+    const attachment = this.socketAttachment(socket);
+    if (!attachment || attachment.roomId !== current.room.id) return;
+    const event = this.guessDrafts.event(current, attachment.userId, requestSync);
+    if (!event) return;
+    try { socket.send(JSON.stringify(event)); } catch { /* A closing socket can be skipped. */ }
+  }
+
+  private broadcastGuessDrafts(current: RoomState, requestSync = false): void {
+    for (const socket of this.state.getWebSockets()) this.sendGuessDrafts(socket, current, requestSync);
   }
 
   private broadcastRoomClosed(reason: string): void {

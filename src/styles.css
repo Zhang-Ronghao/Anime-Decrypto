@@ -1399,6 +1399,176 @@ select:focus {
   justify-content: center;
 }
 
+.collaborative-guess {
+  --guess-accent: var(--blue);
+  --guess-soft: var(--blue-soft);
+  --guess-line: var(--blue-line);
+  min-width: 0;
+}
+
+.collaborative-guess-red {
+  --guess-accent: var(--red);
+  --guess-soft: var(--red-soft);
+  --guess-line: var(--red-line);
+}
+
+.guess-collab-scroll {
+  overflow-x: auto;
+  /* Space for focus rings; long clues wrap within their original row. */
+  padding: 3px;
+  margin: -3px;
+}
+
+.guess-collab-lines { min-width: 590px; }
+
+.guess-collab-row,
+.guess-collab-row.action-line-head {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.55fr) minmax(0, 1.6fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.guess-collab-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+  min-width: 0;
+}
+
+.guess-collab-instruction { flex: 0 0 auto; }
+
+.guess-collab-legend {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+  text-align: right;
+  min-width: 0;
+}
+
+.guess-submitter-name {
+  display: inline-block;
+  max-width: 5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.action-hint-guess { max-width: 100%; }
+.action-hint-guess strong { color: var(--text); }
+.guess-submit-wait { margin: 0; padding: 12px 0; color: var(--muted); font-size: 0.92rem; text-align: center; }
+
+.guess-collab-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.guess-choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  color: var(--text);
+  text-align: left;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.guess-choice:hover { border-color: var(--guess-line); }
+.guess-choice[aria-disabled="true"] { cursor: default; }
+.guess-choice:focus-visible { outline: 2px solid var(--guess-accent); outline-offset: 2px; }
+.guess-choice.guess-choice-draft {
+  border-color: var(--guess-accent);
+  box-shadow: inset 0 0 0 1px var(--guess-accent);
+}
+
+.guess-choice-radio {
+  display: inline-flex;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--muted);
+  border-radius: 50%;
+  transition: border-color 100ms ease-out;
+}
+
+.guess-choice-radio::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--guess-accent);
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 100ms ease-out, transform 100ms ease-out;
+}
+
+.guess-choice-mine .guess-choice-radio { border-color: var(--guess-accent); }
+.guess-choice-mine .guess-choice-radio::after { opacity: 1; transform: scale(1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .guess-choice-radio, .guess-choice-radio::after { transition: none; }
+}
+
+.guess-choice-digit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 1rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+
+.guess-choice-names {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  overflow: hidden;
+}
+
+.guess-choice-name {
+  flex: 0 0 auto;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 4px;
+  border-radius: 5px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 650;
+  text-align: center;
+}
+
+.guess-choice-name-self {
+  color: var(--guess-accent);
+  background: var(--guess-soft);
+}
+.guess-choice-count { color: var(--muted); font-size: 0.85rem; font-weight: 650; white-space: nowrap; }
+.guess-choice-measure { position: absolute; inset: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
+.guess-choice-measure-row { display: flex; width: max-content; gap: 4px; }
+
+.guess-collab-status { margin-top: 9px; color: var(--muted); font-size: 0.82rem; text-align: right; }
+
 .guess-feedback-grid {
   min-width: 0;
   display: grid;
