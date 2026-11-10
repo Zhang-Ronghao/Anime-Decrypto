@@ -474,7 +474,7 @@ select:focus {
 .room-code-display {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .room-code-value {
@@ -488,23 +488,23 @@ select:focus {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--soft);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
   transition: background 160ms ease, color 160ms ease;
 }
 
 .room-code-toggle:hover {
-  background: var(--line);
+  background: var(--soft);
   color: var(--text);
 }
 
 .room-code-toggle:active {
-  background: var(--line-strong);
+  background: var(--line);
 }
 
 .room-code-toggle:focus-visible {
@@ -1450,9 +1450,6 @@ select:focus {
 .guess-collab-instruction { flex: 0 0 auto; }
 
 .guess-collab-legend {
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 500;
   text-align: right;
   min-width: 0;
 }

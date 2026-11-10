@@ -4,7 +4,7 @@ import { RoomChat } from './components/RoomChat';
 import { RoomCodeDisplay } from './components/RoomCodeDisplay';
 import { GrowingGameInput } from './components/GrowingGameInput';
 import { CollaborativeGuessInput, GuessSubmitterName } from './components/CollaborativeGuessInput';
-import { USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
+import { HIDE_TOP_TEAM_SCORES, USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
 import { useGuessDrafts } from './hooks/useGuessDrafts';
 import type { GuessDraftClientEvent, GuessDraftStateEvent } from './types/guessDraft';
 import {
@@ -3974,7 +3974,7 @@ function App() {
         </div>
 
         <div className="top-actions">
-          {!isLobbyPhase ? (
+          {!isLobbyPhase && !HIDE_TOP_TEAM_SCORES ? (
             <>
               <article className={cn('team-score', `team-score-${teamTone(myTeam)}`)}>
                 <div className="team-score-display">
