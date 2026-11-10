@@ -452,6 +452,29 @@ function HomeFriendLinks() {
   );
 }
 
+function SiteFooter() {
+  return (
+    <footer className="home-footer" aria-label="相关信息">
+      <div className="home-footer-content">
+        <div className="home-footer-grid">
+          <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
+          <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
+          <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
+          <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="游戏QQ群" />
+          <HomeFooterLinkItem
+            external
+            href={OTHER_GAME_URL}
+            icon="spark"
+            label="更多游戏：动漫高手一眼顶针"
+            wide
+          />
+        </div>
+        <HomeFriendLinks />
+      </div>
+    </footer>
+  );
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
     return error.message;
@@ -3858,24 +3881,7 @@ function App() {
           {actionError ? <p className="error-text">{actionError}</p> : null}
         </section>
 
-        <footer className="home-footer" aria-label="相关信息">
-          <div className="home-footer-content">
-            <div className="home-footer-grid">
-              <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
-              <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
-              <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
-              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="游戏QQ群" />
-              <HomeFooterLinkItem
-                external
-                href={OTHER_GAME_URL}
-                icon="spark"
-                label="更多游戏：动漫高手一眼顶针"
-                wide
-              />
-            </div>
-            <HomeFriendLinks />
-          </div>
-        </footer>
+        <SiteFooter />
 
         {pendingMidgameJoin ? (
           <div
@@ -3978,7 +3984,9 @@ function App() {
         </div>
 
         <div className="status-pills">
-          <span className="status-pill status-pill-round">第 {snapshot.room.round_number || 0} 轮</span>
+          {!isLobbyPhase ? (
+            <span className="status-pill status-pill-round">第 {snapshot.room.round_number} 轮</span>
+          ) : null}
           <span className="status-pill status-pill-phase">{phaseLabel(snapshot.room.phase)}</span>
         </div>
 
@@ -4358,21 +4366,7 @@ function App() {
             spectatorTeamView={spectatorTeamView}
           />
 
-          <footer className="home-footer" aria-label="相关信息">
-            <div className="home-footer-grid">
-              <HomeFooterLinkItem href={VIDEO_INTRO_URL} icon="video" label="视频介绍" />
-              <HomeFooterLinkItem href={GAME_RULES_URL} icon="rules" label="文字规则" />
-              <HomeFooterLinkItem href={GITHUB_REPO_URL} icon="github" label="Github 仓库" />
-              <HomeFooterLinkItem href={FEEDBACK_QQ_GROUP_URL} icon="group" label="游戏QQ群" />
-              <HomeFooterLinkItem
-                external
-                href={OTHER_GAME_URL}
-                icon="spark"
-                label="更多游戏：动漫高手一眼顶针"
-                wide
-              />
-            </div>
-          </footer>
+          <SiteFooter />
         </>
       ) : (
         <>
