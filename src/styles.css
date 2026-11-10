@@ -584,15 +584,24 @@ select:focus {
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--soft);
+  background: oklch(96% 0.006 255);
   color: var(--text);
   font-size: 0.92rem;
   font-weight: 700;
 }
 
 .role-chip-self {
-  border-color: var(--line-strong);
-  background: var(--panel-raised);
+  font-weight: 800;
+}
+
+.role-strip-team-red .role-chip-self {
+  border-color: var(--red-line);
+  background: var(--red-soft);
+}
+
+.role-strip-team-blue .role-chip-self {
+  border-color: var(--blue-line);
+  background: var(--blue-soft);
 }
 
 .status-pill {
