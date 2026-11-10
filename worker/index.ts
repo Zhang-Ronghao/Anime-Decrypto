@@ -25,6 +25,7 @@ import { handleRoomChatMessage, RoomChatRateLimiter } from './roomChat';
 import { isCompleteGuess, PHASE_TIMEOUT_GRACE_MS, timeoutClues, timeoutGuess } from './phaseTimeout';
 import { canSeeTeamWords } from './teamWordVisibility';
 import { GuessDrafts } from './guessDrafts';
+import { DEFAULT_BANGUMI_POPULAR_CATALOG } from '../src/config/bangumi';
 
 export interface Env {
   DB: D1Database;
@@ -372,6 +373,20 @@ function ensureRevision(state: RoomState): RoomState {
   }
 
   state.room.force_phase_timeout_enabled = state.room.force_phase_timeout_enabled === true;
+  if (
+    state.room.phase === 'lobby' &&
+    state.room.bangumi_catalog_updated_at === null &&
+    state.room.bangumi_catalog_inputs.length === 0 &&
+    state.bangumiCatalogEntries.length === 0
+  ) {
+    const { limit, yearMin, yearMax } = DEFAULT_BANGUMI_POPULAR_CATALOG;
+    state.bangumiCatalogEntries = popularCatalogEntries(limit, yearMin, yearMax);
+    state.room.bangumi_popular_catalog_limit = limit;
+    state.room.bangumi_popular_year_min = yearMin;
+    state.room.bangumi_popular_year_max = yearMax;
+    state.room.bangumi_catalog_word_count = state.bangumiCatalogEntries.length;
+    state.room.bangumi_catalog_updated_at = nowIso();
+  }
   for (const submission of state.submissions ?? []) {
     submission.clues_auto_submitted = submission.clues_auto_submitted === true;
     submission.own_guess_auto_submitted = submission.own_guess_auto_submitted === true;
@@ -2508,7 +2523,7 @@ function normalizePopularLimit(value: number | null): number | null {
   }
 
   const stepped = Math.round(value / 100) * 100;
-  return Math.min(2000, Math.max(100, stepped));
+  return Math.min(3000, Math.max(100, stepped));
 }
 
 function normalizePopularYear(value: number | null): number | null {

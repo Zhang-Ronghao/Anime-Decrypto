@@ -5,6 +5,7 @@ import { RoomCodeDisplay } from './components/RoomCodeDisplay';
 import { GrowingGameInput } from './components/GrowingGameInput';
 import { CollaborativeGuessInput, GuessSubmitterName } from './components/CollaborativeGuessInput';
 import { HIDE_TOP_TEAM_SCORES, USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
+import { DEFAULT_BANGUMI_POPULAR_CATALOG } from './config/bangumi';
 import { useGuessDrafts } from './hooks/useGuessDrafts';
 import type { GuessDraftClientEvent, GuessDraftStateEvent } from './types/guessDraft';
 import {
@@ -153,9 +154,9 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
 ];
 const BANGUMI_POPULAR_SOURCE_DATE = '2026-05-19';
 const BANGUMI_POPULAR_LIMIT_MIN = 100;
-const BANGUMI_POPULAR_LIMIT_MAX = 2000;
+const BANGUMI_POPULAR_LIMIT_MAX = 3000;
 const BANGUMI_POPULAR_LIMIT_STEP = 100;
-const BANGUMI_POPULAR_LIMIT_DEFAULT = 500;
+const BANGUMI_POPULAR_LIMIT_DEFAULT = DEFAULT_BANGUMI_POPULAR_CATALOG.limit;
 const BANGUMI_POPULAR_YEAR_MIN = 1900;
 const BANGUMI_POPULAR_YEAR_MAX = 2100;
 const DEFAULT_BANGUMI_CATALOG_MERGE_MODE: BangumiCatalogMergeMode = 'intersection';
@@ -724,8 +725,16 @@ function serializeWords(words: string[]): string {
   return words.join('\u0001');
 }
 
-function emptyBangumiCatalogInputRow(): string[] {
-  return [''];
+function emptyBangumiCatalogInputs(): string[] {
+  return [];
+}
+
+function isBangumiCatalogIndexInput(value: string): boolean {
+  try {
+    return /^\/index\/\d+\/?$/.test(new URL(value.trim()).pathname);
+  } catch {
+    return false;
+  }
 }
 
 function defaultBangumiCatalogTypes(): BangumiCollectionType[] {
@@ -993,7 +1002,7 @@ function App() {
   const [bangumiCatalogBrowserQuery, setBangumiCatalogBrowserQuery] = useState('');
   const [bangumiCatalogBrowserTotal, setBangumiCatalogBrowserTotal] = useState(0);
   const [bangumiCatalogBrowserHasMore, setBangumiCatalogBrowserHasMore] = useState(false);
-  const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputRow());
+  const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputs());
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
   );
@@ -1001,10 +1010,10 @@ function App() {
     DEFAULT_BANGUMI_CATALOG_MERGE_MODE,
   );
   const [bangumiCatalogError, setBangumiCatalogError] = useState<string | null>(null);
-  const [bangumiPopularCatalogEnabled, setBangumiPopularCatalogEnabled] = useState(false);
+  const [bangumiPopularCatalogEnabled, setBangumiPopularCatalogEnabled] = useState(true);
   const [bangumiPopularCatalogLimit, setBangumiPopularCatalogLimit] = useState(BANGUMI_POPULAR_LIMIT_DEFAULT);
-  const [bangumiPopularYearMinDraft, setBangumiPopularYearMinDraft] = useState('');
-  const [bangumiPopularYearMaxDraft, setBangumiPopularYearMaxDraft] = useState('');
+  const [bangumiPopularYearMinDraft, setBangumiPopularYearMinDraft] = useState(String(DEFAULT_BANGUMI_POPULAR_CATALOG.yearMin));
+  const [bangumiPopularYearMaxDraft, setBangumiPopularYearMaxDraft] = useState(String(DEFAULT_BANGUMI_POPULAR_CATALOG.yearMax));
   const [showAllRoundRecords, setShowAllRoundRecords] = useState(false);
   const [usageDebugCounters, setUsageDebugCounters] = useState<UsageDebugCounters>({
     session: 0,
@@ -1768,7 +1777,7 @@ function App() {
     setBangumiCatalogInputsDraft(
       snapshot.room.bangumi_catalog_inputs.length > 0
         ? [...snapshot.room.bangumi_catalog_inputs]
-        : emptyBangumiCatalogInputRow(),
+        : emptyBangumiCatalogInputs(),
     );
     setBangumiCatalogTypesDraft(
       snapshot.room.bangumi_catalog_types.length > 0
@@ -1855,6 +1864,8 @@ function App() {
     [snapshot],
   );
   const isLoadingBangumiCatalog = busyKey === 'load-bangumi-catalog';
+  const hasBangumiPersonalSources = bangumiCatalogInputsDraft.length > 0;
+  const hasBangumiUserSources = bangumiCatalogInputsDraft.some((value) => !isBangumiCatalogIndexInput(value));
 
   const isSpectator = Boolean(self?.is_spectator);
   const myTeam = self?.team ?? spectatorTeamView;
@@ -2563,14 +2574,14 @@ function App() {
     setPendingMidgameJoin(null);
     showAllRoundRecordsRef.current = false;
     setShowAllRoundRecords(false);
-    setBangumiCatalogInputsDraft(emptyBangumiCatalogInputRow());
+    setBangumiCatalogInputsDraft(emptyBangumiCatalogInputs());
     setBangumiCatalogTypesDraft(defaultBangumiCatalogTypes());
     setBangumiCatalogMergeMode(DEFAULT_BANGUMI_CATALOG_MERGE_MODE);
     setBangumiCatalogError(null);
-    setBangumiPopularCatalogEnabled(false);
+    setBangumiPopularCatalogEnabled(true);
     setBangumiPopularCatalogLimit(BANGUMI_POPULAR_LIMIT_DEFAULT);
-    setBangumiPopularYearMinDraft('');
-    setBangumiPopularYearMaxDraft('');
+    setBangumiPopularYearMinDraft(String(DEFAULT_BANGUMI_POPULAR_CATALOG.yearMin));
+    setBangumiPopularYearMaxDraft(String(DEFAULT_BANGUMI_POPULAR_CATALOG.yearMax));
     setOptimisticLobbySettings(null);
     setActionError(message ?? null);
     window.history.replaceState({}, '', window.location.pathname);
@@ -2662,7 +2673,7 @@ function App() {
     setBangumiCatalogInputsDraft(
       snapshot.room.bangumi_catalog_inputs.length > 0
         ? [...snapshot.room.bangumi_catalog_inputs]
-        : emptyBangumiCatalogInputRow(),
+        : emptyBangumiCatalogInputs(),
     );
     setBangumiCatalogTypesDraft(
       snapshot.room.bangumi_catalog_types.length > 0
@@ -2784,9 +2795,7 @@ function App() {
   }
 
   function removeBangumiCatalogInput(index: number) {
-    setBangumiCatalogInputsDraft((current) =>
-      current.length <= 1 ? current.map(() => '') : current.filter((_, itemIndex) => itemIndex !== index),
-    );
+    setBangumiCatalogInputsDraft((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
   async function handleCreateRoom() {
@@ -3359,7 +3368,7 @@ function App() {
       return;
     }
 
-    if (normalizedInputs.length > 0 && bangumiCatalogTypesDraft.length === 0) {
+    if (normalizedInputs.some((value) => !isBangumiCatalogIndexInput(value)) && bangumiCatalogTypesDraft.length === 0) {
       failCatalogValidation('至少勾选 1 个分类。');
       return;
     }
@@ -3379,7 +3388,7 @@ function App() {
       return;
     }
 
-    setBangumiCatalogInputsDraft(result.inputs.length > 0 ? [...result.inputs] : emptyBangumiCatalogInputRow());
+    setBangumiCatalogInputsDraft(result.inputs.length > 0 ? [...result.inputs] : emptyBangumiCatalogInputs());
     setBangumiCatalogTypesDraft(
       result.collectionTypes.length > 0
         ? (result.collectionTypes.filter((value): value is BangumiCollectionType =>
@@ -4158,7 +4167,7 @@ function App() {
                       onClick={openBangumiCatalogModal}
                       type="button"
                     >
-                      {isLoadingBangumiCatalog ? '载入中...' : '载入 Bangumi 动画词库'}
+                      {isLoadingBangumiCatalog ? '应用中…' : '设置词库'}
                     </button>
                   ) : (
                     <span className="muted lobby-settings-note">房主可更新词库</span>
@@ -4169,7 +4178,7 @@ function App() {
                   <div className="catalog-summary-grid">
                     <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
                     <div className="tag">词库来源：{bangumiCatalogSummary.sourceCount}</div>
-                    <div className="tag">交集词数：{bangumiCatalogSummary.wordCount}</div>
+                    <div className="tag">词库词数：{bangumiCatalogSummary.wordCount}</div>
                   </div>
 
                   <div className="catalog-actions">
@@ -5467,8 +5476,32 @@ function App() {
           <section aria-modal="true" className="modal-card" role="dialog">
             <div className="modal-card-head">
               <div>
-                <h2>载入 Bangumi 动画词库</h2>
-                <p className="muted">填写<strong>Bangumi 用户 ID</strong>（推荐）或<strong>收藏夹链接</strong>或<strong>目录链接</strong></p>
+                <h2>词库设置</h2>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={busyKey === 'load-bangumi-catalog'}
+                onClick={closeBangumiCatalogModal}
+                type="button"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="modal-form-stack">
+              {isLoadingBangumiCatalog ? (
+                <div className="catalog-loading-note" role="status">
+                  正在获取作品并应用词库，请稍候…
+                </div>
+              ) : null}
+
+              {bangumiCatalogError ? (
+                <div className="catalog-error-note" role="alert">
+                  {bangumiCatalogError}
+                </div>
+              ) : null}
+
+              {hasBangumiPersonalSources ? (
                 <div className="catalog-merge-row">
                   <span className="muted catalog-intersection-note">支持多个来源，词库将取</span>
                   <div className="catalog-merge-options" role="radiogroup" aria-label="词库来源合并方式">
@@ -5495,66 +5528,12 @@ function App() {
                     ))}
                   </div>
                 </div>
-                <p className="muted">用户收藏夹可按如下按钮进行过滤</p>
-              </div>
-              <button
-                className="ghost-button"
-                disabled={busyKey === 'load-bangumi-catalog'}
-                onClick={closeBangumiCatalogModal}
-                type="button"
+              ) : null}
+
+              <div
+                className={cn('catalog-source-group', !hasBangumiPersonalSources && 'catalog-source-group-single')}
+                data-merge-label={bangumiCatalogMergeMode === 'union' ? '并集' : '交集'}
               >
-                关闭
-              </button>
-            </div>
-
-            <div className="modal-form-stack">
-              {isLoadingBangumiCatalog ? (
-                <div className="catalog-loading-note" role="status">
-                  正在从 Bangumi 载入并保存词库，通常会稍慢一些，请稍等
-                </div>
-              ) : null}
-
-              {bangumiCatalogError ? (
-                <div className="catalog-error-note" role="alert">
-                  {bangumiCatalogError}
-                </div>
-              ) : null}
-
-              <div className="catalog-type-group">
-                {BANGUMI_COLLECTION_TYPE_OPTIONS.map((option) => (
-                  <label className="catalog-type-option" key={option.value}>
-                    <input
-                      checked={bangumiCatalogTypesDraft.includes(option.value)}
-                      disabled={busyKey === 'load-bangumi-catalog'}
-                      onChange={() => toggleBangumiCatalogType(option.value)}
-                      type="checkbox"
-                    />
-                    <span>{option.label}</span>
-                  </label>
-                ))}
-
-              </div>
-
-              <div className="catalog-source-group" data-merge-label={bangumiCatalogMergeMode === 'union' ? '并集' : '交集'}>
-                {bangumiCatalogInputsDraft.map((value, index) => (
-                  <div className="modal-input-row" key={`bangumi-input-${index}`}>
-                    <input
-                      disabled={busyKey === 'load-bangumi-catalog'}
-                      onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
-                      placeholder="例如：123456 或 https://bangumi.tv/anime/list/123456"
-                      value={value}
-                    />
-                    <button
-                      className="ghost-button"
-                      disabled={busyKey === 'load-bangumi-catalog' || bangumiCatalogInputsDraft.length <= 1}
-                      onClick={() => removeBangumiCatalogInput(index)}
-                      type="button"
-                    >
-                      删除
-                    </button>
-                  </div>
-                ))}
-
                 <div className="catalog-popular-source">
                   <div className="catalog-popular-top-row">
                     <label className="catalog-popular-toggle">
@@ -5623,6 +5602,45 @@ function App() {
                     </div>
                   </div>
                 </div>
+
+                {bangumiCatalogInputsDraft.map((value, index) => (
+                  <div className="modal-input-row" key={`bangumi-input-${index}`}>
+                    <input
+                      aria-label={`词库来源 ${index + 1}`}
+                      disabled={busyKey === 'load-bangumi-catalog'}
+                      onChange={(event) => updateBangumiCatalogInput(index, event.target.value)}
+                      placeholder="Bangumi 用户 ID、收藏夹链接或目录链接"
+                      value={value}
+                    />
+                    <button
+                      className="ghost-button"
+                      disabled={busyKey === 'load-bangumi-catalog'}
+                      onClick={() => removeBangumiCatalogInput(index)}
+                      type="button"
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))}
+
+                {hasBangumiUserSources ? (
+                  <div className="catalog-collection-filters">
+                    <span className="muted catalog-filter-label">收藏状态</span>
+                    <div className="catalog-type-group">
+                      {BANGUMI_COLLECTION_TYPE_OPTIONS.map((option) => (
+                        <label className="catalog-type-option" key={option.value}>
+                          <input
+                            checked={bangumiCatalogTypesDraft.includes(option.value)}
+                            disabled={busyKey === 'load-bangumi-catalog'}
+                            onChange={() => toggleBangumiCatalogType(option.value)}
+                            type="checkbox"
+                          />
+                          <span>{option.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -5633,7 +5651,7 @@ function App() {
                 onClick={addBangumiCatalogInput}
                 type="button"
               >
-                新增词库来源
+                添加个人收藏或目录
               </button>
               <button
                 className="primary-button"
@@ -5641,7 +5659,7 @@ function App() {
                 onClick={() => void handleLoadBangumiCatalog()}
                 type="button"
               >
-                {isLoadingBangumiCatalog ? '载入中...' : '生成词库'}
+                {isLoadingBangumiCatalog ? '应用中…' : '应用词库'}
               </button>
             </div>
           </section>

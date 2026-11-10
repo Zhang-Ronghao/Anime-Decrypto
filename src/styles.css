@@ -1912,6 +1912,15 @@ select:focus {
   line-height: 1.2;
 }
 
+.lobby-settings-catalog .lobby-settings-head > div {
+  min-width: 0;
+}
+
+.lobby-settings-catalog .lobby-settings-head > .outline-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .lobby-settings-note {
   color: var(--muted);
   font-size: 0.8rem;
@@ -3345,6 +3354,26 @@ select:focus {
   display: grid;
   gap: 12px;
   padding-left: 24px;
+}
+
+.catalog-source-group-single {
+  padding-left: 0;
+}
+
+.catalog-source-group-single::before,
+.catalog-source-group-single::after {
+  display: none;
+}
+
+.catalog-collection-filters {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.catalog-filter-label {
+  font-size: 0.84rem;
+  font-weight: 700;
 }
 
 .catalog-source-group::before {
