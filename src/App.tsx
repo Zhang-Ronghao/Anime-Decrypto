@@ -3830,55 +3830,56 @@ function App() {
 
   if (!roomId || !snapshot || !self) {
     return (
-      <main className="app-shell">
-        <section className="panel hero-panel hero-panel-home">
+      <main className="app-shell home-shell">
+        <section className="hero-panel-home" aria-labelledby="home-title">
           <div className="hero-copy">
-            <div className="hero-eyebrow-row">
-              <p className="hero-tag">动漫高手4.0</p>
-            </div>
-            <h1>动漫高手——截码战</h1>
-            <div className="hero-tags" aria-label="游戏特点">
-              <span className="hero-tag">4人及以上</span>
-              <span className="hero-tag">双队对抗</span>
-              <span className="hero-tag">实时房间</span>
-              <span className="hero-tag">Bangumi词库</span>
-            </div>
+            <p className="home-brand">动漫高手 4.0</p>
+            <h1 id="home-title">动漫高手<span className="home-title-separator">——</span>截码战</h1>
+            <ul className="home-features" aria-label="游戏特点">
+              <li>4 人及以上</li>
+              <li>双队对抗</li>
+              <li>Bangumi 词库</li>
+            </ul>
           </div>
 
           <div className="hero-form-card">
-            <div className="form-grid">
-              <label>
-                <span>你的昵称</span>
-                <input
-                  maxLength={18}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                  placeholder="例如：阿澄"
-                  value={displayName}
-                />
-              </label>
+            <label className="home-field" htmlFor="home-nickname">
+              <span>你的昵称</span>
+              <input
+                id="home-nickname"
+                autoComplete="nickname"
+                maxLength={18}
+                onChange={(event) => setDisplayName(event.target.value)}
+                placeholder="例如：阿澄"
+                value={displayName}
+              />
+            </label>
 
-              <label>
-                <span>房间码</span>
-                <input
-                  maxLength={6}
-                  onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-                  placeholder="6位数字/字母"
-                  value={joinCode}
-                />
-              </label>
-            </div>
+            <label className="home-field" htmlFor="home-join-code">
+              <span>房间码</span>
+              <input
+                id="home-join-code"
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                maxLength={6}
+                onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                placeholder="6 位数字或字母"
+                value={joinCode}
+              />
+            </label>
 
-            <div className="button-row hero-button-row">
+            <div className="hero-button-row">
               <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleCreateRoom()} type="button">
-                创建房间
+                {busyKey === 'create-room' ? '创建中…' : '创建房间'}
               </button>
               <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleJoinRoom()} type="button">
-                加入房间
+                {busyKey?.startsWith('join-room') ? '加入中…' : '加入房间'}
               </button>
             </div>
-          </div>
 
-          {actionError ? <p className="error-text">{actionError}</p> : null}
+            {actionError ? <p className="error-text home-form-error" role="alert">{actionError}</p> : null}
+          </div>
         </section>
 
         <SiteFooter />

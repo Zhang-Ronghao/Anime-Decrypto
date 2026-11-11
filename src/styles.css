@@ -111,28 +111,39 @@ select:focus {
   padding: 32px;
 }
 
-.hero-panel-home {
-  position: relative;
-  overflow: hidden;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 420px);
-  align-items: center;
-  gap: 28px;
-  padding: 48px;
-  border: 1px solid rgba(20, 33, 61, 0.08);
-  border-radius: 28px;
-  background:
-    linear-gradient(122deg, oklch(98.6% 0.012 24) 0%, oklch(98.4% 0.016 255) 48%, var(--panel) 100%),
-    linear-gradient(90deg, oklch(63% 0.17 25 / 0.16), oklch(55% 0.17 263 / 0.16));
-  box-shadow: 0 30px 80px rgba(22, 35, 68, 0.14);
+.app-shell.home-shell {
+  --text: oklch(24.49% 0.0388 264.35);
+  --muted: oklch(49% 0.025 265);
+  --line: oklch(89.27% 0.0181 261.34);
+  --line-strong: oklch(81% 0.022 261);
+  --panel: oklch(99.8% 0.001 265);
+  --panel-raised: oklch(99.8% 0.001 265);
+  --soft: oklch(96% 0.01 258);
+  --home-accent: oklch(58.6% 0.222 17.6);
+  --home-accent-strong: oklch(51.4% 0.222 16.9);
+  --home-focus-ring: 0 0 0 3px oklch(58.6% 0.222 17.6 / 0.12);
+  max-width: 1120px;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  align-content: center;
+  gap: 72px;
+  padding: 48px 32px;
 }
 
-.hero-panel-home::after {
-  content: '';
-  position: absolute;
-  inset: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 22px;
-  pointer-events: none;
+body:has(.home-shell) {
+  min-width: 0;
+  background:
+    radial-gradient(circle at top left, oklch(65% 0.17 20 / 0.18), transparent 40rem),
+    radial-gradient(circle at bottom right, oklch(65% 0.14 255 / 0.18), transparent 40rem),
+    linear-gradient(135deg, oklch(99.3% 0.002 20), oklch(99% 0.003 255));
+}
+
+.hero-panel-home {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  align-items: center;
+  gap: 56px;
 }
 
 .hero-copy h1,
@@ -150,63 +161,53 @@ select:focus {
 }
 
 .hero-panel-home .hero-copy {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  gap: 22px;
+  min-width: 0;
 }
 
 .hero-panel-home .hero-copy h1 {
-  font-family: 'STZhongsong', 'Noto Serif SC', 'Songti SC', serif;
-  font-size: clamp(2.2rem, 5vw, 4.4rem);
-  line-height: 1;
-  letter-spacing: 0.02em;
-  color: #16233f;
-  text-shadow: 0 8px 24px rgba(22, 35, 63, 0.08);
-  white-space: nowrap;
+  margin-top: 16px;
+  color: var(--text);
+  font-size: 3.25rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
 }
 
-.hero-tags {
+.home-title-separator {
+  letter-spacing: -0.12em;
+  margin-right: 0.1em;
+}
+
+.home-brand {
+  width: fit-content;
+  margin: 0;
+}
+
+.home-features {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.hero-eyebrow-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.hero-tag {
+.home-brand,
+.home-features li {
   display: inline-flex;
   align-items: center;
-  margin: 0;
   min-height: 36px;
   padding: 0.35rem 0.9rem;
-  border: 1px solid rgba(20, 33, 61, 0.1);
+  border: 1px solid oklch(25% 0.04 263 / 0.1);
   border-radius: 999px;
   background: color-mix(in oklch, var(--panel) 88%, transparent);
-  color: #26344f;
+  color: oklch(32.5% 0.052 263);
   font-size: 0.92rem;
   font-weight: 800;
-  box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
-}
-
-.hero-tag-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 0.35rem 0.9rem;
-  border: 1px solid rgba(35, 89, 201, 0.26);
-  border-radius: 999px;
-  background: var(--panel);
-  color: #2359c9;
-  font-size: 0.92rem;
-  font-weight: 800;
-  text-decoration: none;
-  box-shadow: 0 10px 24px rgba(28, 42, 76, 0.08);
+  box-shadow: 0 10px 24px oklch(29% 0.06 267 / 0.08);
+  white-space: nowrap;
 }
 
 .eyebrow,
@@ -240,54 +241,117 @@ select:focus {
 }
 
 .hero-form-card {
-  position: relative;
-  z-index: 1;
   display: grid;
-  gap: 18px;
-  padding: 26px;
-  border: 1px solid rgba(185, 196, 212, 0.6);
-  border-radius: 22px;
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--panel) 96%, var(--blue-soft)), color-mix(in oklch, var(--panel) 90%, var(--soft))),
-    var(--panel);
-  box-shadow: 0 20px 44px rgba(24, 39, 74, 0.12);
+  gap: 20px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 14px 48px oklch(24.49% 0.0388 264.35 / 0.055);
+}
+
+.home-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 500;
 }
 
 .hero-button-row {
-  gap: 14px;
-}
-
-.hero-button-row .primary-button,
-.hero-button-row .ghost-button {
-  flex: 1 1 0;
-  min-height: 52px;
-  border-radius: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 2px;
 }
 
 .hero-form-card input {
-  min-height: 50px;
-  border-radius: 14px;
-  border-color: rgba(155, 169, 191, 0.8);
+  min-height: 52px;
+  border-radius: 7px;
+  border-color: var(--line-strong);
   background: var(--panel-raised);
+  font-size: 1rem;
+  font-weight: 400;
 }
 
 .hero-form-card input::placeholder {
-  color: #8b96aa;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.hero-form-card input:focus {
+  border-color: var(--home-accent);
+  box-shadow: var(--home-focus-ring);
+}
+
+.hero-form-card .primary-button,
+.hero-form-card .ghost-button {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 7px;
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: none;
 }
 
 .hero-form-card .primary-button {
-  background: linear-gradient(135deg, #d94a4a, #255fe0);
-  box-shadow: 0 14px 30px rgba(63, 92, 176, 0.24);
+  background: var(--home-accent);
 }
 
 .hero-form-card .ghost-button {
-  border: 1px solid rgba(112, 133, 174, 0.25);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
   background: var(--panel);
 }
 
-.hero-form-card .primary-button:hover,
-.hero-form-card .ghost-button:hover {
-  box-shadow: 0 16px 32px rgba(24, 39, 74, 0.12);
+.hero-form-card .primary-button:hover:not(:disabled) {
+  background: var(--home-accent-strong);
+}
+
+.hero-form-card .ghost-button:hover:not(:disabled) {
+  border-color: var(--home-accent);
+  background: var(--soft);
+}
+
+.hero-form-card .home-form-error {
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.hero-form-card .primary-button:focus-visible,
+.hero-form-card .ghost-button:focus-visible,
+.home-shell .home-footer-link:focus-visible,
+.home-shell .home-friend-link:focus-visible {
+  outline: 2px solid var(--home-accent);
+  outline-offset: 3px;
+  box-shadow: var(--home-focus-ring);
+}
+
+.hero-form-card .primary-button:disabled {
+  box-shadow: none;
+}
+
+.home-shell .home-footer-link:hover,
+.home-shell .home-friend-link:hover {
+  color: var(--text);
+}
+
+.home-shell > .home-footer {
+  margin-top: 0;
+  padding: 0;
+}
+
+.home-shell .home-footer-link {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.home-shell .home-friend-link,
+.home-shell .home-friend-links-title {
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 .home-footer {
@@ -3910,6 +3974,17 @@ code {
   }
 }
 
+@media (min-width: 901px) and (max-width: 1100px) {
+  .hero-panel-home {
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 40px;
+  }
+
+  .hero-panel-home .hero-copy h1 {
+    font-size: 2.75rem;
+  }
+}
+
 @media (max-width: 900px) {
   .app-shell {
     padding: 18px 14px 36px;
@@ -3932,10 +4007,28 @@ code {
     display: none;
   }
 
+  .app-shell.home-shell {
+    max-width: 620px;
+    gap: 48px;
+    padding: 40px 24px;
+  }
+
   .hero-panel-home {
     grid-template-columns: 1fr;
-    min-height: auto;
-    padding: 30px 22px;
+    gap: 32px;
+  }
+
+  .hero-form-card {
+    padding: 24px;
+  }
+
+  .home-shell .home-footer-grid {
+    grid-template-columns: repeat(2, max-content);
+    gap: 10px 24px;
+  }
+
+  .home-shell .home-footer-link-wide {
+    grid-column: 1 / -1;
   }
 
   .home-footer-grid {
@@ -3948,7 +4041,7 @@ code {
   }
 
   .hero-panel-home .hero-copy h1 {
-    font-size: clamp(1.5rem, 6.8vw, 2.2rem);
+    font-size: 2.75rem;
   }
 
   .layout-grid,
@@ -4280,6 +4373,12 @@ code {
 
   .record-row {
     min-width: 560px;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-panel-home .hero-copy h1 {
+    font-size: clamp(1.5rem, 7.5vw, 2rem);
   }
 }
 
