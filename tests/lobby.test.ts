@@ -38,6 +38,28 @@ function lobbyHarness() {
   };
 }
 
+test('new rooms default to three lives while saved classic settings survive reload', async () => {
+  const h = lobbyHarness(); await h.init();
+  const fresh = await h.snapshot();
+  assert.equal(fresh.room.life_mode_enabled, true);
+  assert.equal(fresh.room.life_points, 3);
+  assert.equal(fresh.room.force_phase_timeout_enabled, false);
+  assert.equal(fresh.room.bangumi_character_extract_enabled, false);
+
+  await h.request(1, { type: 'updateRoomLobbySettings', payload: {
+    timers: { encryptMinutes: 3, decodeMinutes: 2, interceptMinutes: 1 },
+    lifeModeEnabled: false, lifePoints: 4, miscommunicationLimit: 3,
+    allowMidgameJoin: true, forcePhaseTimeoutEnabled: true, bangumiCharacterExtractEnabled: true,
+  } });
+  h.reload();
+  const saved = await h.snapshot();
+  assert.equal(saved.room.life_mode_enabled, false);
+  assert.equal(saved.room.life_points, 4);
+  assert.equal(saved.room.miscommunication_limit, 3);
+  assert.equal(saved.room.force_phase_timeout_enabled, true);
+  assert.equal(saved.room.bangumi_character_extract_enabled, true);
+});
+
 test('teams grow past the old seven-player capacity and repeated joins preserve rotation order', async () => {
   const h = lobbyHarness(); await h.init();
   for (let index = 1; index <= 9; index++) await h.join(index, 'A');

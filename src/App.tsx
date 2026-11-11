@@ -17,7 +17,6 @@ import {
   createRoom,
   disbandRoom,
   extractBangumiCharacters,
-  fetchBangumiCatalogWords,
   fetchRoomSnapshot,
   getRoomJoinStatus,
   generateTeamWords,
@@ -149,7 +148,6 @@ const BANGUMI_POPULAR_LIMIT_DEFAULT = DEFAULT_BANGUMI_POPULAR_CATALOG.limit;
 const BANGUMI_POPULAR_YEAR_MIN = 1900;
 const BANGUMI_POPULAR_YEAR_MAX = 2100;
 const DEFAULT_BANGUMI_CATALOG_MERGE_MODE: BangumiCatalogMergeMode = 'intersection';
-const BANGUMI_CATALOG_BROWSER_PAGE_SIZE = 200;
 
 const GITHUB_REPO_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto';
 const GAME_RULES_URL = 'https://github.com/Zhang-Ronghao/Anime-Decrypto/blob/main/docs/game-rules.md';
@@ -992,11 +990,6 @@ function App() {
   const [roomChatMessages, setRoomChatMessages] = useState<RoomChatMessage[]>([]);
   const [roomChatError, setRoomChatError] = useState('');
   const [bangumiCatalogModalOpen, setBangumiCatalogModalOpen] = useState(false);
-  const [bangumiCatalogBrowserOpen, setBangumiCatalogBrowserOpen] = useState(false);
-  const [bangumiCatalogBrowserWords, setBangumiCatalogBrowserWords] = useState<string[]>([]);
-  const [bangumiCatalogBrowserQuery, setBangumiCatalogBrowserQuery] = useState('');
-  const [bangumiCatalogBrowserTotal, setBangumiCatalogBrowserTotal] = useState(0);
-  const [bangumiCatalogBrowserHasMore, setBangumiCatalogBrowserHasMore] = useState(false);
   const [bangumiCatalogInputsDraft, setBangumiCatalogInputsDraft] = useState<string[]>(() => emptyBangumiCatalogInputs());
   const [bangumiCatalogTypesDraft, setBangumiCatalogTypesDraft] = useState<BangumiCollectionType[]>(() =>
     defaultBangumiCatalogTypes(),
@@ -2534,8 +2527,6 @@ function App() {
     setDecodeGuess('');
     setInterceptGuess('');
     setBangumiCatalogModalOpen(false);
-    setBangumiCatalogBrowserOpen(false);
-    setBangumiCatalogBrowserWords([]);
     setPendingMidgameJoin(null);
     showAllRoundRecordsRef.current = false;
     setShowAllRoundRecords(false);
@@ -2667,59 +2658,6 @@ function App() {
   function closeBangumiCatalogModal() {
     setBangumiCatalogError(null);
     setBangumiCatalogModalOpen(false);
-  }
-
-  async function openBangumiCatalogBrowser() {
-    if (!snapshot || snapshot.room.bangumi_catalog_word_count === 0) {
-      return;
-    }
-
-    setBangumiCatalogBrowserQuery('');
-    const loaded = await loadBangumiCatalogBrowserPage(0, '', true);
-    if (!loaded) {
-      return;
-    }
-
-    setBangumiCatalogBrowserOpen(true);
-  }
-
-  async function loadBangumiCatalogBrowserPage(offset: number, query: string, replace = false) {
-    if (!snapshot) {
-      return false;
-    }
-
-    const page = await withAction('load-bangumi-catalog-browser', () =>
-      fetchBangumiCatalogWords(snapshot.room.id, {
-        offset,
-        limit: BANGUMI_CATALOG_BROWSER_PAGE_SIZE,
-        query,
-      }),
-    );
-    if (page === null) {
-      return false;
-    }
-
-    setBangumiCatalogBrowserWords((current) => (replace ? page.words : [...current, ...page.words]));
-    setBangumiCatalogBrowserTotal(page.total);
-    setBangumiCatalogBrowserHasMore(page.hasMore);
-    return true;
-  }
-
-  function handleBangumiCatalogBrowserSearch(value: string) {
-    setBangumiCatalogBrowserQuery(value);
-    void loadBangumiCatalogBrowserPage(0, value, true);
-  }
-
-  function handleBangumiCatalogBrowserLoadMore() {
-    void loadBangumiCatalogBrowserPage(bangumiCatalogBrowserWords.length, bangumiCatalogBrowserQuery, false);
-  }
-
-  function closeBangumiCatalogBrowser() {
-    setBangumiCatalogBrowserOpen(false);
-    setBangumiCatalogBrowserWords([]);
-    setBangumiCatalogBrowserQuery('');
-    setBangumiCatalogBrowserTotal(0);
-    setBangumiCatalogBrowserHasMore(false);
   }
 
   async function handleRoundRecordsToggle() {
@@ -3078,31 +3016,6 @@ function App() {
         snapshot.room.bangumi_character_extract_enabled,
       ),
     );
-  }
-
-  async function handleBangumiCharacterExtractToggle(enabled: boolean) {
-    if (!snapshot || !self?.is_host || enabled === bangumiCharacterExtractEnabled) {
-      return;
-    }
-
-    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
-    setOptimisticLobbySettings((current) => ({ ...current, bangumi_character_extract_enabled: enabled }));
-    const result = await withAction('lobby-bangumi-character-extract', () =>
-      updateRoomLobbySettings(
-        snapshot.room.id,
-        timers,
-        snapshot.room.force_phase_timeout_enabled,
-        miscommunicationLimitFromRoom(snapshot.room),
-        snapshot.room.life_mode_enabled,
-        lifePointsFromRoom(snapshot.room),
-        snapshot.room.allow_midgame_join,
-        enabled,
-      ),
-    );
-    if (result !== null) {
-      patchSnapshotRoom({ bangumi_character_extract_enabled: enabled });
-    }
-    setOptimisticLobbySettings(null);
   }
 
   async function handleStartGame() {
@@ -4121,7 +4034,12 @@ function App() {
                   <span>其他设置</span>
                 </button>
               </div>
+              {!self.is_host ? <p className="muted lobby-settings-permission">仅房主可修改设置</p> : null}
               <div className={cn('lobby-settings', !self.is_host && 'lobby-settings-readonly')}>
+                <div className="lobby-mode-summary" aria-live="polite">
+                  <strong>本局模式</strong>
+                  <span>{lifeModeEnabled ? `生命模式 · ${lifePoints} 点生命` : `经典模式 · 失误上限 ${miscommunicationLimit} 次`}</span>
+                </div>
                 <div className="lobby-settings-block lobby-settings-timers">
                   <div className="lobby-settings-head">
                     <strong>各阶段时间设置</strong>
@@ -4147,52 +4065,45 @@ function App() {
                           ))}
                       </select>
                     </label>
-                  ))}
+                    ))}
                   </div>
+                  <label className="lobby-force-timeout" title="关闭后仍显示倒计时，仅作时间提示，不自动提交。">
+                    <span>
+                      <strong id="lobby-force-timeout-label">强制倒计时</strong>
+                      <small id="lobby-force-timeout-hint">到时自动提交已填写内容</small>
+                    </span>
+                    <input
+                      aria-labelledby="lobby-force-timeout-label"
+                      aria-describedby="lobby-force-timeout-hint"
+                      checked={forcePhaseTimeoutEnabled}
+                      disabled={!self.is_host || busyKey !== null}
+                      onChange={(event) => void handleForcePhaseTimeoutToggle(event.target.checked)}
+                      role="switch"
+                      type="checkbox"
+                    />
+                  </label>
                 </div>
 
                 <div className="lobby-settings-block lobby-settings-catalog">
-                  <div className="lobby-settings-head">
-                    <div>
-                      <strong>Bangumi 动画词库</strong>
-                    </div>
-
-                    {self.is_host ? (
-                      <button
-                        className="outline-button"
-                        disabled={busyKey !== null}
-                        onClick={openBangumiCatalogModal}
-                        type="button"
-                      >
-                        {isLoadingBangumiCatalog ? '应用中…' : '设置词库'}
-                      </button>
-                    ) : (
-                      <span className="muted lobby-settings-note">房主可更新词库</span>
-                    )}
+                  <div className="lobby-catalog-details">
+                    <strong>游戏词库</strong>
+                    <p className="muted lobby-settings-copy">支持 Bangumi 个人收藏、目录和热门榜单</p>
+                    <p className={cn('lobby-catalog-summary', !bangumiCatalogSummary.configured && 'lobby-catalog-unconfigured')}>
+                      {bangumiCatalogSummary.configured
+                        ? `${bangumiCatalogSummary.sourceCount} 个来源 · ${bangumiCatalogSummary.wordCount.toLocaleString('zh-CN')} 个词`
+                        : '未配置词库'}
+                    </p>
                   </div>
-
-                  <p className="muted lobby-settings-copy">支持 Bangumi 用户 ID、收藏夹页面链接或目录链接，多个来源可取交集/并集</p>
-
-                  <div className="catalog-summary-row">
-                    <div className="catalog-summary-grid">
-                      <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
-                      <div className="tag">词库来源：{bangumiCatalogSummary.sourceCount}</div>
-                      <div className="tag">词库词数：{bangumiCatalogSummary.wordCount}</div>
-                    </div>
-
-                    <div className="catalog-actions">
-                      {bangumiCatalogSummary.configured ? (
-                        <button
-                          className="ghost-button"
-                          disabled={busyKey !== null}
-                          onClick={() => void openBangumiCatalogBrowser()}
-                          type="button"
-                        >
-                          {busyKey === 'load-bangumi-catalog-browser' ? '载入中...' : '浏览词库'}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
+                  {self.is_host ? (
+                    <button
+                      className="outline-button lobby-catalog-configure"
+                      disabled={busyKey !== null}
+                      onClick={openBangumiCatalogModal}
+                      type="button"
+                    >
+                      {isLoadingBangumiCatalog ? '应用中…' : '设置词库'}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </aside>
@@ -5144,7 +5055,7 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>其他设置</h2>
-                <p className="muted">调整本局的获胜规则。只有房主能在大厅修改。</p>
+                <p className="muted">选择游戏模式，调整胜负规则。</p>
               </div>
               <button
                 className="ghost-button"
@@ -5233,32 +5144,6 @@ function App() {
                   <small>开启后，游戏中允许新玩家以队员身份加入</small>
                 </span>
               </label>
-
-              <label className="settings-toggle-row">
-                <input
-                  checked={forcePhaseTimeoutEnabled}
-                  disabled={!self?.is_host || busyKey !== null}
-                  onChange={(event) => void handleForcePhaseTimeoutToggle(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  <strong>强制倒计时</strong>
-                  <small>倒计时结束后，自动提交当前已填写的内容</small>
-                </span>
-              </label>
-
-              <label className="settings-toggle-row">
-                <input
-                  checked={bangumiCharacterExtractEnabled}
-                  disabled={!self?.is_host || busyKey !== null}
-                  onChange={(event) => void handleBangumiCharacterExtractToggle(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  <strong>开启从动画提取人物名</strong>
-                  <small>开启后，词语分配阶段支持将动画标题转换为角色名</small>
-                </span>
-              </label>
             </div>
           </section>
         </div>
@@ -5278,6 +5163,7 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>词库设置</h2>
+                <p className="muted">支持 Bangumi 用户 ID、收藏夹或目录链接，多个来源可取交集或并集。</p>
               </div>
               <button
                 className="ghost-button"
@@ -5467,63 +5353,6 @@ function App() {
         </div>
       ) : null}
 
-      {bangumiCatalogBrowserOpen ? (
-        <div
-          className="modal-backdrop"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeBangumiCatalogBrowser();
-            }
-          }}
-          role="presentation"
-        >
-          <section aria-modal="true" className="modal-card modal-card-compact" role="dialog">
-            <div className="modal-card-head">
-              <div>
-                <h2>Bangumi 词库</h2>
-                <p className="muted">当前房间已保存的动画词条，所有人都可以浏览</p>
-              </div>
-              <button className="ghost-button" onClick={closeBangumiCatalogBrowser} type="button">
-                关闭
-              </button>
-            </div>
-
-            <div className="catalog-browser-summary">
-              <div className="tag">
-                已加载：{bangumiCatalogBrowserWords.length}/{bangumiCatalogBrowserTotal}
-              </div>
-              <input
-                aria-label="搜索 Bangumi 词库"
-                className="catalog-browser-search"
-                onChange={(event) => handleBangumiCatalogBrowserSearch(event.target.value)}
-                placeholder="搜索词条"
-                value={bangumiCatalogBrowserQuery}
-              />
-            </div>
-
-            <div className="catalog-browser-list" role="list">
-              {bangumiCatalogBrowserWords.map((word) => (
-                <span className="catalog-browser-item" key={word} role="listitem">
-                  {word}
-                </span>
-              ))}
-            </div>
-
-            {bangumiCatalogBrowserHasMore ? (
-              <div className="modal-footer">
-                <button
-                  className="ghost-button"
-                  disabled={busyKey === 'load-bangumi-catalog-browser'}
-                  onClick={handleBangumiCatalogBrowserLoadMore}
-                  type="button"
-                >
-                  加载更多
-                </button>
-              </div>
-            ) : null}
-          </section>
-        </div>
-      ) : null}
     </main>
   );
 }

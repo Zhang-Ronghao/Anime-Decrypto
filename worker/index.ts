@@ -559,7 +559,7 @@ function createRoomState(roomId: string, roomCode: string, hostUserId: string, p
     intercept_phase_minutes: 2,
     force_phase_timeout_enabled: false,
     miscommunication_limit: 2,
-    life_mode_enabled: false,
+    life_mode_enabled: true,
     life_points: 3,
     allow_midgame_join: true,
     bangumi_character_extract_enabled: false,
