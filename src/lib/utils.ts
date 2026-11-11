@@ -1,7 +1,6 @@
-import type { PlayerRecord, Role, RoomPhase, Team } from '../types';
+import type { Role, RoomPhase, Team } from '../types';
 
 export const teamOrder: Team[] = ['A', 'B'];
-export const lobbySeatOptions = [4, 6, 8, 10, 12, 14] as const;
 
 export function otherTeam(team: Team): Team {
   return team === 'A' ? 'B' : 'A';
@@ -19,37 +18,6 @@ export function normalizeGuess(input: string): string {
     .slice(0, 3);
 
   return digits.join('-');
-}
-
-export function isSeatTaken(
-  players: PlayerRecord[],
-  team: Team,
-  teamSeat: number,
-  selfId?: string,
-): PlayerRecord | undefined {
-  return players.find((player) => {
-    if (selfId && player.id === selfId) {
-      return false;
-    }
-
-    return player.team === team && player.team_seat === teamSeat;
-  });
-}
-
-export function teamCapacity(seatCount: number): number {
-  return Math.floor(seatCount / 2);
-}
-
-export function roleForSeat(teamSeat: number): Role {
-  if (teamSeat === 1) {
-    return 'encoder';
-  }
-
-  if (teamSeat === 2) {
-    return 'decoder';
-  }
-
-  return 'member';
 }
 
 export function phaseLabel(phase: RoomPhase): string {

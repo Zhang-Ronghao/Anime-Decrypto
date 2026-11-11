@@ -1,7 +1,6 @@
 import type {
   BangumiCatalogMergeMode,
   PlayerRecord,
-  Role,
   RoomJoinStatus,
   RoomPhase,
   RoomRecord,
@@ -85,8 +84,10 @@ type Action =
     | { type: 'kickPlayer'; playerId: string }
     | { type: 'updateRoomLobbySettings'; payload: LobbySettingsPayload }
     | { type: 'updateSelfSeat'; team: Team | null; teamSeat: number | null }
+    | { type: 'updateSelfTeam'; team: Team | null }
     | { type: 'updateSelfSpectator'; enabled: boolean }
     | { type: 'clearAllSeats' }
+    | { type: 'randomizeTeams' }
     | { type: 'startGame' }
     | { type: 'generateTeamWords'; team: Team }
     | { type: 'replaceTeamWordSlot'; team: Team; index: number }
@@ -114,8 +115,6 @@ type Action =
   ) & { clientActionId?: string };
 
 interface LobbySettingsPayload {
-  seatCount: number;
-  roleRotationEnabled: boolean;
   timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number };
   forcePhaseTimeoutEnabled: boolean;
   miscommunicationLimit: number;
@@ -373,6 +372,13 @@ function ensureRevision(state: RoomState): RoomState {
   }
 
   state.room.force_phase_timeout_enabled = state.room.force_phase_timeout_enabled === true;
+  if (state.room.phase === 'lobby') {
+    state.room.seat_count = 0;
+    state.room.role_rotation_enabled = true;
+    for (const player of state.players) {
+      player.role = null;
+    }
+  }
   if (
     state.room.phase === 'lobby' &&
     state.room.bangumi_catalog_updated_at === null &&
@@ -429,24 +435,8 @@ function otherTeam(team: Team): Team {
   return team === 'A' ? 'B' : 'A';
 }
 
-function teamCapacity(seatCount: number): number {
-  return Math.floor(seatCount / 2);
-}
-
-function roleForSeat(teamSeat: number | null): Role | null {
-  if (teamSeat === null) {
-    return null;
-  }
-
-  if (teamSeat === 1) {
-    return 'encoder';
-  }
-
-  if (teamSeat === 2) {
-    return 'decoder';
-  }
-
-  return 'member';
+function nextTeamSeat(state: RoomState, team: Team): number {
+  return Math.max(0, ...state.players.filter((player) => player.team === team).map((player) => player.team_seat ?? 0)) + 1;
 }
 
 function normalizeRoomCode(value: string): string {
@@ -562,7 +552,7 @@ function createRoomState(roomId: string, roomCode: string, hostUserId: string, p
     phase: 'lobby',
     round_number: 0,
     max_rounds: 8,
-    seat_count: 4,
+    seat_count: 0,
     role_rotation_enabled: true,
     encrypt_phase_minutes: 2,
     decode_phase_minutes: 2,
@@ -726,7 +716,7 @@ function joinStatus(state: RoomState, userId: string): RoomJoinStatus {
     phase: state.room.phase,
     seat_count: state.room.seat_count,
     allow_midgame_join: state.room.allow_midgame_join,
-    team_capacity: teamCapacity(state.room.seat_count),
+    team_capacity: null,
     team_a_count: state.players.filter((player) => player.team === 'A' && !player.is_spectator).length,
     team_b_count: state.players.filter((player) => player.team === 'B' && !player.is_spectator).length,
     is_member: state.players.some((player) => player.auth_user_id === userId),
@@ -797,16 +787,6 @@ function validateTeam(team: Team): Team {
   return team;
 }
 
-function validateSeat(state: RoomState, team: Team, teamSeat: number): void {
-  if (!Number.isInteger(teamSeat) || teamSeat < 1 || teamSeat > teamCapacity(state.room.seat_count)) {
-    throw new HttpError(400, '座位无效。');
-  }
-
-  if (state.players.some((player) => player.team === team && player.team_seat === teamSeat)) {
-    throw new HttpError(409, '这个座位已经有人了。');
-  }
-}
-
 function assignRoles(state: RoomState, roundNumber = Math.max(1, state.room.round_number)): void {
   for (const player of state.players) {
     if (!player.team || !player.team_seat || player.is_spectator) {
@@ -824,10 +804,10 @@ function assignRoles(state: RoomState, roundNumber = Math.max(1, state.room.roun
       continue;
     }
 
-    const encoderSeat = state.room.role_rotation_enabled ? ((Math.max(roundNumber, 1) - 1) % count) + 1 : 1;
-    const decoderSeat = count >= 2 ? (encoderSeat % count) + 1 : null;
-    for (const player of players) {
-      player.role = player.team_seat === encoderSeat ? 'encoder' : player.team_seat === decoderSeat ? 'decoder' : 'member';
+    const encoderIndex = (Math.max(roundNumber, 1) - 1) % count;
+    const decoderIndex = count >= 2 ? (encoderIndex + 1) % count : null;
+    for (const [index, player] of players.entries()) {
+      player.role = index === encoderIndex ? 'encoder' : index === decoderIndex ? 'decoder' : 'member';
     }
   }
 }
@@ -1688,12 +1668,11 @@ export class RoomDurableObject {
           throw new HttpError(409, '当前房间不允许中途加入。');
         }
         const team = validateTeam(action.team);
-        const capacity = teamCapacity(current.room.seat_count);
-        const used = new Set(current.players.filter((player) => player.team === team).map((player) => player.team_seat));
-        const seat = Array.from({ length: capacity }, (_, index) => index + 1).find((value) => !used.has(value));
-        if (!seat) {
-          throw new HttpError(409, '该队伍已经满员。');
+        const existing = current.players.find((player) => player.auth_user_id === userId);
+        if (existing && !existing.is_spectator && existing.team) {
+          throw new HttpError(409, '你已经加入队伍。');
         }
+        const seat = nextTeamSeat(current, team);
         const player = upsertPlayer(current, userId, assertPlayerName(action.playerName));
         player.team = team;
         player.team_seat = seat;
@@ -1738,7 +1717,12 @@ export class RoomDurableObject {
         await this.save(current, ['rooms', 'room_players'], { persistImmediately: true });
         return null;
       case 'updateSelfSeat':
-        this.updateSelfSeat(current, userId, action.team, action.teamSeat);
+        // Older tabs can still request a seat; team membership now determines its order.
+        this.updateSelfTeam(current, userId, action.teamSeat === null ? null : action.team);
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
+        return null;
+      case 'updateSelfTeam':
+        this.updateSelfTeam(current, userId, action.team);
         await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
       case 'updateSelfSpectator':
@@ -1747,7 +1731,11 @@ export class RoomDurableObject {
         return null;
       case 'clearAllSeats':
         requireHost(current, userId);
+        if (current.room.phase !== 'lobby') {
+          throw new HttpError(409, '只有大厅阶段可以清空分队。');
+        }
         for (const player of current.players) {
+          if (player.is_spectator) continue;
           player.team = null;
           player.team_seat = null;
           player.role = null;
@@ -1755,6 +1743,26 @@ export class RoomDurableObject {
         }
         await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
         return null;
+      case 'randomizeTeams': {
+        requireHost(current, userId);
+        if (current.room.phase !== 'lobby') {
+          throw new HttpError(409, '只有大厅阶段可以随机分队。');
+        }
+        const players = shuffle(current.players.filter((player) => !player.is_spectator));
+        if (players.length < 2) {
+          throw new HttpError(409, '至少需要 2 名非观战玩家才能随机分队。');
+        }
+        const firstTeam = shuffle<Team>(['A', 'B'])[0];
+        const seats: Record<Team, number> = { A: 0, B: 0 };
+        for (const [index, player] of players.entries()) {
+          const team = index % 2 === 0 ? firstTeam : otherTeam(firstTeam);
+          player.team = team;
+          player.team_seat = ++seats[team];
+          player.role = null;
+        }
+        await this.save(current, ['room_players', 'rooms'], { persistImmediately: true });
+        return null;
+      }
       case 'startGame':
         this.startGame(current, userId);
         await this.save(current, ROOM_TABLES, { persistImmediately: true });
@@ -1886,12 +1894,8 @@ export class RoomDurableObject {
       throw new HttpError(409, '只有大厅阶段可以修改设置。');
     }
 
-    if (![4, 6, 8, 10, 12, 14].includes(payload.seatCount)) {
-      throw new HttpError(400, '座位数无效。');
-    }
-
-    current.room.seat_count = payload.seatCount;
-    current.room.role_rotation_enabled = payload.roleRotationEnabled;
+    current.room.seat_count = 0;
+    current.room.role_rotation_enabled = true;
     current.room.encrypt_phase_minutes = clampInt(payload.timers.encryptMinutes, 1, 5);
     current.room.decode_phase_minutes = clampInt(payload.timers.decodeMinutes, 1, 5);
     current.room.intercept_phase_minutes = clampInt(payload.timers.interceptMinutes, 1, 5);
@@ -1903,24 +1907,15 @@ export class RoomDurableObject {
     current.room.life_points = [3, 4].includes(payload.lifePoints) ? payload.lifePoints : 3;
     current.room.allow_midgame_join = payload.allowMidgameJoin;
     current.room.bangumi_character_extract_enabled = payload.bangumiCharacterExtractEnabled;
-
-    const capacity = teamCapacity(current.room.seat_count);
-    for (const player of current.players) {
-      if (player.team_seat && player.team_seat > capacity) {
-        player.team = null;
-        player.team_seat = null;
-        player.role = null;
-      }
-    }
   }
 
-  private updateSelfSeat(current: RoomState, userId: string, team: Team | null, teamSeat: number | null): void {
+  private updateSelfTeam(current: RoomState, userId: string, team: Team | null): void {
     const self = requireSelf(current, userId);
     if (current.room.phase !== 'lobby') {
-      throw new HttpError(409, '只有大厅阶段可以选座。');
+      throw new HttpError(409, '只有大厅阶段可以更换队伍。');
     }
 
-    if (team === null || teamSeat === null) {
+    if (team === null) {
       self.team = null;
       self.team_seat = null;
       self.role = null;
@@ -1929,24 +1924,19 @@ export class RoomDurableObject {
     }
 
     validateTeam(team);
-    if (self.team !== team || self.team_seat !== teamSeat) {
-      validateSeat(
-        {
-          ...current,
-          players: current.players.filter((player) => player.id !== self.id),
-        },
-        team,
-        teamSeat,
-      );
+    if (self.team !== team || self.team_seat === null) {
+      self.team_seat = nextTeamSeat(current, team);
     }
     self.team = team;
-    self.team_seat = teamSeat;
-    self.role = roleForSeat(teamSeat);
+    self.role = null;
     self.is_spectator = false;
   }
 
   private updateSelfSpectator(current: RoomState, userId: string, enabled: boolean): void {
     const self = requireSelf(current, userId);
+    if (current.room.phase !== 'lobby') {
+      throw new HttpError(409, '只有大厅阶段可以切换观战状态。');
+    }
     self.is_spectator = enabled;
     if (enabled) {
       self.team = null;
@@ -1957,25 +1947,26 @@ export class RoomDurableObject {
 
   private startGame(current: RoomState, userId: string): void {
     requireHost(current, userId);
-    if (current.players.some((player) => !player.is_spectator && (!player.team || !player.team_seat))) {
-      throw new HttpError(409, '开始游戏前，所有已加入玩家都需要先入座。');
-    }
-
-    if (current.room.seat_count === 4) {
-      const seated = current.players.filter((player) => player.team && player.team_seat && !player.is_spectator).length;
-      if (seated !== 4) {
-        throw new HttpError(409, '4 人房需要正好 4 名已入座玩家。');
-      }
+    if (current.room.phase !== 'lobby') {
+      throw new HttpError(409, '只有大厅阶段可以开始游戏。');
     }
 
     for (const team of ['A', 'B'] as Team[]) {
-      if (!current.players.some((player) => player.team === team && player.team_seat === 1)) {
-        throw new HttpError(409, '两队的 1 号位都必须有人。');
-      }
-      if (!current.players.some((player) => player.team === team && player.team_seat === 2)) {
-        throw new HttpError(409, '两队的 2 号位都必须有人。');
+      if (current.players.filter((player) => player.team === team && !player.is_spectator).length < 2) {
+        throw new HttpError(409, '每队至少需要 2 人。');
       }
     }
+
+    for (const player of current.players) {
+      if (!player.team || player.is_spectator) {
+        player.team = null;
+        player.team_seat = null;
+        player.role = null;
+        player.is_spectator = true;
+      }
+    }
+    current.room.seat_count = 0;
+    current.room.role_rotation_enabled = true;
 
     current.room.status = 'active';
     current.room.phase = 'word_assignment';

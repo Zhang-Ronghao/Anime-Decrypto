@@ -285,8 +285,6 @@ export async function kickPlayer(roomId: string, playerId: string) {
 
 export async function updateRoomLobbySettings(
   roomId: string,
-  seatCount: number,
-  roleRotationEnabled: boolean,
   timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number },
   forcePhaseTimeoutEnabled: boolean,
   miscommunicationLimit: number,
@@ -298,8 +296,6 @@ export async function updateRoomLobbySettings(
   await action(roomId, {
     type: 'updateRoomLobbySettings',
     payload: {
-      seatCount,
-      roleRotationEnabled,
       timers,
       forcePhaseTimeoutEnabled,
       miscommunicationLimit,
@@ -321,8 +317,8 @@ export async function submitTimeoutDraft(
   await action(roomId, { type: 'submitTimeoutDraft', phase, roundNumber, phaseDeadlineAt, draft });
 }
 
-export async function updateSelfSeat(roomId: string, team: Team | null, teamSeat: number | null) {
-  await action(roomId, { type: 'updateSelfSeat', team, teamSeat });
+export async function updateSelfTeam(roomId: string, team: Team | null) {
+  await action(roomId, { type: 'updateSelfTeam', team });
 }
 
 export async function updateSelfSpectator(roomId: string, enabled: boolean) {
@@ -331,6 +327,10 @@ export async function updateSelfSpectator(roomId: string, enabled: boolean) {
 
 export async function clearAllSeats(roomId: string) {
   await action(roomId, { type: 'clearAllSeats' });
+}
+
+export async function randomizeTeams(roomId: string) {
+  await action(roomId, { type: 'randomizeTeams' });
 }
 
 export async function startGame(roomId: string) {

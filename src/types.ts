@@ -26,6 +26,7 @@ export interface RoomRecord {
   phase: RoomPhase;
   round_number: number;
   max_rounds: number;
+  /** Legacy snapshot field; 0 means no player limit. */
   seat_count: number;
   role_rotation_enabled: boolean;
   encrypt_phase_minutes: number;
@@ -170,7 +171,7 @@ export interface RoomJoinStatus {
   phase: RoomPhase;
   seat_count: number;
   allow_midgame_join: boolean;
-  team_capacity: number;
+  team_capacity: number | null;
   team_a_count: number;
   team_b_count: number;
   is_member: boolean;

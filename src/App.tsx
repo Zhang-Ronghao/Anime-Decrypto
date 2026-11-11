@@ -2,6 +2,7 @@
 import { useRef } from 'react';
 import { RoomChat } from './components/RoomChat';
 import { RoomCodeDisplay } from './components/RoomCodeDisplay';
+import { MemberManagementDialog } from './components/MemberManagementDialog';
 import { GrowingGameInput } from './components/GrowingGameInput';
 import { CollaborativeGuessInput, GuessSubmitterName } from './components/CollaborativeGuessInput';
 import { HIDE_TOP_TEAM_SCORES, USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
@@ -26,6 +27,7 @@ import {
   kickPlayer,
   leaveRoom,
   loadBangumiCatalog,
+  randomizeTeams,
   rememberSnapshotContext,
   replaceTeamWordSlot,
   restartRoom,
@@ -46,7 +48,7 @@ import {
   transferHost,
   updateRoomLobbySettings,
   updateSelfSpectator,
-  updateSelfSeat,
+  updateSelfTeam,
 } from './lib/game';
 import {
   appendRoomChatMessage,
@@ -58,14 +60,10 @@ import { backendAuth, ensureSession, isBackendConfigured } from './lib/session';
 import {
   cn,
   isEncryptPhase,
-  isSeatTaken,
-  lobbySeatOptions,
   normalizeGuess,
   otherTeam,
   phaseLabel,
-  roleForSeat,
   roleName,
-  teamCapacity,
   teamOrder,
 } from './lib/utils';
 import type {
@@ -85,15 +83,6 @@ import type {
   TeamWordsRecord,
 } from './types';
 import type { RoomChatAudience, RoomChatMessage, RoomChatServerEvent } from './types/chat';
-
-interface SeatCardProps {
-  team: Team;
-  seatNumber: number;
-  previewRole: Role;
-  occupant?: PlayerRecord;
-  active?: boolean;
-  onClick?: () => void;
-}
 
 interface TeamScore {
   intercepts: number;
@@ -215,21 +204,18 @@ interface HomeFooterLinkItemProps {
   wide?: boolean;
 }
 
-function SeatCard({ team, seatNumber, previewRole, occupant, active, onClick }: SeatCardProps) {
+function LobbyMember({ player, selfId, seatNumber }: { player: PlayerRecord; selfId: string; seatNumber?: number }) {
   return (
-    <button
-      className={cn('seat-card', `seat-card-${teamTone(team)}`, active && 'seat-card-active')}
-      disabled={!onClick}
-      onClick={onClick}
-      type="button"
-    >
-      <div className="seat-card-head">
-        <span className="seat-card-title">{seatNumber} 号位</span>
-        <span className={cn('seat-role-pill', `seat-role-pill-${previewRole}`)}>{roleName(previewRole)}</span>
-      </div>
-      <strong>{occupant ? occupant.player_name : '空位'}</strong>
-      <small>{occupant ? `当前座位 #${seatNumber}` : '点击入座'}</small>
-    </button>
+    <span className={cn('lobby-member', seatNumber !== undefined && 'lobby-team-member', player.id === selfId && 'lobby-member-self')}>
+      {seatNumber !== undefined ? <span className="lobby-seat-number" aria-label={`${seatNumber}号位`}>{String(seatNumber).padStart(2, '0')}</span> : null}
+      <span className="lobby-member-name" title={player.player_name}>{player.player_name}</span>
+      {player.id === selfId || player.is_host ? (
+        <span className="lobby-member-meta">
+          {player.id === selfId ? <small>我</small> : null}
+          {player.is_host ? <small className="lobby-host-label">房主</small> : null}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -933,20 +919,6 @@ function buildClueMatrixRows(
     });
 }
 
-function hasCoreSeats(players: PlayerRecord[], team: Team): boolean {
-  return [1, 2].every((seat) => players.some((player) => player.team === team && player.team_seat === seat));
-}
-
-function teamLobbyStatus(players: PlayerRecord[], team: Team): string {
-  const missingSeats = [1, 2].filter((seat) => !players.some((player) => player.team === team && player.team_seat === seat));
-
-  if (missingSeats.length === 0) {
-    return '已满足开局核心位';
-  }
-
-  return `缺少 ${missingSeats.join('、')} 号位`;
-}
-
 function isMissingRoomError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false;
@@ -1014,7 +986,7 @@ function App() {
   const [syncFallbackUntil, setSyncFallbackUntil] = useState<number | null>(null);
   const [roomRealtimeConnected, setRoomRealtimeConnected] = useState(false);
   const [lobbySettingsModalOpen, setLobbySettingsModalOpen] = useState(false);
-  const [hostTransferDialogOpen, setHostTransferDialogOpen] = useState(false);
+  const [memberManagementOpen, setMemberManagementOpen] = useState(false);
   const [pendingMidgameJoin, setPendingMidgameJoin] = useState<RoomJoinStatus | null>(null);
   const [spectatorTeamView, setSpectatorTeamView] = useState<Team>('A');
   const [roomChatMessages, setRoomChatMessages] = useState<RoomChatMessage[]>([]);
@@ -1820,14 +1792,14 @@ function App() {
   }, [sessionUserId, snapshot]);
 
   useEffect(() => {
-    if (!hostTransferDialogOpen) {
+    if (!memberManagementOpen) {
       return;
     }
 
     if (!snapshot || snapshot.room.phase !== 'lobby' || !self?.is_host) {
-      setHostTransferDialogOpen(false);
+      setMemberManagementOpen(false);
     }
-  }, [hostTransferDialogOpen, self?.is_host, snapshot]);
+  }, [memberManagementOpen, self?.is_host, snapshot]);
 
   const currentRoundSubmissions = useMemo(() => {
     if (!snapshot) {
@@ -1856,10 +1828,6 @@ function App() {
   }, [snapshot]);
 
   const rosterPlayers = useMemo(() => (snapshot ? getSortedRoster(snapshot.players) : []), [snapshot]);
-  const hostTransferCandidates = useMemo(
-    () => rosterPlayers.filter((player) => player.id !== self?.id),
-    [rosterPlayers, self?.id],
-  );
   const teamAPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'A') : []), [snapshot]);
   const teamBPlayers = useMemo(() => (snapshot ? getTeamPlayers(snapshot.players, 'B') : []), [snapshot]);
   const spectatorPlayers = useMemo(
@@ -1955,24 +1923,10 @@ function App() {
     ? snapshot.room.status === 'active' || snapshot.room.status === 'lobby' || snapshot.room.status === 'finished'
     : false;
   const canTerminateCurrentGame = snapshot ? self?.is_host === true && snapshot.room.status === 'active' : false;
-  const currentSeatCount = snapshot?.room.seat_count ?? 4;
-  const perTeamCapacity = teamCapacity(currentSeatCount);
-  const allPlayersSeated = snapshot
-    ? snapshot.players
-        .filter((player) => player.team !== null || player.team_seat !== null)
-        .every((player) => Boolean(player.team) && player.team_seat !== null)
-    : false;
-  const coreSeatsReady = snapshot ? teamOrder.every((team) => hasCoreSeats(snapshot.players, team)) : false;
-  const seatedPlayerCount = snapshot
-    ? snapshot.players.filter((player) => Boolean(player.team) && player.team_seat !== null).length
-    : 0;
-  const unassignedPlayerCount = snapshot
-    ? snapshot.players.filter((player) => !player.is_spectator && (player.team === null || player.team_seat === null)).length
-    : 0;
-  const hasSeatedPlayers = seatedPlayerCount > 0;
-  const startGameReady = snapshot
-    ? unassignedPlayerCount === 0 && coreSeatsReady && (snapshot.room.seat_count > 4 || seatedPlayerCount === 4)
-    : false;
+  const unassignedPlayers = rosterPlayers.filter((player) => !player.is_spectator && !player.team);
+  const hasSeatedPlayers = teamAPlayers.length + teamBPlayers.length > 0;
+  const canRandomizeTeams = rosterPlayers.filter((player) => !player.is_spectator).length >= 2;
+  const startGameReady = teamAPlayers.length >= 2 && teamBPlayers.length >= 2;
   const wordAssignmentCount = snapshot
     ? Number(snapshot.room.team_a_words_confirmed) + Number(snapshot.room.team_b_words_confirmed)
     : 0;
@@ -2435,18 +2389,6 @@ function App() {
     self,
     snapshot,
   ]);
-  const lobbyStartHint = snapshot
-    ? unassignedPlayerCount > 0
-      ? '开始前，未入队玩家需要选择队伍或加入观战'
-      : !coreSeatsReady
-        ? '开始前，两队的 1 号位和 2 号位都必须有人'
-        : snapshot.room.seat_count === 4 && seatedPlayerCount !== 4
-          ? '4 人房需要满员开局'
-          : spectatorPlayers.length > 0
-            ? '已满足开局条件，观战玩家不会占用席位'
-            : '已满足开局条件'
-    : '';
-
   useEffect(() => {
     if (!isWordAssignmentPhase) {
       invalidateTeamWordDraftAsyncResults();
@@ -2907,16 +2849,16 @@ function App() {
     window.history.replaceState({}, '', `?room=${result.room_code}`);
   }
 
-  async function handleSeat(team: Team, teamSeat: number) {
+  async function handleJoinTeam(team: Team) {
     if (!snapshot) {
       return;
     }
 
-    const result = await withAction(`seat-${team}-${teamSeat}`, () => updateSelfSeat(snapshot.room.id, team, teamSeat), {
+    const result = await withAction(`join-team-${team}`, () => updateSelfTeam(snapshot.room.id, team), {
       refreshRoomId: snapshot.room.id,
     });
     if (result !== null) {
-      setHostTransferDialogOpen(false);
+      setMemberManagementOpen(false);
       beginSyncFallback();
     }
   }
@@ -2954,7 +2896,7 @@ function App() {
     }
 
     const result = await withAction('seat-clear', () =>
-      self.is_spectator ? updateSelfSpectator(snapshot.room.id, false) : updateSelfSeat(snapshot.room.id, null, null), {
+      self.is_spectator ? updateSelfSpectator(snapshot.room.id, false) : updateSelfTeam(snapshot.room.id, null), {
       refreshRoomId: snapshot.room.id,
     });
     if (result !== null) {
@@ -2975,48 +2917,17 @@ function App() {
     }
   }
 
-  async function handleSeatCountChange(seatCount: number) {
-    if (!snapshot || !self?.is_host || seatCount === snapshot.room.seat_count) {
+  async function handleRandomizeTeams() {
+    if (!snapshot || !self?.is_host || !canRandomizeTeams) {
       return;
     }
 
-    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
-    await withAction('lobby-seat-count', () =>
-      updateRoomLobbySettings(
-        snapshot.room.id,
-        seatCount,
-        snapshot.room.role_rotation_enabled,
-        timers,
-        snapshot.room.force_phase_timeout_enabled,
-        miscommunicationLimitFromRoom(snapshot.room),
-        snapshot.room.life_mode_enabled,
-        lifePointsFromRoom(snapshot.room),
-        snapshot.room.allow_midgame_join,
-        snapshot.room.bangumi_character_extract_enabled,
-      ),
-    );
-  }
-
-  async function handleRoleRotationToggle(enabled: boolean) {
-    if (!snapshot || !self?.is_host || enabled === snapshot.room.role_rotation_enabled) {
-      return;
+    const result = await withAction('randomize-teams', () => randomizeTeams(snapshot.room.id), {
+      refreshRoomId: snapshot.room.id,
+    });
+    if (result !== null) {
+      beginSyncFallback();
     }
-
-    const timers = lobbyTimerSettingsFromRoom(snapshot.room);
-    await withAction('lobby-rotation', () =>
-      updateRoomLobbySettings(
-        snapshot.room.id,
-        snapshot.room.seat_count,
-        enabled,
-        timers,
-        snapshot.room.force_phase_timeout_enabled,
-        miscommunicationLimitFromRoom(snapshot.room),
-        snapshot.room.life_mode_enabled,
-        lifePointsFromRoom(snapshot.room),
-        snapshot.room.allow_midgame_join,
-        snapshot.room.bangumi_character_extract_enabled,
-      ),
-    );
   }
 
   async function handleLobbyTimerChange(phase: TimedPhase, minutes: number) {
@@ -3043,8 +2954,6 @@ function App() {
     await withAction(`lobby-timer-${phase}`, () =>
       updateRoomLobbySettings(
         snapshot.room.id,
-        snapshot.room.seat_count,
-        snapshot.room.role_rotation_enabled,
         nextTimers,
         snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
@@ -3065,8 +2974,6 @@ function App() {
     await withAction('lobby-miscommunication-limit', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
-        snapshot.room.seat_count,
-        snapshot.room.role_rotation_enabled,
         timers,
         snapshot.room.force_phase_timeout_enabled,
         limit,
@@ -3088,8 +2995,6 @@ function App() {
     const result = await withAction('lobby-life-mode', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
-        snapshot.room.seat_count,
-        snapshot.room.role_rotation_enabled,
         timers,
         snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
@@ -3115,8 +3020,6 @@ function App() {
     const result = await withAction('lobby-force-timeout', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
-        snapshot.room.seat_count,
-        snapshot.room.role_rotation_enabled,
         timers,
         enabled,
         miscommunicationLimitFromRoom(snapshot.room),
@@ -3142,8 +3045,6 @@ function App() {
     const result = await withAction('lobby-life-points', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
-        snapshot.room.seat_count,
-        snapshot.room.role_rotation_enabled,
         timers,
         snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
@@ -3168,8 +3069,6 @@ function App() {
     await withAction('lobby-midgame-join', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
-        snapshot.room.seat_count,
-        snapshot.room.role_rotation_enabled,
         timers,
         snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
@@ -3191,8 +3090,6 @@ function App() {
     const result = await withAction('lobby-bangumi-character-extract', () =>
       updateRoomLobbySettings(
         snapshot.room.id,
-        snapshot.room.seat_count,
-        snapshot.room.role_rotation_enabled,
         timers,
         snapshot.room.force_phase_timeout_enabled,
         miscommunicationLimitFromRoom(snapshot.room),
@@ -3686,7 +3583,7 @@ function App() {
       return;
     }
 
-    setHostTransferDialogOpen(false);
+    setMemberManagementOpen(false);
     const result = await withAction(`transfer-host-${player.id}`, () => transferHost(snapshot.room.id, player.id), {
       refreshRoomId: snapshot.room.id,
     });
@@ -3913,7 +3810,7 @@ function App() {
               <div className="midgame-team-grid">
                 {teamOrder.map((team) => {
                   const count = team === 'A' ? pendingMidgameJoin.team_a_count : pendingMidgameJoin.team_b_count;
-                  const isFull = count >= pendingMidgameJoin.team_capacity;
+                  const isFull = pendingMidgameJoin.team_capacity !== null && count >= pendingMidgameJoin.team_capacity;
                   const teamJoinDisabled = !pendingMidgameJoin.allow_midgame_join || isFull;
 
                   return (
@@ -3921,7 +3818,7 @@ function App() {
                       <div>
                         <strong>{displayTeamName(team)}</strong>
                         <span>
-                          {count}/{pendingMidgameJoin.team_capacity}
+                          {pendingMidgameJoin.team_capacity === null ? `${count} 人` : `${count}/${pendingMidgameJoin.team_capacity}`}
                         </span>
                       </div>
                       <button
@@ -3930,7 +3827,7 @@ function App() {
                         onClick={() => void handleJoinMidgame(team)}
                         type="button"
                       >
-                        {!pendingMidgameJoin.allow_midgame_join ? '已关闭' : isFull ? '已满' : '加入空位'}
+                        {!pendingMidgameJoin.allow_midgame_join ? '已关闭' : isFull ? '已满' : '加入'}
                       </button>
                     </article>
                   );
@@ -3980,7 +3877,7 @@ function App() {
         <div className="brand-block">
           <div className="brand-copy">
             <p className="app-title">动漫高手——截码战</p>
-            <RoomCodeDisplay className="app-subtitle" code={snapshot.room.room_code} />
+            <RoomCodeDisplay className="app-subtitle" code={snapshot.room.room_code} invite={isLobbyPhase} />
           </div>
         </div>
 
@@ -4078,283 +3975,227 @@ function App() {
 
       {isLobbyPhase ? (
         <>
-          <section className="layout-grid">
-            <article className="panel">
-            <div className="panel-head">
-              <div>
-                <h2>选座大厅</h2>
-              </div>
-              <button
-                className="ghost-button lobby-extra-settings-button"
-                disabled={busyKey !== null}
-                onClick={() => setLobbySettingsModalOpen(true)}
-                type="button"
-              >
-                <svg aria-hidden="true" className="button-icon" viewBox="0 0 24 24">
-                  <path d="M5 7h14" />
-                  <path d="M5 17h14" />
-                  <path d="M9 7a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
-                  <path d="M15 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
-                </svg>
-                <span>其他设置</span>
-              </button>
-            </div>
-
-            <div className={cn('lobby-settings', !self.is_host && 'lobby-settings-readonly')}>
-              <div className="lobby-settings-block lobby-settings-main">
-                <div className="lobby-settings-head">
-                  <strong>人数/身份设置</strong>
+          <section className="lobby-layout">
+            <article className="panel lobby-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>房间大厅</h2>
                 </div>
-
-                <label className="lobby-setting lobby-setting-compact">
-                  <span>席位数</span>
-                  <select
-                    disabled={!self.is_host || busyKey !== null}
-                    onChange={(event) => void handleSeatCountChange(Number(event.target.value))}
-                    value={snapshot.room.seat_count}
-                  >
-                    {lobbySeatOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option} 席
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="lobby-toggle">
-                  <input
-                    checked={snapshot.room.role_rotation_enabled}
-                    disabled={!self.is_host || busyKey !== null}
-                    onChange={(event) => void handleRoleRotationToggle(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <div>
-                    <strong>每轮队内身份轮换</strong>
-                  </div>
-                </label>
-              </div>
-
-              <div className="lobby-settings-block lobby-settings-timers">
-                <div className="lobby-settings-head">
-                  <strong>各阶段时间设置</strong>
-                </div>
-
-                {([
-                  { phase: 'encrypt', label: '加密阶段', value: lobbyTimerSettings.encryptMinutes },
-                  { phase: 'decode', label: '解密阶段', value: lobbyTimerSettings.decodeMinutes },
-                  { phase: 'intercept', label: '拦截阶段', value: lobbyTimerSettings.interceptMinutes },
-                ] as Array<{ phase: TimedPhase; label: string; value: number }>).map((item) => (
-                  <label className="lobby-setting lobby-setting-inline" key={item.phase}>
-                    <span>{item.label}</span>
-                    <select
-                      disabled={!self.is_host || busyKey !== null}
-                      onChange={(event) => void handleLobbyTimerChange(item.phase, Number(event.target.value))}
-                      value={item.value}
-                    >
-                      {LOBBY_TIMER_MINUTE_OPTIONS.map((option) => (
-                        <option key={`${item.phase}-${option}`} value={option}>
-                          {option} 分钟
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-
-              </div>
-
-              <div className="lobby-settings-block lobby-settings-catalog">
-                <div className="lobby-settings-head">
-                  <div>
-                    <strong>Bangumi 动画词库</strong>
-                    <p className="muted lobby-settings-copy">支持 Bangumi 用户 ID、收藏夹页面链接或目录链接，多个来源可取交集/并集</p>
-                  </div>
-
+                <div className="lobby-header-actions">
                   {self.is_host ? (
-                    <button
-                      className="outline-button"
-                      disabled={busyKey !== null}
-                      onClick={openBangumiCatalogModal}
-                      type="button"
-                    >
-                      {isLoadingBangumiCatalog ? '应用中…' : '设置词库'}
+                    <button className="ghost-button lobby-extra-settings-button" disabled={busyKey !== null} onClick={() => setMemberManagementOpen(true)} type="button">
+                      成员管理
                     </button>
-                  ) : (
-                    <span className="muted lobby-settings-note">房主可更新词库</span>
-                  )}
-                </div>
-
-                <div className="catalog-summary-row">
-                  <div className="catalog-summary-grid">
-                    <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
-                    <div className="tag">词库来源：{bangumiCatalogSummary.sourceCount}</div>
-                    <div className="tag">词库词数：{bangumiCatalogSummary.wordCount}</div>
-                  </div>
-
-                  <div className="catalog-actions">
-                    {bangumiCatalogSummary.configured ? (
-                      <button
-                        className="ghost-button"
-                        disabled={busyKey !== null}
-                        onClick={() => void openBangumiCatalogBrowser()}
-                        type="button"
-                      >
-                        {busyKey === 'load-bangumi-catalog-browser' ? '载入中...' : '浏览词库'}
-                      </button>
-                    ) : null}
-                  </div>
+                  ) : null}
                 </div>
               </div>
-            </div>
 
-            <div className="team-seat-columns">
-              {teamOrder.map((team) => (
-                <section className={cn('team-seat-panel', `team-seat-panel-${teamTone(team)}`)} key={team}>
-                  <header className="team-seat-head">
-                    <div>
-                      <h3>{displayTeamName(team)}</h3>
-                      <p>{teamLobbyStatus(snapshot.players, team)}</p>
-                    </div>
-                    <span className={cn('team-badge', `team-badge-${teamTone(team)}`)}>{perTeamCapacity} 席</span>
-                  </header>
+              <div className="team-seat-columns">
+                {teamOrder.map((team) => {
+                  const members = team === 'A' ? teamAPlayers : teamBPlayers;
+                  const joined = self.team === team;
+                  return (
+                    <section className={cn('team-seat-panel', `team-seat-panel-${teamTone(team)}`, joined && 'team-panel-joined')} key={team}>
+                      <header className="team-seat-head">
+                        <div className="lobby-team-title">
+                          <h3>{displayTeamName(team)}</h3>
+                          <span className="member-count">{members.length} 人</span>
+                        </div>
+                        <button
+                          className={cn('team-join-button', joined && 'team-join-button-joined')}
+                          disabled={joined || busyKey !== null}
+                          onClick={() => void handleJoinTeam(team)}
+                          type="button"
+                          aria-label={joined ? `已加入${displayTeamName(team)}` : `加入${displayTeamName(team)}`}
+                        >
+                          {busyKey === `join-team-${team}` ? '加入中…' : joined ? '已加入' : '加入'}
+                        </button>
+                      </header>
+                      {members.length > 0 ? (
+                        <div className="lobby-member-list">
+                          {members.map((player, index) => <LobbyMember key={player.id} player={player} selfId={self.id} seatNumber={index + 1} />)}
+                        </div>
+                      ) : (
+                        <div className="lobby-team-empty">
+                          <p>等待队友加入</p>
+                          <small>每队至少 2 人</small>
+                        </div>
+                      )}
+                      {members.length === 1 ? <p className="lobby-team-hint">还差 1 人</p> : null}
+                    </section>
+                  );
+                })}
+              </div>
 
-                  <div className="seat-grid">
-                    {Array.from({ length: perTeamCapacity }, (_, index) => {
-                      const seatNumber = index + 1;
-                      const previewRole = roleForSeat(seatNumber);
-                      const occupant = snapshot.players.find(
-                        (player) => player.team === team && player.team_seat === seatNumber,
-                      );
-
-                      return (
-                        <SeatCard
-                          active={self.team === team && self.team_seat === seatNumber}
-                          key={`${team}-${seatNumber}`}
-                          occupant={occupant}
-                          onClick={
-                            isSeatTaken(snapshot.players, team, seatNumber, self.id) || busyKey !== null
-                              ? undefined
-                              : () => void handleSeat(team, seatNumber)
-                          }
-                          previewRole={previewRole}
-                          seatNumber={seatNumber}
-                          team={team}
-                        />
-                      );
-                    })}
+              {unassignedPlayers.length > 0 ? (
+                <section className="lobby-unassigned">
+                  <h3>未入队 <span className="member-count">{unassignedPlayers.length}</span></h3>
+                  <div className="lobby-member-list">
+                    {unassignedPlayers.map((player) => <LobbyMember key={player.id} player={player} selfId={self.id} />)}
                   </div>
                 </section>
-              ))}
-            </div>
+              ) : null}
 
-            <section className="spectator-panel">
-              <div className="spectator-panel-main">
-                <div>
-                  <h3>观战区</h3>
+              <section className="spectator-panel">
+                <div className="spectator-panel-main">
+                  <div>
+                    <h3>观战 <span className="member-count">{spectatorPlayers.length}</span></h3>
+                  </div>
+                  <div className="spectator-list">
+                    {spectatorPlayers.length > 0 ? (
+                      spectatorPlayers.map((player) => <LobbyMember key={player.id} player={player} selfId={self.id} />)
+                    ) : (
+                      <span className="spectator-empty">暂无观战</span>
+                    )}
+                  </div>
                 </div>
-                <div className="spectator-list">
-                  {spectatorPlayers.length > 0 ? (
-                    spectatorPlayers.map((player) => (
-                      <span className={cn('spectator-chip', player.id === self.id && 'spectator-chip-self')} key={player.id}>
-                        {player.player_name}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="spectator-empty">暂无观战玩家</span>
-                  )}
-                </div>
-              </div>
-              {isSpectator ? (
-                <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleExitSpectator()} type="button">
-                  退出观战
-                </button>
-              ) : (
-                <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleJoinSpectator()} type="button">
-                  加入观战
-                </button>
-              )}
-            </section>
+                {isSpectator ? (
+                  <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleExitSpectator()} type="button">
+                    退出观战
+                  </button>
+                ) : (
+                  <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleJoinSpectator()} type="button">
+                    加入观战
+                  </button>
+                )}
+              </section>
 
-            <div className="seat-action-row">
-              {self.team && self.team_seat ? (
-                <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleStandUp()} type="button">
-                  站起
-                </button>
-              ) : null}
-
-              {self.is_host ? (
-                <button
-                  className="ghost-button"
-                  disabled={!hasSeatedPlayers || busyKey !== null}
-                  onClick={() => void handleClearAllSeats()}
-                  type="button"
-                >
-                  全体站起
-                </button>
-              ) : null}
-
-              {self.is_host ? (
-                <button
-                  className="primary-button"
-                  disabled={!startGameReady || busyKey !== null}
-                  onClick={() => void handleStartGame()}
-                  type="button"
-                >
-                  开始游戏
-                </button>
-              ) : null}
-            </div>
-
-            <p className="muted lobby-hint">{self.is_host ? lobbyStartHint : '等待房主开始游戏'}</p>
-            <p className="muted lobby-hint lobby-hint-secondary">
-              更推荐玩<strong>生命模式</strong>，房主可在“其他设置”中开启
-            </p>
-            </article>
-
-            <article className="panel">
-              <div className="roster-panel-head">
-                <h2>房间玩家</h2>
-                {self.is_host && snapshot.room.phase === 'lobby' ? (
-                  <button
-                    className="ghost-button roster-transfer-button"
-                    disabled={hostTransferCandidates.length === 0 || busyKey !== null}
-                    onClick={() => setHostTransferDialogOpen(true)}
-                    type="button"
-                  >
-                    转让房主
+              <div className="seat-action-row">
+                {self.team && self.team_seat ? (
+                  <button className="ghost-button" disabled={busyKey !== null} onClick={() => void handleStandUp()} type="button">
+                    退出队伍
                   </button>
                 ) : null}
+
+                {self.is_host ? (
+                  <button
+                    className="ghost-button"
+                    disabled={!hasSeatedPlayers || busyKey !== null}
+                    onClick={() => void handleClearAllSeats()}
+                    type="button"
+                  >
+                    清空分队
+                  </button>
+                ) : null}
+
+                {self.is_host ? (
+                  <button
+                    className="ghost-button"
+                    disabled={!canRandomizeTeams || busyKey !== null}
+                    onClick={() => void handleRandomizeTeams()}
+                    title="随机分配所有非观战玩家，两队人数尽量均衡"
+                    type="button"
+                  >
+                    {busyKey === 'randomize-teams' ? '分队中…' : '随机分队'}
+                  </button>
+                ) : null}
+
+                {self.is_host ? (
+                  <button
+                    className="primary-button lobby-start-button"
+                    disabled={!startGameReady || busyKey !== null}
+                    onClick={() => void handleStartGame()}
+                    type="button"
+                  >
+                    {busyKey === 'start-game' ? '开始中…' : '开始游戏'}
+                  </button>
+                ) : <span className="muted lobby-waiting">等待房主开始游戏</span>}
               </div>
-              <div className="roster-list">
-                {rosterPlayers.map((player) => (
-                  <div className="roster-item" key={player.id}>
+
+            </article>
+            <aside className="panel lobby-options-panel">
+              <div className="panel-head">
+                <h2>游戏设置</h2>
+                <button
+                  className="ghost-button lobby-extra-settings-button"
+                  disabled={busyKey !== null}
+                  onClick={() => setLobbySettingsModalOpen(true)}
+                  type="button"
+                >
+                  <svg aria-hidden="true" className="button-icon" viewBox="0 0 24 24">
+                    <path d="M5 7h14" />
+                    <path d="M5 17h14" />
+                    <path d="M9 7a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
+                    <path d="M15 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
+                  </svg>
+                  <span>其他设置</span>
+                </button>
+              </div>
+              <div className={cn('lobby-settings', !self.is_host && 'lobby-settings-readonly')}>
+                <div className="lobby-settings-block lobby-settings-timers">
+                  <div className="lobby-settings-head">
+                    <strong>各阶段时间设置</strong>
+                  </div>
+
+                  <div className="lobby-timer-grid">
+                    {([
+                      { phase: 'encrypt', label: '加密阶段', value: lobbyTimerSettings.encryptMinutes },
+                      { phase: 'decode', label: '解密阶段', value: lobbyTimerSettings.decodeMinutes },
+                      { phase: 'intercept', label: '拦截阶段', value: lobbyTimerSettings.interceptMinutes },
+                    ] as Array<{ phase: TimedPhase; label: string; value: number }>).map((item) => (
+                      <label className="lobby-setting lobby-setting-inline" key={item.phase}>
+                        <span>{item.label}</span>
+                        <select
+                          disabled={!self.is_host || busyKey !== null}
+                          onChange={(event) => void handleLobbyTimerChange(item.phase, Number(event.target.value))}
+                          value={item.value}
+                        >
+                          {LOBBY_TIMER_MINUTE_OPTIONS.map((option) => (
+                            <option key={`${item.phase}-${option}`} value={option}>
+                              {option} 分钟
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  ))}
+                  </div>
+                </div>
+
+                <div className="lobby-settings-block lobby-settings-catalog">
+                  <div className="lobby-settings-head">
                     <div>
-                      <strong>{player.player_name}</strong>
-                      <p>{player.is_host ? '房主' : '成员'}</p>
+                      <strong>Bangumi 动画词库</strong>
                     </div>
-                    <div className="roster-item-side">
-                      <div className="tag-row">
-                        <span className={cn('tag', player.role && `tag-role-${player.role}`)}>
-                          {player.is_spectator ? '观战者' : player.role ? roleName(player.role) : '未选座位'}
-                        </span>
-                        <span className="tag">{player.is_spectator ? '观战' : player.team ? displayTeamName(player.team) : '未入队'}</span>
-                      </div>
-                      {self.is_host && player.id !== self.id ? (
-                        snapshot.room.phase === 'lobby' ? (
-                          <button
-                            className="danger-button roster-kick-button"
-                            disabled={busyKey !== null}
-                            onClick={() => void handleKickPlayer(player)}
-                            type="button"
-                          >
-                            踢出
-                          </button>
-                        ) : null
+
+                    {self.is_host ? (
+                      <button
+                        className="outline-button"
+                        disabled={busyKey !== null}
+                        onClick={openBangumiCatalogModal}
+                        type="button"
+                      >
+                        {isLoadingBangumiCatalog ? '应用中…' : '设置词库'}
+                      </button>
+                    ) : (
+                      <span className="muted lobby-settings-note">房主可更新词库</span>
+                    )}
+                  </div>
+
+                  <p className="muted lobby-settings-copy">支持 Bangumi 用户 ID、收藏夹页面链接或目录链接，多个来源可取交集/并集</p>
+
+                  <div className="catalog-summary-row">
+                    <div className="catalog-summary-grid">
+                      <div className="tag">{bangumiCatalogSummary.configured ? '已配置' : '未配置'}</div>
+                      <div className="tag">词库来源：{bangumiCatalogSummary.sourceCount}</div>
+                      <div className="tag">词库词数：{bangumiCatalogSummary.wordCount}</div>
+                    </div>
+
+                    <div className="catalog-actions">
+                      {bangumiCatalogSummary.configured ? (
+                        <button
+                          className="ghost-button"
+                          disabled={busyKey !== null}
+                          onClick={() => void openBangumiCatalogBrowser()}
+                          type="button"
+                        >
+                          {busyKey === 'load-bangumi-catalog-browser' ? '载入中...' : '浏览词库'}
+                        </button>
                       ) : null}
                     </div>
                   </div>
-                ))}
+                </div>
               </div>
-            </article>
+            </aside>
           </section>
 
           <RoomChat
@@ -5277,51 +5118,16 @@ function App() {
         </>
       )}
 
-      {hostTransferDialogOpen && snapshot?.room.phase === 'lobby' && self?.is_host ? (
-        <div
-          className="modal-backdrop"
-          onClick={(event) => {
-            if (event.target === event.currentTarget && busyKey === null) {
-              setHostTransferDialogOpen(false);
-            }
-          }}
-          role="presentation"
-        >
-          <section aria-modal="true" className="modal-card modal-card-settings" role="dialog">
-            <div className="modal-card-head">
-              <div>
-                <h2>转让房主</h2>
-                <p className="muted">选择一名玩家接管房间管理权限。</p>
-              </div>
-              <button
-                className="ghost-button"
-                disabled={busyKey !== null}
-                onClick={() => setHostTransferDialogOpen(false)}
-                type="button"
-              >
-                关闭
-              </button>
-            </div>
-
-            <div className="host-transfer-list">
-              {hostTransferCandidates.map((player) => (
-                <button
-                  className="host-transfer-option"
-                  disabled={busyKey !== null}
-                  key={player.id}
-                  onClick={() => void handleTransferHost(player)}
-                  type="button"
-                >
-                  <span>
-                    <strong>{player.player_name}</strong>
-                    <small>{player.is_spectator ? '观战者' : player.role ? roleName(player.role) : '未选座位'}</small>
-                  </span>
-                  <span className="tag">{player.is_spectator ? '观战' : player.team ? displayTeamName(player.team) : '未入队'}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        </div>
+      {memberManagementOpen && snapshot?.room.phase === 'lobby' && self?.is_host ? (
+        <MemberManagementDialog
+          players={rosterPlayers}
+          selfId={self.id}
+          busy={busyKey !== null}
+          error={actionError}
+          onClose={() => setMemberManagementOpen(false)}
+          onTransfer={(player) => void handleTransferHost(player)}
+          onKick={(player) => void handleKickPlayer(player)}
+        />
       ) : null}
 
       {lobbySettingsModalOpen ? (
@@ -5338,7 +5144,7 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>其他设置</h2>
-                <p className="muted">调整本局的获胜规则。只有房主能在选座大厅修改。</p>
+                <p className="muted">调整本局的获胜规则。只有房主能在大厅修改。</p>
               </div>
               <button
                 className="ghost-button"
@@ -5424,7 +5230,7 @@ function App() {
                 />
                 <span>
                   <strong>允许中途加入</strong>
-                  <small>开启后，游戏中有空位的队伍允许新玩家以队员身份加入</small>
+                  <small>开启后，游戏中允许新玩家以队员身份加入</small>
                 </span>
               </label>
 
