@@ -658,6 +658,15 @@ body:has(.home-shell) {
   font-weight: 800;
 }
 
+.role-chip-host-label {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .role-strip-team-red .role-chip-self,
 .team-seat-panel-red .lobby-member-self {
   border-color: var(--red-line);
@@ -1020,20 +1029,6 @@ body:has(.home-shell) {
   color: var(--text);
   font-size: 0.94rem;
   font-weight: 800;
-}
-
-.identity-host-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0.25rem 0.72rem;
-  border: 1px solid rgba(179, 124, 0, 0.24);
-  border-radius: 999px;
-  background: linear-gradient(135deg, oklch(97.2% 0.058 89) 0%, oklch(91.4% 0.119 86) 100%);
-  color: #7a5400;
-  font-size: 0.86rem;
-  font-weight: 900;
-  letter-spacing: 0.04em;
 }
 
 .action-hint {

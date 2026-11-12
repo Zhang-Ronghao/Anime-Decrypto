@@ -331,6 +331,7 @@ function RoleGroup({ team, players, selfId }: RoleGroupProps) {
                 {group.players.map((player) => (
                   <span className={cn('role-chip', player.id === selfId && 'role-chip-self')} key={player.id}>
                     {player.player_name}
+                    {player.is_host ? <small className="role-chip-host-label">房主</small> : null}
                   </span>
                 ))}
               </div>
@@ -4131,7 +4132,6 @@ function App() {
                 <div className="identity-banner">
                   <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
                   {isSpectator ? <span className="identity-role">观战视角</span> : self.role ? <span className="identity-role">{collaborativeGuessTask && isInterceptPhase && self.role === 'encoder' ? '拦截者' : roleName(self.role)}</span> : null}
-                  {self.is_host ? <span className="identity-host-badge">房主</span> : null}
                 </div>
                 <h2 className="action-title-with-phase">
                   <span className="action-phase-badge">
