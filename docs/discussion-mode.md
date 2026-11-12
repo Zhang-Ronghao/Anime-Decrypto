@@ -23,7 +23,7 @@
 
 `RoomRecord` 增加可兼容旧快照的 `discussion_mode`、`discussion_phase_minutes` 和 `discussion_team`，新模式使用房间阶段 `discuss`。共享函数 `guessPhaseForTeam()` 将房间状态映射为各队的 `decode` 或 `intercept` 任务，前端、服务端正式提交与临时建议共用映射。
 
-`RoomSnapshot.discussionProgress` 是从权威状态派生的公开提交布尔值，不包含密码。正式阶段进度和答案通过现有 DO Storage / D1 快照路径保存，刷新或实例重建不会改变讨论对象。无需 D1 表结构迁移。
+`RoomSnapshot.submissionProgress` 是从权威状态派生的当前任务提交布尔值，按提交方队伍返回 `{ A, B }`，不包含答案。词语确认、加密、解密、拦截和按线索讨论共用此字段，所有玩家及观战者收到相同进度。界面仅显示队名和沙漏／绿色勾选图标；提交文字仅用于无障碍标签与悬停说明。首轮跳过拦截、结算等无需提交的阶段返回 `null`，显示原有阶段提示。正式答案通过现有 DO Storage / D1 快照路径保存，进度在每次快照时重新计算，刷新或实例重建不会丢失。无需 D1 表结构迁移。
 
 临时建议继续只保存在 DO 实例内存与本人的浏览器会话中，不新增存储写入或轮询。切换讨论对象会改变任务 key，旧点选及迟到补发不能进入新任务。
 

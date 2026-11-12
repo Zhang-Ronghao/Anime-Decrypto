@@ -30,6 +30,7 @@ export function guessDraftFixture(phase: 'decode' | 'intercept' = 'decode') {
     revealed_code: null, intercept_correct: null, own_correct: null, resolved_at: null, created_at: timestamp, updated_at: timestamp,
   }));
   const snapshot: RoomSnapshot = {
+    submissionProgress: null,
     server_now: new Date().toISOString(), room, players, submissions,
     teamWords: (['A', 'B'] as Team[]).map((team) => ({ id: `words-${team}`, room_id: room.id, team,
       words: ['雷达', '琴键', '星轨', '沙丘'], seen_words: [], word_slots: [], confirmed: true, created_at: timestamp })),

@@ -158,7 +158,8 @@ export interface RoundSubmissionRecord {
 }
 
 export interface RoomSnapshot {
-  discussionProgress?: { targetTeam: Team; decodeSubmitted: boolean; interceptSubmitted: boolean } | null;
+  /** Public completion of each team's current task, independent of answer visibility. */
+  submissionProgress: Record<Team, boolean> | null;
   server_now: string;
   room: RoomRecord;
   players: PlayerRecord[];

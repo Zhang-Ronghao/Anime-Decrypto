@@ -83,8 +83,8 @@ test('room snapshots expose submission progress, never opposing answers or secre
   const h = discussionHarness(); await h.start();
   await h.request('A-2', { type: 'submitOwnGuess', team: 'A', guess: '2-3-4' });
   const red = await h.snapshot('A-2'); const blue = await h.snapshot('B-2');
-  assert.deepEqual(red.discussionProgress, { targetTeam: 'A', decodeSubmitted: true, interceptSubmitted: false });
-  assert.deepEqual(blue.discussionProgress, red.discussionProgress);
+  assert.deepEqual(red.submissionProgress, { A: true, B: false });
+  assert.deepEqual(blue.submissionProgress, red.submissionProgress);
   assert.equal(blue.submissions.find(s=>s.team==='A')!.own_guess, null);
   assert.ok(blue.teamWords.every(w=>w.team==='B'));
   assert.ok(red.submissions.every(s=>s.revealed_code===null && s.own_correct===null && s.intercept_correct===null));

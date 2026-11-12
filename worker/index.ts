@@ -24,6 +24,7 @@ import {
 import { handleRoomChatMessage, RoomChatRateLimiter } from './roomChat';
 import { isCompleteGuess, PHASE_TIMEOUT_GRACE_MS, timeoutClues, timeoutGuess } from './phaseTimeout';
 import { canSeeTeamWords } from './teamWordVisibility';
+import { roomSubmissionProgress } from './roomProgress';
 import { GuessDrafts } from './guessDrafts';
 import { discussionTarget, guessPhaseForTeam } from '../src/lib/discussion';
 import { DEFAULT_BANGUMI_POPULAR_CATALOG } from '../src/config/bangumi';
@@ -678,15 +679,8 @@ function publicSnapshot(state: RoomState, userId: string, fullRoundHistory = fal
   const visibleSubmissions = state.submissions
     .map((submission) => filterSubmission(submission, self, state.room.phase))
     .sort((left, right) => right.round_number - left.round_number || left.team.localeCompare(right.team));
-  const target = discussionTarget(state.room);
-  const discussed = target ? submissionFor(state, target) : null;
-
   return {
-    discussionProgress: target && discussed ? {
-      targetTeam: target,
-      decodeSubmitted: Boolean(discussed.own_guess),
-      interceptSubmitted: Boolean(discussed.intercept_guess),
-    } : null,
+    submissionProgress: roomSubmissionProgress(state.room, state.submissions),
     server_now: nowIso(),
     room: state.room,
     players: [...state.players].sort(sortPlayers),

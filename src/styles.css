@@ -1537,15 +1537,36 @@ body:has(.home-shell) {
 .settings-section + .settings-section { margin-top: 8px; }
 .discussion-settings .settings-mode-card { min-height: 88px; align-content: start; }
 
-.discussion-progress {
-  display: grid;
-  gap: 8px;
-  color: var(--muted);
+.team-submission-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
   font-size: 0.88rem;
   line-height: 1.4;
 }
-.discussion-progress > span { display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; }
-.discussion-progress b { color: var(--text); font-weight: 800; }
+
+.team-submission-progress-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.team-submission-progress .team-submission-progress-name {
+  font-weight: 800;
+}
+
+.team-submission-progress .team-submission-progress-name-A { color: var(--red); }
+.team-submission-progress .team-submission-progress-name-B { color: var(--blue); }
+
+.team-submission-progress-icon {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.team-submission-progress-icon.is-submitted { color: var(--good); }
 
 .phase-notice-region {
   position: fixed;
@@ -1811,6 +1832,10 @@ body:has(.home-shell) {
   border-radius: 10px;
   background: var(--panel-raised);
   text-align: center;
+}
+
+.action-progress-block > .team-submission-progress {
+  margin-top: 6px;
 }
 
 .action-progress-block-timer-idle {

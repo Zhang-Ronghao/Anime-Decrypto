@@ -6,6 +6,7 @@ import { MemberManagementDialog } from './components/MemberManagementDialog';
 import { GrowingGameInput } from './components/GrowingGameInput';
 import { CollaborativeGuessInput, GuessSubmitterName } from './components/CollaborativeGuessInput';
 import { PhaseTransitionNotice } from './components/PhaseTransitionNotice';
+import { TeamSubmissionProgress } from './components/TeamSubmissionProgress';
 import { discussionTarget, guessPhaseForTeam } from './lib/discussion';
 import { HIDE_TOP_TEAM_SCORES, USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
 import { DEFAULT_BANGUMI_POPULAR_CATALOG } from './config/bangumi';
@@ -1927,12 +1928,6 @@ function App() {
   const hasSeatedPlayers = teamAPlayers.length + teamBPlayers.length > 0;
   const canRandomizeTeams = rosterPlayers.filter((player) => !player.is_spectator).length >= 2;
   const startGameReady = teamAPlayers.length >= 2 && teamBPlayers.length >= 2;
-  const wordAssignmentCount = snapshot
-    ? Number(snapshot.room.team_a_words_confirmed) + Number(snapshot.room.team_b_words_confirmed)
-    : 0;
-  const clueSubmitCount = currentRoundSubmissions.filter((entry) => entry.clues?.length === 3).length;
-  const decodeSubmitCount = currentRoundSubmissions.filter((entry) => entry.own_guess).length;
-  const interceptSubmitCount = currentRoundSubmissions.filter((entry) => entry.intercept_guess).length;
   const currentRoundGuessFeedbackResponses = useMemo(
     () => {
       if (!snapshot) {
@@ -2215,9 +2210,9 @@ function App() {
   const myTeamCluesSubmitted = Boolean(myTeamSubmission?.clues);
   const opponentCluesSubmitted = Boolean(opponentSubmission?.clues);
   const myTeamDecodeSubmitted = Boolean(myTeamSubmission?.own_guess);
-  const opponentDecodeSubmitted = Boolean(opponentSubmission?.own_guess);
+  const opponentDecodeSubmitted = snapshot?.submissionProgress?.[opponentTeam] === true;
   const myTeamInterceptSubmitted = Boolean(opponentSubmission?.intercept_guess);
-  const opponentInterceptSubmitted = Boolean(myTeamSubmission?.intercept_guess);
+  const opponentInterceptSubmitted = snapshot?.submissionProgress?.[opponentTeam] === true;
   const encryptCodeDigits = myVisibleCode?.split('-') ?? [];
   const encryptRows = [0, 1, 2].map((index) => {
     const digit = encryptCodeDigits[index] ?? '';
@@ -2284,13 +2279,13 @@ function App() {
                   : '等待房间同步';
   const progressText =
     discussionTeam ? '讨论进度' : snapshot?.room.phase === 'word_assignment'
-      ? `词语确认 ${wordAssignmentCount}/2`
+      ? '词语确认'
       : snapshot?.room.phase === 'encrypt'
-        ? `加密进度 ${clueSubmitCount}/2`
+        ? '加密进度'
         : snapshot?.room.phase === 'decode'
-          ? `解密进度 ${decodeSubmitCount}/2`
+          ? '解密进度'
           : snapshot?.room.phase === 'intercept'
-            ? `拦截进度 ${interceptSubmitCount}/2`
+            ? '拦截进度'
             : snapshot?.room.phase === 'result'
               ? '本轮已经结算'
               : snapshot?.room.phase === 'finished'
@@ -4514,7 +4509,7 @@ function App() {
                   </div>
                 ) : isWordAssignmentPhase ? (
                   <div className="wait-card">
-                    <strong>{effectiveProgressText}</strong>
+                    <TeamSubmissionProgress progress={snapshot.submissionProgress} fallback={effectiveProgressText} />
                     <p className="muted">
                       {myTeamConfirmed ? '本队词语已锁定，等待另一队加密者确认词语' : '等待本队加密者确认词语'}
                     </p>
@@ -4817,7 +4812,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="wait-card">
-                    <strong>{centerStatusText}</strong>
+                    <TeamSubmissionProgress progress={snapshot.submissionProgress} fallback={centerStatusText} />
                   </div>
                 )}
               </div>
@@ -4837,12 +4832,7 @@ function App() {
                 </div>
                 <div className="action-progress-block">
                   <span>进度</span>
-                  {discussionTeam && snapshot.discussionProgress ? (
-                    <div className="discussion-progress" aria-label="讨论提交进度">
-                      <span>{displayTeamName(discussionTeam)}解密 <b>{snapshot.discussionProgress.decodeSubmitted ? '已提交' : '待提交'}</b></span>
-                      <span>{displayTeamName(otherTeam(discussionTeam))}拦截 <b>{snapshot.discussionProgress.interceptSubmitted ? '已提交' : '待提交'}</b></span>
-                    </div>
-                  ) : <strong>{effectiveProgressText}</strong>}
+                  <TeamSubmissionProgress progress={snapshot.submissionProgress} fallback={effectiveProgressText} />
                 </div>
               </aside>
             </div>
