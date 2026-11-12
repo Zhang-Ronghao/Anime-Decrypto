@@ -1,5 +1,6 @@
 import type {
   BangumiCatalogMergeMode,
+  DiscussionMode,
   PlayerRecord,
   RoomJoinStatus,
   RoomPhase,
@@ -24,6 +25,7 @@ import { handleRoomChatMessage, RoomChatRateLimiter } from './roomChat';
 import { isCompleteGuess, PHASE_TIMEOUT_GRACE_MS, timeoutClues, timeoutGuess } from './phaseTimeout';
 import { canSeeTeamWords } from './teamWordVisibility';
 import { GuessDrafts } from './guessDrafts';
+import { discussionTarget, guessPhaseForTeam } from '../src/lib/discussion';
 import { DEFAULT_BANGUMI_POPULAR_CATALOG } from '../src/config/bangumi';
 
 export interface Env {
@@ -102,7 +104,7 @@ type Action =
     | { type: 'submitInterceptGuess'; targetTeam: Team; guess: string }
     | {
         type: 'submitTimeoutDraft';
-        phase: 'encrypt' | 'decode' | 'intercept';
+        phase: 'encrypt' | 'decode' | 'intercept' | 'discuss';
         roundNumber: number;
         phaseDeadlineAt: string;
         draft: { kind: 'clues'; values: string[] } | { kind: 'guess'; digits: Array<string | null> };
@@ -115,6 +117,7 @@ type Action =
   ) & { clientActionId?: string };
 
 interface LobbySettingsPayload {
+  discussion?: { mode: DiscussionMode; minutes: number };
   timers: { encryptMinutes: number; decodeMinutes: number; interceptMinutes: number };
   forcePhaseTimeoutEnabled: boolean;
   miscommunicationLimit: number;
@@ -372,6 +375,9 @@ function ensureRevision(state: RoomState): RoomState {
   }
 
   state.room.force_phase_timeout_enabled = state.room.force_phase_timeout_enabled === true;
+  state.room.discussion_mode = state.room.discussion_mode === 'sequential' ? 'sequential' : 'parallel';
+  state.room.discussion_phase_minutes = clampInt(state.room.discussion_phase_minutes ?? 2, 1, 5);
+  state.room.discussion_team = state.room.phase === 'discuss' ? state.room.discussion_team ?? 'A' : null;
   if (state.room.phase === 'lobby') {
     state.room.seat_count = 0;
     state.room.role_rotation_enabled = true;
@@ -403,7 +409,7 @@ function ensureRevision(state: RoomState): RoomState {
 }
 
 function timedPhaseFinalizeAt(room: RoomRecord): number | null {
-  if (!room.force_phase_timeout_enabled || room.status !== 'active' || !['encrypt', 'decode', 'intercept'].includes(room.phase)) {
+  if (!room.force_phase_timeout_enabled || room.status !== 'active' || !['encrypt', 'decode', 'intercept', 'discuss'].includes(room.phase)) {
     return null;
   }
 
@@ -464,6 +470,8 @@ function phaseDeadline(room: RoomRecord, phase: RoomPhase, startedAt = nowIso())
       ? room.encrypt_phase_minutes
       : phase === 'decode'
         ? room.decode_phase_minutes
+        : phase === 'discuss'
+          ? room.discussion_phase_minutes ?? 2
         : phase === 'intercept'
           ? room.intercept_phase_minutes
           : null;
@@ -557,6 +565,9 @@ function createRoomState(roomId: string, roomCode: string, hostUserId: string, p
     encrypt_phase_minutes: 2,
     decode_phase_minutes: 2,
     intercept_phase_minutes: 2,
+    discussion_mode: 'parallel',
+    discussion_phase_minutes: 2,
+    discussion_team: null,
     force_phase_timeout_enabled: false,
     miscommunication_limit: 2,
     life_mode_enabled: true,
@@ -667,8 +678,15 @@ function publicSnapshot(state: RoomState, userId: string, fullRoundHistory = fal
   const visibleSubmissions = state.submissions
     .map((submission) => filterSubmission(submission, self, state.room.phase))
     .sort((left, right) => right.round_number - left.round_number || left.team.localeCompare(right.team));
+  const target = discussionTarget(state.room);
+  const discussed = target ? submissionFor(state, target) : null;
 
   return {
+    discussionProgress: target && discussed ? {
+      targetTeam: target,
+      decodeSubmitted: Boolean(discussed.own_guess),
+      interceptSubmitted: Boolean(discussed.intercept_guess),
+    } : null,
     server_now: nowIso(),
     room: state.room,
     players: [...state.players].sort(sortPlayers),
@@ -897,6 +915,7 @@ function resolveRound(state: RoomState, skipIntercept = false): void {
 
   const winner = determineWinner(state.room);
   state.room.phase = winner.gameFinished ? 'finished' : 'result';
+  state.room.discussion_team = null;
   state.room.status = winner.gameFinished ? 'finished' : 'active';
   state.room.winner = winner.team;
   state.room.phase_started_at = timestamp;
@@ -1222,6 +1241,7 @@ export class RoomDurableObject {
         context: {
           roomId: current.room.id,
           phase: current.room.phase,
+          discussionTeam: discussionTarget(current.room),
           players: current.players,
         },
         rateLimiter: this.roomChatRateLimiter,
@@ -1899,6 +1919,13 @@ export class RoomDurableObject {
     current.room.encrypt_phase_minutes = clampInt(payload.timers.encryptMinutes, 1, 5);
     current.room.decode_phase_minutes = clampInt(payload.timers.decodeMinutes, 1, 5);
     current.room.intercept_phase_minutes = clampInt(payload.timers.interceptMinutes, 1, 5);
+    if (payload.discussion) {
+      if (!['parallel', 'sequential'].includes(payload.discussion.mode) || !Number.isFinite(payload.discussion.minutes)) {
+        throw new HttpError(400, '讨论模式或时长无效。');
+      }
+      current.room.discussion_mode = payload.discussion.mode;
+      current.room.discussion_phase_minutes = clampInt(payload.discussion.minutes, 1, 5);
+    }
     current.room.force_phase_timeout_enabled = payload.forcePhaseTimeoutEnabled === true;
     current.room.miscommunication_limit = [2, 3, 4].includes(payload.miscommunicationLimit)
       ? payload.miscommunicationLimit
@@ -2103,6 +2130,7 @@ export class RoomDurableObject {
     current.roundCodes.push(createRoundCode(current.room.id, 'B', roundNumber, encoderFor(current, 'B').id));
     current.submissions.push(createSubmission(current.room.id, 'A', roundNumber), createSubmission(current.room.id, 'B', roundNumber));
     current.room.phase = 'encrypt';
+    current.room.discussion_team = null;
     current.room.round_number = roundNumber;
     current.room.phase_started_at = nowIso();
     current.room.phase_deadline_at = phaseDeadline(current.room, 'encrypt', current.room.phase_started_at);
@@ -2173,15 +2201,13 @@ export class RoomDurableObject {
     submission.clues_auto_submitted = false;
     submission.updated_at = nowIso();
     if (current.submissions.filter((entry) => entry.round_number === current.room.round_number).every((entry) => entry.clues?.length === 3)) {
-      current.room.phase = 'decode';
-      current.room.phase_started_at = nowIso();
-      current.room.phase_deadline_at = phaseDeadline(current.room, 'decode', current.room.phase_started_at);
+      this.startGuessing(current);
     }
   }
 
   private submitOwnGuess(current: RoomState, userId: string, team: Team, guess: string): void {
     const self = requireSelf(current, userId);
-    if (current.room.phase !== 'decode') {
+    if (guessPhaseForTeam(current.room, team) !== 'decode') {
       throw new HttpError(409, '当前不是解密阶段。');
     }
     assertBeforeForcedDeadline(current.room);
@@ -2190,13 +2216,14 @@ export class RoomDurableObject {
     }
 
     const submission = submissionFor(current, team);
+    if (submission.own_guess) throw new HttpError(409, '解密答案已提交。');
     submission.own_guess = assertGuess(guess, '解密');
     submission.own_guess_auto_submitted = false;
     submission.updated_at = nowIso();
-    if (current.submissions.filter((entry) => entry.round_number === current.room.round_number).every((entry) => entry.own_guess)) {
-      current.room.phase = 'intercept';
-      current.room.phase_started_at = nowIso();
-      current.room.phase_deadline_at = phaseDeadline(current.room, 'intercept', current.room.phase_started_at);
+    if (discussionTarget(current.room)) {
+      this.advanceDiscussionIfComplete(current);
+    } else if (this.currentRoundSubmissions(current).every((entry) => entry.own_guess)) {
+      this.startTimedPhase(current, 'intercept');
     }
   }
 
@@ -2204,7 +2231,7 @@ export class RoomDurableObject {
     validateTeam(targetTeam);
     const attackerTeam = otherTeam(targetTeam);
     const self = requireSelf(current, userId);
-    if (current.room.phase !== 'intercept') {
+    if (guessPhaseForTeam(current.room, attackerTeam) !== 'intercept' || current.room.round_number === 1) {
       throw new HttpError(409, '当前不是拦截阶段。');
     }
     assertBeforeForcedDeadline(current.room);
@@ -2213,10 +2240,13 @@ export class RoomDurableObject {
     }
 
     const submission = submissionFor(current, targetTeam);
+    if (submission.intercept_guess) throw new HttpError(409, '拦截答案已提交。');
     submission.intercept_guess = assertGuess(guess, '拦截');
     submission.intercept_guess_auto_submitted = false;
     submission.updated_at = nowIso();
-    if (current.submissions.filter((entry) => entry.round_number === current.room.round_number).every((entry) => entry.intercept_guess)) {
+    if (discussionTarget(current.room)) {
+      this.advanceDiscussionIfComplete(current);
+    } else if (this.currentRoundSubmissions(current).every((entry) => entry.intercept_guess)) {
       resolveRound(current, false);
     }
   }
@@ -2252,7 +2282,7 @@ export class RoomDurableObject {
         submission.updated_at = timestamp;
       }
       if (this.currentRoundSubmissions(current).every((entry) => entry.clues?.length === 3)) {
-        this.startTimedPhase(current, 'decode');
+        this.startGuessing(current);
       }
       return;
     }
@@ -2260,7 +2290,8 @@ export class RoomDurableObject {
     if (action.draft.kind !== 'guess' || !self.team) {
       throw new HttpError(403, '当前不能提交该内容。');
     }
-    if (action.phase === 'decode') {
+    const taskPhase = guessPhaseForTeam(current.room, self.team);
+    if (taskPhase === 'decode') {
       if (self.role !== 'decoder') {
         throw new HttpError(403, '当前不能提交该内容。');
       }
@@ -2270,13 +2301,15 @@ export class RoomDurableObject {
         submission.own_guess_auto_submitted = true;
         submission.updated_at = timestamp;
       }
-      if (this.currentRoundSubmissions(current).every((entry) => entry.own_guess)) {
+      if (discussionTarget(current.room)) {
+        this.advanceDiscussionIfComplete(current);
+      } else if (this.currentRoundSubmissions(current).every((entry) => entry.own_guess)) {
         this.startTimedPhase(current, 'intercept');
       }
       return;
     }
 
-    if (current.room.round_number === 1 || self.role !== 'encoder') {
+    if (taskPhase !== 'intercept' || current.room.round_number === 1 || self.role !== 'encoder') {
       throw new HttpError(403, '当前不能提交该内容。');
     }
     const submission = submissionFor(current, otherTeam(self.team));
@@ -2285,7 +2318,9 @@ export class RoomDurableObject {
       submission.intercept_guess_auto_submitted = true;
       submission.updated_at = timestamp;
     }
-    if (this.currentRoundSubmissions(current).every((entry) => entry.intercept_guess)) {
+    if (discussionTarget(current.room)) {
+      this.advanceDiscussionIfComplete(current);
+    } else if (this.currentRoundSubmissions(current).every((entry) => entry.intercept_guess)) {
       resolveRound(current, false);
     }
   }
@@ -2296,8 +2331,33 @@ export class RoomDurableObject {
 
   private startTimedPhase(current: RoomState, phase: 'decode' | 'intercept'): void {
     current.room.phase = phase;
+    current.room.discussion_team = null;
     current.room.phase_started_at = nowIso();
     current.room.phase_deadline_at = phaseDeadline(current.room, phase, current.room.phase_started_at);
+  }
+
+  private startGuessing(current: RoomState): void {
+    if (current.room.discussion_mode === 'sequential' && current.room.round_number > 1) {
+      this.startDiscussion(current, 'A');
+    } else {
+      this.startTimedPhase(current, 'decode');
+    }
+  }
+
+  private startDiscussion(current: RoomState, team: Team): void {
+    current.room.phase = 'discuss';
+    current.room.discussion_team = team;
+    current.room.phase_started_at = nowIso();
+    current.room.phase_deadline_at = phaseDeadline(current.room, 'discuss', current.room.phase_started_at);
+  }
+
+  private advanceDiscussionIfComplete(current: RoomState): void {
+    const target = discussionTarget(current.room);
+    if (!target) return;
+    const submission = submissionFor(current, target);
+    if (!submission.own_guess || !submission.intercept_guess) return;
+    if (target === 'A') this.startDiscussion(current, 'B');
+    else resolveRound(current, false);
   }
 
   private finalizeExpiredPhase(current: RoomState): boolean {
@@ -2311,7 +2371,22 @@ export class RoomDurableObject {
           submission.updated_at = timestamp;
         }
       }
-      this.startTimedPhase(current, 'decode');
+      this.startGuessing(current);
+      return true;
+    }
+    const target = discussionTarget(current.room);
+    if (target) {
+      const submission = submissionFor(current, target);
+      if (!submission.own_guess) {
+        submission.own_guess = timeoutGuess([]);
+        submission.own_guess_auto_submitted = true;
+      }
+      if (!submission.intercept_guess) {
+        submission.intercept_guess = timeoutGuess([]);
+        submission.intercept_guess_auto_submitted = true;
+      }
+      submission.updated_at = timestamp;
+      this.advanceDiscussionIfComplete(current);
       return true;
     }
     if (current.room.phase === 'decode') {
@@ -2361,11 +2436,17 @@ export class RoomDurableObject {
     guessDigits: string[],
   ): void {
     const self = requireSelf(current, userId);
-    if (current.room.phase !== phase || self.team !== team || self.is_spectator) {
+    if (guessPhaseForTeam(current.room, team) !== phase || self.team !== team || self.is_spectator) {
       throw new HttpError(403, '当前不能提交该反馈。');
     }
     if ((phase === 'decode' && self.role !== 'member') || (phase === 'intercept' && self.role === 'encoder')) {
       throw new HttpError(403, '当前身份不能提交该反馈。');
+    }
+    assertBeforeForcedDeadline(current.room);
+    const submission = submissionFor(current, phase === 'decode' ? team : otherTeam(team));
+    if ((phase === 'decode' ? submission.own_guess : submission.intercept_guess) ||
+      (phase === 'intercept' && current.room.round_number === 1)) {
+      throw new HttpError(409, '本队答案已提交或当前无需拦截。');
     }
     if (guessDigits.length !== 3) {
       throw new HttpError(400, '反馈必须包含 3 个编号。');
@@ -2420,6 +2501,7 @@ export class RoomDurableObject {
     }
     current.room.status = 'lobby';
     current.room.phase = 'lobby';
+    current.room.discussion_team = null;
     current.room.round_number = 0;
     current.room.phase_started_at = nowIso();
     current.room.phase_deadline_at = null;

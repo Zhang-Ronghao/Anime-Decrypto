@@ -29,6 +29,7 @@ interface RateWindow {
 export interface RoomChatContext {
   roomId: string;
   phase: RoomPhase;
+  discussionTeam?: Team | null;
   players: readonly PlayerRecord[];
 }
 
@@ -120,6 +121,7 @@ export function resolveRoomChatAudience(
   phase: RoomPhase,
   sender: PlayerRecord,
   requestedAudience: RoomChatAudience,
+  discussionTeam?: Team | null,
 ): { resolved?: ResolvedRoomChatAudience; error?: { code: RoomChatErrorCode; message: string } } {
   if (isRoomAudiencePhase(phase)) {
     return requestedAudience === 'room'
@@ -135,7 +137,7 @@ export function resolveRoomChatAudience(
     return { error: { code: 'TEAM_UNAVAILABLE', message: '当前没有可用的队内聊天。' } };
   }
 
-  if (phase === 'decode' && sender.role === 'encoder') {
+  if ((phase === 'decode' || (phase === 'discuss' && sender.team === discussionTeam)) && sender.role === 'encoder') {
     return { error: { code: 'CHAT_MUTED', message: '解密阶段，加密者暂时不能发言。' } };
   }
 
@@ -198,7 +200,7 @@ export function handleRoomChatMessage(options: {
     return;
   }
 
-  const audienceResult = resolveRoomChatAudience(options.context.phase, sender, parsed.channel);
+  const audienceResult = resolveRoomChatAudience(options.context.phase, sender, parsed.channel, options.context.discussionTeam);
   if (!audienceResult.resolved) {
     sendError(
       options.socket,

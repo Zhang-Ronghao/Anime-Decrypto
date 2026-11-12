@@ -5,6 +5,8 @@ import { RoomCodeDisplay } from './components/RoomCodeDisplay';
 import { MemberManagementDialog } from './components/MemberManagementDialog';
 import { GrowingGameInput } from './components/GrowingGameInput';
 import { CollaborativeGuessInput, GuessSubmitterName } from './components/CollaborativeGuessInput';
+import { PhaseTransitionNotice } from './components/PhaseTransitionNotice';
+import { discussionTarget, guessPhaseForTeam } from './lib/discussion';
 import { HIDE_TOP_TEAM_SCORES, USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
 import { DEFAULT_BANGUMI_POPULAR_CATALOG } from './config/bangumi';
 import { useGuessDrafts } from './hooks/useGuessDrafts';
@@ -115,7 +117,7 @@ interface BangumiCatalogSummary {
 }
 
 type TeamWordDraftMode = 'manual' | 'generated' | 'characters';
-type TimedPhase = 'encrypt' | 'decode' | 'intercept';
+type TimedPhase = 'encrypt' | 'decode' | 'intercept' | 'discuss';
 type TeamWordFeedbackDraftValue = boolean | null;
 
 type BangumiCollectionType = 1 | 2 | 3 | 4 | 5;
@@ -175,7 +177,7 @@ const GUESS_NUMBER_NOTE = '线索按正确编号归位；括号内是队友猜�
 const FULL_REFRESH_MIN_INTERVAL_MS = 800;
 
 type LobbySettingsOptimistic = Partial<
-  Pick<RoomRecord, 'life_mode_enabled' | 'life_points' | 'bangumi_character_extract_enabled' | 'force_phase_timeout_enabled'>
+  Pick<RoomRecord, 'life_mode_enabled' | 'life_points' | 'bangumi_character_extract_enabled' | 'force_phase_timeout_enabled' | 'discussion_mode' | 'discussion_phase_minutes'>
 >;
 
 interface UsageDebugCounters {
@@ -502,10 +504,11 @@ function teamTone(team: Team): 'red' | 'blue' {
 }
 
 function isTimedPhase(phase: RoomPhase): phase is TimedPhase {
-  return phase === 'encrypt' || phase === 'decode' || phase === 'intercept';
+  return phase === 'encrypt' || phase === 'decode' || phase === 'intercept' || phase === 'discuss';
 }
 
 function timedPhaseLabel(phase: TimedPhase): string {
+  if (phase === 'discuss') return '讨论';
   if (phase === 'encrypt') {
     return '加密';
   }
@@ -1877,6 +1880,8 @@ function App() {
   const myTeamPlayers = myTeam === 'A' ? teamAPlayers : teamBPlayers;
   const roleStripTeams: Team[] = [myTeam, opponentTeam];
   const lobbyTimerSettings = lobbyTimerSettingsFromRoom(snapshot?.room);
+  const discussionMode = optimisticLobbySettings?.discussion_mode ?? snapshot?.room.discussion_mode ?? 'parallel';
+  const discussionMinutes = optimisticLobbySettings?.discussion_phase_minutes ?? snapshot?.room.discussion_phase_minutes ?? 2;
   const miscommunicationLimit = miscommunicationLimitFromRoom(snapshot?.room);
   const lifeModeEnabled = optimisticLobbySettings?.life_mode_enabled ?? (snapshot?.room.life_mode_enabled === true);
   const lifePoints = optimisticLobbySettings?.life_points ?? lifePointsFromRoom(snapshot?.room);
@@ -1902,8 +1907,10 @@ function App() {
   const isLobbyPhase = snapshot?.room.phase === 'lobby';
   const isWordAssignmentPhase = snapshot?.room.phase === 'word_assignment';
   const isCurrentEncryptPhase = isEncryptPhase(snapshot?.room.phase ?? 'lobby');
-  const isDecodePhase = snapshot?.room.phase === 'decode';
-  const isInterceptPhase = snapshot?.room.phase === 'intercept';
+  const discussionTeam = snapshot ? discussionTarget(snapshot.room) : null;
+  const playerGuessPhase = snapshot ? guessPhaseForTeam(snapshot.room, myTeam) : null;
+  const isDecodePhase = playerGuessPhase === 'decode';
+  const isInterceptPhase = playerGuessPhase === 'intercept';
   const isFinishedPhase = snapshot?.room.phase === 'finished';
   const isFirstRoundInterceptSkip = isInterceptPhase && snapshot?.room.round_number === 1;
   const actionPanelTone =
@@ -2276,7 +2283,7 @@ function App() {
                   ? '本局结束，可重新开始'
                   : '等待房间同步';
   const progressText =
-    snapshot?.room.phase === 'word_assignment'
+    discussionTeam ? '讨论进度' : snapshot?.room.phase === 'word_assignment'
       ? `词语确认 ${wordAssignmentCount}/2`
       : snapshot?.room.phase === 'encrypt'
         ? `加密进度 ${clueSubmitCount}/2`
@@ -2289,7 +2296,9 @@ function App() {
               : snapshot?.room.phase === 'finished'
                 ? '对局已结束'
                 : '等待房间同步';
-  const collaborativeGuessHint = !collaborativeGuessTask || collaborativeGuessTask.locked ? null :
+  const collaborativeGuessHint = !collaborativeGuessTask ? null :
+    collaborativeGuessTask.locked ? discussionTeam && (isDecodePhase ? submittedDecodeGuess : submittedInterceptGuess)
+      ? '本队答案已提交，等待另一方提交' : null :
     !isSpectator && isDecodePhase && self?.role === 'encoder' ? '你是本轮加密者，仅可查看队友选择' :
     isGuessSubmitter ? `你是${guessSubmitterRole}，负责提交最终答案` :
     !guessSubmitter ? `等待本队${guessSubmitterRole}就位` : <>
@@ -2337,29 +2346,30 @@ function App() {
       return;
     }
 
-    const submission = activeTimedPhase === 'intercept' ? opponentSubmission : myTeamSubmission;
+    const guessPhase = activeTimedPhase === 'discuss' ? playerGuessPhase : activeTimedPhase;
+    const submission = guessPhase === 'intercept' ? opponentSubmission : myTeamSubmission;
     const isSubmitter =
-      activeTimedPhase === 'encrypt'
+      guessPhase === 'encrypt'
         ? self.role === 'encoder' && !submission?.clues
-        : activeTimedPhase === 'decode'
+        : guessPhase === 'decode'
           ? self.role === 'decoder' && !submission?.own_guess
           : snapshot.room.round_number > 1 && self.role === 'encoder' && !submission?.intercept_guess;
     if (!isSubmitter) {
       return;
     }
 
-    const attemptKey = `${snapshot.room.id}:${snapshot.room.round_number}:${activeTimedPhase}:${snapshot.room.phase_deadline_at}`;
+    const attemptKey = `${snapshot.room.id}:${snapshot.room.round_number}:${activeTimedPhase}:${discussionTeam}:${snapshot.room.phase_deadline_at}`;
     if (timeoutDraftAttemptedRef.current.has(attemptKey)) {
       return;
     }
     timeoutDraftAttemptedRef.current.add(attemptKey);
 
     const draft =
-      activeTimedPhase === 'encrypt'
+      guessPhase === 'encrypt'
         ? { kind: 'clues' as const, values: clueForm }
         : {
             kind: 'guess' as const,
-            digits: guessDigits(activeTimedPhase === 'decode' ? decodeGuess : interceptGuess).map((digit) => digit || null),
+            digits: guessDigits(guessPhase === 'decode' ? decodeGuess : interceptGuess).map((digit) => digit || null),
           };
     void submitTimeoutDraft(
       snapshot.room.id,
@@ -2372,6 +2382,8 @@ function App() {
     });
   }, [
     activeTimedPhase,
+    playerGuessPhase,
+    discussionTeam,
     clueForm,
     countdownExpired,
     decodeGuess,
@@ -2457,7 +2469,7 @@ function App() {
   useEffect(() => {
     setDecodeFeedbackGuess('');
     setInterceptFeedbackGuess('');
-  }, [currentPhase, currentRoundNumber, myTeam]);
+  }, [currentPhase, discussionTeam, currentRoundNumber, myTeam]);
 
   async function withAction<T>(
     key: string,
@@ -2868,8 +2880,24 @@ function App() {
     }
   }
 
+  async function handleDiscussionSettingsChange(mode: 'parallel' | 'sequential', minutes = discussionMinutes) {
+    if (!snapshot || !self?.is_host || snapshot.room.phase !== 'lobby') return;
+    setOptimisticLobbySettings(current => ({ ...current, discussion_mode: mode, discussion_phase_minutes: minutes }));
+    const result = await withAction('lobby-discussion-mode', () => updateRoomLobbySettings(
+      snapshot.room.id, lobbyTimerSettingsFromRoom(snapshot.room), snapshot.room.force_phase_timeout_enabled,
+      miscommunicationLimitFromRoom(snapshot.room), snapshot.room.life_mode_enabled, lifePointsFromRoom(snapshot.room),
+      snapshot.room.allow_midgame_join, snapshot.room.bangumi_character_extract_enabled, { mode, minutes },
+    ));
+    if (result !== null) patchSnapshotRoom({ discussion_mode: mode, discussion_phase_minutes: minutes });
+    setOptimisticLobbySettings(null);
+  }
+
   async function handleLobbyTimerChange(phase: TimedPhase, minutes: number) {
     if (!snapshot || !self?.is_host) {
+      return;
+    }
+    if (phase === 'discuss') {
+      await handleDiscussionSettingsChange(discussionMode, minutes);
       return;
     }
 
@@ -3773,6 +3801,7 @@ function App() {
 
   return (
     <main className="app-shell" data-key-text-size={keyTextSize}>
+      <PhaseTransitionNotice room={snapshot.room} team={isSpectator ? null : myTeam} serverClockOffsetMs={serverClockOffsetMs} />
       {import.meta.env.DEV ? (
         <aside className="usage-debug-panel" aria-label="Cloudflare usage debug">
           <span>session {usageDebugCounters.session}</span>
@@ -3798,7 +3827,7 @@ function App() {
           {!isLobbyPhase ? (
             <span className="status-pill status-pill-round">第 {snapshot.room.round_number} 轮</span>
           ) : null}
-          <span className="status-pill status-pill-phase">{phaseLabel(snapshot.room.phase)}</span>
+          <span className="status-pill status-pill-phase">{phaseLabel(snapshot.room.phase, discussionTeam)}</span>
         </div>
 
         <div className="top-actions">
@@ -4039,6 +4068,7 @@ function App() {
                 <div className="lobby-mode-summary" aria-live="polite">
                   <strong>本局模式</strong>
                   <span>{lifeModeEnabled ? `生命模式 · ${lifePoints} 点生命` : `经典模式 · 失误上限 ${miscommunicationLimit} 次`}</span>
+                  <span>{discussionMode === 'sequential' ? '按线索进行 · 先红队线索后蓝队线索' : '按阶段进行 · 先解密后拦截'}</span>
                 </div>
                 <div className="lobby-settings-block lobby-settings-timers">
                   <div className="lobby-settings-head">
@@ -4048,8 +4078,10 @@ function App() {
                   <div className="lobby-timer-grid">
                     {([
                       { phase: 'encrypt', label: '加密阶段', value: lobbyTimerSettings.encryptMinutes },
-                      { phase: 'decode', label: '解密阶段', value: lobbyTimerSettings.decodeMinutes },
-                      { phase: 'intercept', label: '拦截阶段', value: lobbyTimerSettings.interceptMinutes },
+                      { phase: 'decode', label: discussionMode === 'sequential' ? '首轮解密' : '解密阶段', value: lobbyTimerSettings.decodeMinutes },
+                      discussionMode === 'sequential'
+                        ? { phase: 'discuss', label: '每队讨论', value: discussionMinutes }
+                        : { phase: 'intercept', label: '拦截阶段', value: lobbyTimerSettings.interceptMinutes },
                     ] as Array<{ phase: TimedPhase; label: string; value: number }>).map((item) => (
                       <label className="lobby-setting lobby-setting-inline" key={item.phase}>
                         <span>{item.label}</span>
@@ -4114,7 +4146,7 @@ function App() {
             error={roomChatError}
             messages={roomChatMessages}
             onSend={handleRoomChatSend}
-            phase={snapshot.room.phase}
+            phase={playerGuessPhase ?? snapshot.room.phase}
             self={self}
             spectatorTeamView={spectatorTeamView}
           />
@@ -4139,7 +4171,7 @@ function App() {
                 </div>
                 <h2 className="action-title-with-phase">
                   <span className="action-phase-badge">
-                    {isTimedPhase(snapshot.room.phase) ? timedPhaseLabel(snapshot.room.phase) : phaseLabel(snapshot.room.phase)}
+                    {playerGuessPhase ? timedPhaseLabel(playerGuessPhase) : isTimedPhase(snapshot.room.phase) ? timedPhaseLabel(snapshot.room.phase) : phaseLabel(snapshot.room.phase)}
                   </span>
                   <span>{actionTitle}</span>
                 </h2>
@@ -4498,6 +4530,7 @@ function App() {
                     selfId={self.id}
                     digits={guessDraft.digits}
                     submittedDigits={isDecodePhase ? myTeamSubmission?.own_guess ? displayedDecodeDigits : null : opponentSubmission?.intercept_guess ? displayedInterceptDigits : null}
+                    clueTeamLabel={discussionTeam ? `${displayTeamName(discussionTeam)}线索` : undefined}
                     canEdit={guessDraft.canEdit && !forcedPhaseExpired}
                     readOnly={isGuessReadOnly}
                     busy={busyKey !== null}
@@ -4804,7 +4837,12 @@ function App() {
                 </div>
                 <div className="action-progress-block">
                   <span>进度</span>
-                  <strong>{effectiveProgressText}</strong>
+                  {discussionTeam && snapshot.discussionProgress ? (
+                    <div className="discussion-progress" aria-label="讨论提交进度">
+                      <span>{displayTeamName(discussionTeam)}解密 <b>{snapshot.discussionProgress.decodeSubmitted ? '已提交' : '待提交'}</b></span>
+                      <span>{displayTeamName(otherTeam(discussionTeam))}拦截 <b>{snapshot.discussionProgress.interceptSubmitted ? '已提交' : '待提交'}</b></span>
+                    </div>
+                  ) : <strong>{effectiveProgressText}</strong>}
                 </div>
               </aside>
             </div>
@@ -4993,7 +5031,7 @@ function App() {
             error={roomChatError}
             messages={roomChatMessages}
             onSend={handleRoomChatSend}
-            phase={snapshot.room.phase}
+            phase={playerGuessPhase ?? snapshot.room.phase}
             self={self}
             spectatorTeamView={spectatorTeamView}
           />
@@ -5055,7 +5093,6 @@ function App() {
             <div className="modal-card-head">
               <div>
                 <h2>其他设置</h2>
-                <p className="muted">选择游戏模式，调整胜负规则。</p>
               </div>
               <button
                 className="ghost-button"
@@ -5068,68 +5105,84 @@ function App() {
             </div>
 
             <div className="modal-form-stack">
-              <div className="settings-mode-grid" role="radiogroup" aria-label="容错模式">
-                <section className={cn('settings-mode-card', !lifeModeEnabled && 'settings-mode-card-active')}>
-                  <label className="settings-mode-choice">
-                    <input
-                      checked={!lifeModeEnabled}
-                      disabled={!self?.is_host || busyKey !== null}
-                      name="fault-mode"
-                      onChange={() => void handleLifeModeToggle(false)}
-                      type="radio"
-                    />
-                    <span>
-                      <strong>经典模式</strong>
-                      <small>拦截2次获胜，失误达到上限则败北</small>
-                    </span>
-                  </label>
+              <div className="settings-section discussion-settings">
+                <strong>游戏流程</strong>
+                <div className="settings-mode-grid" role="radiogroup" aria-label="游戏流程">
+                  {([
+                    { mode: 'parallel', title: '按阶段进行', detail: '加密后，双方先解密己方线索，再拦截对方线索' },
+                    { mode: 'sequential', title: '按线索进行', detail: '加密后，双方同时解密与拦截，先红队线索、后蓝队线索（首轮各自解密）' },
+                  ] as const).map(option => <label className={cn('settings-mode-card', 'settings-mode-choice', discussionMode === option.mode && 'settings-mode-card-active')} key={option.mode}>
+                    <input type="radio" name="discussion-mode" checked={discussionMode === option.mode}
+                      disabled={!self.is_host || busyKey !== null} onChange={() => void handleDiscussionSettingsChange(option.mode)} />
+                    <span><strong>{option.title}</strong><small>{option.detail}</small></span>
+                  </label>)}
+                </div>
+              </div>
+              <div className="settings-section">
+                <strong>胜负规则</strong>
+                <div className="settings-mode-grid" role="radiogroup" aria-label="胜负规则">
+                  <section className={cn('settings-mode-card', !lifeModeEnabled && 'settings-mode-card-active')}>
+                    <label className="settings-mode-choice">
+                      <input
+                        checked={!lifeModeEnabled}
+                        disabled={!self?.is_host || busyKey !== null}
+                        name="fault-mode"
+                        onChange={() => void handleLifeModeToggle(false)}
+                        type="radio"
+                      />
+                      <span>
+                        <strong>经典模式</strong>
+                        <small>拦截2次获胜，失误达到上限则败北</small>
+                      </span>
+                    </label>
 
-                  <label className="settings-inline-select">
-                    <span>失误上限</span>
-                    <select
-                      disabled={!self?.is_host || busyKey !== null || lifeModeEnabled}
-                      onChange={(event) => void handleMiscommunicationLimitChange(Number(event.target.value))}
-                      value={miscommunicationLimit}
-                    >
-                      {MISCOMMUNICATION_LIMIT_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option} 次
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </section>
+                    <label className="settings-inline-select">
+                      <span>失误上限</span>
+                      <select
+                        disabled={!self?.is_host || busyKey !== null || lifeModeEnabled}
+                        onChange={(event) => void handleMiscommunicationLimitChange(Number(event.target.value))}
+                        value={miscommunicationLimit}
+                      >
+                        {MISCOMMUNICATION_LIMIT_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option} 次
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </section>
 
-                <section className={cn('settings-mode-card', lifeModeEnabled && 'settings-mode-card-active')}>
-                  <label className="settings-mode-choice">
-                    <input
-                      checked={lifeModeEnabled}
-                      disabled={!self?.is_host || busyKey !== null}
-                      name="fault-mode"
-                      onChange={() => void handleLifeModeToggle(true)}
-                      type="radio"
-                    />
-                    <span>
-                      <strong>生命模式（推荐）</strong>
-                      <small>失误或被拦截扣生命</small>
-                    </span>
-                  </label>
+                  <section className={cn('settings-mode-card', lifeModeEnabled && 'settings-mode-card-active')}>
+                    <label className="settings-mode-choice">
+                      <input
+                        checked={lifeModeEnabled}
+                        disabled={!self?.is_host || busyKey !== null}
+                        name="fault-mode"
+                        onChange={() => void handleLifeModeToggle(true)}
+                        type="radio"
+                      />
+                      <span>
+                        <strong>生命模式（推荐）</strong>
+                        <small>失误或被拦截扣生命</small>
+                      </span>
+                    </label>
 
-                  <label className="settings-inline-select">
-                    <span>生命值</span>
-                    <select
-                      disabled={!self?.is_host || busyKey !== null || !lifeModeEnabled}
-                      onChange={(event) => void handleLifePointsChange(Number(event.target.value))}
-                      value={lifePoints}
-                    >
-                      {LIFE_POINT_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option} 点{option === DEFAULT_LIFE_POINTS ? '（推荐）' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </section>
+                    <label className="settings-inline-select">
+                      <span>生命值</span>
+                      <select
+                        disabled={!self?.is_host || busyKey !== null || !lifeModeEnabled}
+                        onChange={(event) => void handleLifePointsChange(Number(event.target.value))}
+                        value={lifePoints}
+                      >
+                        {LIFE_POINT_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option} 点{option === DEFAULT_LIFE_POINTS ? '（推荐）' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </section>
+                </div>
               </div>
 
               <label className="settings-toggle-row">

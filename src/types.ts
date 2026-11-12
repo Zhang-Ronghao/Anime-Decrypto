@@ -2,7 +2,8 @@ export type Team = 'A' | 'B';
 export type Role = 'encoder' | 'decoder' | 'member';
 export type BangumiCatalogMergeMode = 'intersection' | 'union';
 export type RoomStatus = 'lobby' | 'active' | 'finished';
-export type RoomPhase = 'lobby' | 'word_assignment' | 'encrypt' | 'decode' | 'intercept' | 'result' | 'finished';
+export type RoomPhase = 'lobby' | 'word_assignment' | 'encrypt' | 'decode' | 'intercept' | 'discuss' | 'result' | 'finished';
+export type DiscussionMode = 'parallel' | 'sequential';
 
 export interface BangumiCatalogEntry {
   subjectId: number;
@@ -32,6 +33,10 @@ export interface RoomRecord {
   encrypt_phase_minutes: number;
   decode_phase_minutes: number;
   intercept_phase_minutes: number;
+  /** Missing fields in older snapshots retain the original simultaneous flow. */
+  discussion_mode?: DiscussionMode;
+  discussion_phase_minutes?: number;
+  discussion_team?: Team | null;
   force_phase_timeout_enabled: boolean;
   miscommunication_limit: number;
   life_mode_enabled: boolean;
@@ -153,6 +158,7 @@ export interface RoundSubmissionRecord {
 }
 
 export interface RoomSnapshot {
+  discussionProgress?: { targetTeam: Team; decodeSubmitted: boolean; interceptSubmitted: boolean } | null;
   server_now: string;
   room: RoomRecord;
   players: PlayerRecord[];

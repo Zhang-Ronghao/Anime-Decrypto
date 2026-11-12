@@ -10,6 +10,8 @@
 
 ## 临时同步
 
+轮流讨论模式复用同一答题组件和临时同步机制。房间的 `discuss` 阶段根据当前线索所属队伍，分别映射为各队的解密或拦截任务；切换红蓝线索时旧任务失效，权限与提交者跟随新任务更新。流程见 [轮流讨论与阶段提示](./discussion-mode.md)。
+
 - `guess_draft_update` 与 `guess_draft_request` 复用房间 WebSocket，与正式 `action` 通道分离，没有 HTTP 写入兜底。
 - `worker/guessDrafts.ts` 仅保存独立的实例内存字段，不进入 `RoomState`、DO Storage、D1、action 幂等日志或 Alarm。接收点选时也不递增正式房间 revision。
 - 服务端检查当前任务、玩家身份和权限，只把本队选择发给队员。观战者延续现有双队视角权限，由前端按选中队伍展示。

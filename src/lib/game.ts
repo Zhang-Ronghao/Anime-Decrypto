@@ -292,6 +292,7 @@ export async function updateRoomLobbySettings(
   lifePoints: number,
   allowMidgameJoin: boolean,
   bangumiCharacterExtractEnabled: boolean,
+  discussion?: { mode: 'parallel' | 'sequential'; minutes: number },
 ) {
   await action(roomId, {
     type: 'updateRoomLobbySettings',
@@ -303,13 +304,14 @@ export async function updateRoomLobbySettings(
       lifePoints,
       allowMidgameJoin,
       bangumiCharacterExtractEnabled,
+      discussion,
     },
   });
 }
 
 export async function submitTimeoutDraft(
   roomId: string,
-  phase: 'encrypt' | 'decode' | 'intercept',
+  phase: 'encrypt' | 'decode' | 'intercept' | 'discuss',
   roundNumber: number,
   phaseDeadlineAt: string,
   draft: { kind: 'clues'; values: string[] } | { kind: 'guess'; digits: Array<string | null> },

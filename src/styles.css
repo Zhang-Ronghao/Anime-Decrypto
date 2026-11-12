@@ -1533,6 +1533,55 @@ body:has(.home-shell) {
 .action-hint-guess strong { color: var(--text); }
 .guess-submit-wait { margin: 0; padding: 12px 0; color: var(--muted); font-size: 0.92rem; text-align: center; }
 
+.settings-section { display: grid; gap: 12px; }
+.settings-section + .settings-section { margin-top: 8px; }
+.discussion-settings .settings-mode-card { min-height: 88px; align-content: start; }
+
+.discussion-progress {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+.discussion-progress > span { display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; }
+.discussion-progress b { color: var(--text); font-weight: 800; }
+
+.phase-notice-region {
+  position: fixed;
+  top: clamp(88px, 15vh, 180px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+.phase-notice {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-width: min(300px, calc(100vw - 32px));
+  padding: 20px 32px;
+  border: 2px solid oklch(64% 0.035 260);
+  border-radius: 10px;
+  background: var(--panel-raised);
+  color: var(--text);
+  box-shadow: 0 5px 14px oklch(30% 0.025 260 / 0.22), 0 1px 3px oklch(30% 0.025 260 / 0.12);
+  text-align: center;
+  animation: phase-notice-lifetime 3000ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.phase-notice strong { font-size: 1.25rem; font-weight: 800; }
+.phase-notice span { color: var(--muted); font-size: 0.94rem; }
+@keyframes phase-notice-lifetime {
+  0% { opacity: 0; transform: translateY(-10px); }
+  5%, 95% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .phase-notice { animation: none; }
+}
+
 .guess-collab-options {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

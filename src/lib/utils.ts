@@ -20,7 +20,7 @@ export function normalizeGuess(input: string): string {
   return digits.join('-');
 }
 
-export function phaseLabel(phase: RoomPhase): string {
+export function phaseLabel(phase: RoomPhase, discussionTeam?: Team | null): string {
   switch (phase) {
     case 'lobby':
       return '准备阶段';
@@ -32,6 +32,8 @@ export function phaseLabel(phase: RoomPhase): string {
       return '阶段二：解密';
     case 'intercept':
       return '阶段三：拦截';
+    case 'discuss':
+      return `讨论${discussionTeam === 'B' ? '蓝' : '红'}队线索`;
     case 'result':
       return '回合结算';
     case 'finished':

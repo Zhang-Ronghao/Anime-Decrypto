@@ -1,5 +1,6 @@
 import type { PlayerRecord, RoomRecord, RoundSubmissionRecord, Team } from '../types';
 import type { GuessDraftDigits, GuessDraftTask } from '../types/guessDraft';
+import { guessPhaseForTeam } from './discussion';
 
 export function isGuessDraftDigits(value: unknown): value is GuessDraftDigits {
   return Array.isArray(value) && value.length === 3 && value.every((digit) => ['', '1', '2', '3', '4'].includes(digit));
@@ -21,21 +22,21 @@ export function guessDraftTask(
   team: Team,
   now = Date.now(),
 ): GuessDraftTask | null {
-  if (room.status !== 'active' || (room.phase !== 'decode' && room.phase !== 'intercept') ||
-    (room.phase === 'intercept' && room.round_number === 1)) return null;
-  const target = room.phase === 'decode' ? team : team === 'A' ? 'B' : 'A';
+  const phase = guessPhaseForTeam(room, team);
+  if (room.status !== 'active' || !phase || (phase === 'intercept' && room.round_number === 1)) return null;
+  const target = phase === 'decode' ? team : team === 'A' ? 'B' : 'A';
   const submission = submissions.find((entry) => entry.team === target && entry.round_number === room.round_number);
   if (submission?.clues?.length !== 3) return null;
   const submitter = players.find((player) => !player.is_spectator && player.team === team &&
-    player.role === (room.phase === 'decode' ? 'decoder' : 'encoder'));
+    player.role === (phase === 'decode' ? 'decoder' : 'encoder'));
   const expired = room.force_phase_timeout_enabled && room.phase_deadline_at && now >= Date.parse(room.phase_deadline_at);
   return {
-    key: `${room.id}:${submission.id}:${room.phase}:${room.phase_started_at}:${team}:${submitter?.id ?? ''}`,
+    key: `${room.id}:${submission.id}:${phase}:${room.phase_started_at}:${team}:${submitter?.id ?? ''}`,
     roomId: room.id,
     roundNumber: room.round_number,
-    phase: room.phase,
+    phase,
     team,
     submitterId: submitter?.id ?? null,
-    locked: Boolean(expired || (room.phase === 'decode' ? submission.own_guess : submission.intercept_guess)),
+    locked: Boolean(expired || (phase === 'decode' ? submission.own_guess : submission.intercept_guess)),
   };
 }

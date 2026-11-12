@@ -59,7 +59,8 @@ function ChoiceNames({ players, selfId }: { players: PlayerRecord[]; selfId?: st
   </span>;
 }
 
-export function CollaborativeGuessInput({ clues, tone, task, choices, players, selfId, digits, submittedDigits, canEdit, readOnly, busy, connected, onSelect }: {
+export function CollaborativeGuessInput({ clues, tone, task, choices, players, selfId, digits, submittedDigits, canEdit, readOnly, busy, connected, onSelect, clueTeamLabel }: {
+  clueTeamLabel?: string;
   clues: string[];
   tone: 'red' | 'blue';
   task: GuessDraftTask | null;
@@ -85,7 +86,7 @@ export function CollaborativeGuessInput({ clues, tone, task, choices, players, s
     <div className="guess-collab-scroll">
       <div className="action-lines guess-collab-lines">
         <div className="guess-collab-row action-line-head">
-          <span className="action-line-head-cell">{task?.phase === 'intercept' ? '对方线索' : '本队线索'}</span>
+          <span className="action-line-head-cell">{clueTeamLabel ?? (task?.phase === 'intercept' ? '对方线索' : '本队线索')}</span>
           <span className="guess-collab-heading">
             <span className="guess-collab-instruction">{instruction}</span>
             <span className="guess-collab-legend">粗框：{submittedDigits ? '已提交的答案' : <>
