@@ -2204,12 +2204,7 @@ function App() {
     }
   }, [submittedInterceptGuess]);
 
-  const myTeamCluesSubmitted = Boolean(myTeamSubmission?.clues);
-  const opponentCluesSubmitted = Boolean(opponentSubmission?.clues);
-  const myTeamDecodeSubmitted = Boolean(myTeamSubmission?.own_guess);
-  const opponentDecodeSubmitted = snapshot?.submissionProgress?.[opponentTeam] === true;
-  const myTeamInterceptSubmitted = Boolean(opponentSubmission?.intercept_guess);
-  const opponentInterceptSubmitted = snapshot?.submissionProgress?.[opponentTeam] === true;
+  const myTeamTaskSubmitted = snapshot?.submissionProgress?.[myTeam] === true;
   const encryptCodeDigits = myVisibleCode?.split('-') ?? [];
   const encryptRows = [0, 1, 2].map((index) => {
     const digit = encryptCodeDigits[index] ?? '';
@@ -2233,47 +2228,37 @@ function App() {
             : snapshot?.room.phase === 'finished'
               ? '游戏已结束'
               : '等待其他玩家';
-  const actionHint = isWordAssignmentPhase
-    ? canEditWordAssignment
-      ? '填好 4 个词语后确认'
-      : myTeamConfirmed
-        ? '本队已确认，等待另一队加密者确认词语'
-        : canViewWordAssignment
-          ? '实时查看本队加密者正在设置的词语'
-          : '等待本队加密者确认词语'
-    : canSubmitClues
-      ? '按密码顺序填写 3 条线索'
-      : snapshot?.room.phase === 'encrypt'
-        ? myTeamCluesSubmitted
-          ? opponentCluesSubmitted
-            ? '双方线索已提交，等待进入解密阶段'
-            : '本队线索已提交，等待另一队加密者提交线索'
-          : '等待本队加密者提交线索'
-      : canSubmitDecode
-        ? '根据线索选择 3 位数字，组成解密答案'
-        : canSubmitDecodeFeedback
-          ? '可选择词语编号给解密者参考'
-        : isDecodePhase
-          ? myTeamDecodeSubmitted
-            ? opponentDecodeSubmitted
-              ? '双方解密答案已提交，等待进入拦截阶段'
-              : '本队解密答案已提交，等待另一队解密者提交'
-                : '等待本队解密者提交'
-          : canSubmitIntercept
-            ? '根据对方线索进行拦截'
-            : canSubmitInterceptFeedback
-              ? '可选择词语编号给拦截者参考'
-            : isInterceptPhase
-              ? myTeamInterceptSubmitted
-                ? opponentInterceptSubmitted
-                  ? '双方拦截答案已提交，等待公布结果'
-                  : '本队拦截答案已提交，等待另一队拦截者提交拦截答案'
-                : '等待本队拦截者提交拦截答案'
-              : snapshot?.room.phase === 'result'
-                ? '查看本轮结算'
-                : snapshot?.room.phase === 'finished'
-                  ? '本局结束，可重新开始'
-                  : '等待房间同步';
+  const effectiveActionHint = (() => {
+    // Public progress remains available when a spectator cannot see the submitted answer.
+    if (myTeamTaskSubmitted) return null;
+    if (forcedPhaseExpired && (isCurrentEncryptPhase || playerGuessPhase)) return '时间已到，等待同步';
+    if (isFirstRoundInterceptSkip) return null;
+
+    if (isWordAssignmentPhase) {
+      if (canEditWordAssignment) return '填好 4 个词语后确认';
+      if (canSubmitTeamWordFeedback && (
+        submittedTeamWordFeedbackDraft.some((value) => value === null) || teamWordFeedbackDraftChanged
+      )) return '请反馈是否熟悉这些词语';
+      return null;
+    }
+    if (isCurrentEncryptPhase) return canSubmitClues ? '按密码顺序填写 3 条线索' : null;
+    if (!playerGuessPhase) return null;
+
+    if (collaborativeGuessTask) {
+      if (collaborativeGuessTask.locked) return null;
+      if (!guessSubmitter) return `等待本队${guessSubmitterRole}就位`;
+      if (isSpectator) return null;
+      if (isDecodePhase && self?.role === 'encoder') return '本轮仅可查看队友选择';
+      if (isGuessSubmitter) return '由你提交最终答案';
+      return <>由「<GuessSubmitterName name={guessSubmitter.player_name} />」提交答案</>;
+    }
+
+    if (isSpectator) return null;
+    if (canSubmitDecode || canSubmitIntercept) return '选择线索对应的词语编号';
+    if (canSubmitDecodeFeedback || canSubmitInterceptFeedback) return '选择编号，提供建议';
+    if (isDecodePhase && self?.role === 'encoder') return '本轮仅可查看队友选择';
+    return null;
+  })();
   const progressText =
     discussionTeam ? '讨论进度' : snapshot?.room.phase === 'word_assignment'
       ? '词语确认'
@@ -2288,19 +2273,6 @@ function App() {
               : snapshot?.room.phase === 'finished'
                 ? '对局已结束'
                 : '等待房间同步';
-  const collaborativeGuessHint = !collaborativeGuessTask ? null :
-    collaborativeGuessTask.locked ? discussionTeam && (isDecodePhase ? submittedDecodeGuess : submittedInterceptGuess)
-      ? '本队答案已提交，等待另一方提交' : null :
-    !isSpectator && isDecodePhase && self?.role === 'encoder' ? '你是本轮加密者，仅可查看队友选择' :
-    isGuessSubmitter ? `你是${guessSubmitterRole}，负责提交最终答案` :
-    !guessSubmitter ? `等待本队${guessSubmitterRole}就位` : <>
-      由<strong>{guessSubmitterRole}·<GuessSubmitterName name={guessSubmitter.player_name} /></strong>提交最终答案
-    </>;
-  const effectiveActionHint = isFirstRoundInterceptSkip
-    ? canSkipFirstIntercept
-      ? '第一轮拦截阶段无需提交，改由房主点击跳过'
-      : '第一轮拦截阶段无需操作，等待房主跳过'
-    : collaborativeGuessHint ?? actionHint;
   const effectiveProgressText = isFirstRoundInterceptSkip ? '等待房主跳过第一轮拦截' : progressText;
   const centerStatusText =
     snapshot?.room.phase === 'result'
@@ -4167,7 +4139,9 @@ function App() {
                   </span>
                   <span>{actionTitle}</span>
                 </h2>
-                <p className={cn('action-hint', collaborativeGuessTask && 'action-hint-guess')}>{effectiveActionHint}</p>
+                {effectiveActionHint && (
+                  <p className={cn('action-hint', collaborativeGuessTask && 'action-hint-guess')}>{effectiveActionHint}</p>
+                )}
               </div>
 
               <div className="action-header-actions">
@@ -4221,7 +4195,7 @@ function App() {
                   </button>
                 ) : collaborativeGuessTask && !isSpectator ? (
                   <p className="guess-submit-wait" role="status">
-                    {(isDecodePhase ? myTeamDecodeSubmitted : myTeamInterceptSubmitted) ? '本队答案已提交' :
+                    {myTeamTaskSubmitted ? '本队答案已提交' :
                       collaborativeGuessTask.locked ? '本轮答题已结束' : guessSubmitter ? <>
                         等待<GuessSubmitterName name={guessSubmitter.player_name} />提交
                       </> : `等待本队${guessSubmitterRole}就位`}
