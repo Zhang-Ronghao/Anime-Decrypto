@@ -35,7 +35,7 @@ export function phaseLabel(phase: RoomPhase, discussionTeam?: Team | null): stri
     case 'discuss':
       return `讨论${discussionTeam === 'B' ? '蓝' : '红'}队线索`;
     case 'result':
-      return '回合结算';
+      return '本轮结算';
     case 'finished':
       return '游戏结束';
     default:
@@ -48,7 +48,7 @@ export function isEncryptPhase(phase: RoomPhase): boolean {
 }
 
 export function teamName(team: Team): string {
-  return `${team} 队`;
+  return team === 'A' ? '红队' : '蓝队';
 }
 
 export function roleName(role: Role): string {
@@ -57,7 +57,7 @@ export function roleName(role: Role): string {
   }
 
   if (role === 'decoder') {
-    return '解码者';
+    return '解密者';
   }
 
   return '队员';

@@ -28,6 +28,7 @@ import { roomSubmissionProgress } from './roomProgress';
 import { GuessDrafts } from './guessDrafts';
 import { discussionTarget, guessPhaseForTeam } from '../src/lib/discussion';
 import { DEFAULT_BANGUMI_POPULAR_CATALOG } from '../src/config/bangumi';
+import { teamName } from '../src/lib/utils';
 
 export interface Env {
   DB: D1Database;
@@ -544,7 +545,7 @@ function codeText(): string {
 
 function assertGuess(value: string, label: string): string {
   if (!/^[1-4]-[1-4]-[1-4]$/.test(value)) {
-    throw new HttpError(400, `${label}密码格式应为 1-2-3。`);
+    throw new HttpError(400, `${label}答案格式应为 1-2-3。`);
   }
 
   return value;
@@ -838,7 +839,7 @@ function compressTeamSeats(state: RoomState): void {
 function encoderFor(state: RoomState, team: Team): PlayerRecord {
   const player = state.players.find((entry) => entry.team === team && entry.role === 'encoder' && !entry.is_spectator);
   if (!player) {
-    throw new HttpError(409, `${team} 队缺少加密/拦截者。`);
+    throw new HttpError(409, `${teamName(team)}缺少加密/拦截者。`);
   }
 
   return player;
@@ -847,7 +848,7 @@ function encoderFor(state: RoomState, team: Team): PlayerRecord {
 function submissionFor(state: RoomState, team: Team, roundNumber = state.room.round_number): RoundSubmissionRecord {
   const submission = state.submissions.find((entry) => entry.team === team && entry.round_number === roundNumber);
   if (!submission) {
-    throw new HttpError(409, '当前回合状态不存在。');
+    throw new HttpError(409, '本轮状态不存在。');
   }
 
   return submission;
@@ -856,7 +857,7 @@ function submissionFor(state: RoomState, team: Team, roundNumber = state.room.ro
 function codeFor(state: RoomState, team: Team, roundNumber = state.room.round_number): string {
   const code = state.roundCodes.find((entry) => entry.team === team && entry.round_number === roundNumber)?.code;
   if (!code) {
-    throw new HttpError(409, '当前回合密码不存在。');
+    throw new HttpError(409, '本轮密码不存在。');
   }
 
   return code;
@@ -2206,7 +2207,7 @@ export class RoomDurableObject {
     }
     assertBeforeForcedDeadline(current.room);
     if (self.team !== team || self.role !== 'decoder') {
-      throw new HttpError(403, '只有本队解码者可以提交解密答案。');
+      throw new HttpError(403, '只有本队解密者可以提交解密答案。');
     }
 
     const submission = submissionFor(current, team);

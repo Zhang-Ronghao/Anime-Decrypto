@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { isRoomChatPhase, visibleRoomChatMessages } from '../lib/roomChat';
+import { teamName } from '../lib/utils';
 import type { PlayerRecord, RoomPhase, Team } from '../types';
 import {
   ROOM_CHAT_MAX_TEXT_CODE_POINTS,
@@ -60,10 +61,6 @@ function formatMessageTime(timestamp: number): string {
 
 function teamTone(team: Team): 'red' | 'blue' {
   return team === 'A' ? 'red' : 'blue';
-}
-
-function teamName(team: Team): string {
-  return team === 'A' ? '红队' : '蓝队';
 }
 
 function chatContext(options: {

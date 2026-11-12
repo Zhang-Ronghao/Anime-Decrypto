@@ -45,7 +45,7 @@ Anime Decrypto 是一个基于 React 和 Cloudflare 的网页多人「动漫高�
 - 支持 4、6、8、10、12、14 人座位。
 - 支持观战、中途加入、清空座位、房主转让、踢人、解散房间。
 - 支持身份轮换、阶段倒计时、失误上限、生命模式、重新开始和终止游戏。
-- 支持 Bangumi 用户/目录词库、热门榜单、角色提取、词语反馈、猜测反馈和回合记录。
+- 支持 Bangumi 用户/目录词库、热门榜单、角色提取、词语反馈、猜测反馈和轮次记录。
 - 隐藏信息由 Worker/Durable Object 根据玩家身份过滤，不依赖前端隐藏。
 - 房间内操作优先走 WebSocket action，HTTP 只作为创建/加入/查询/兜底通道，以降低 Cloudflare Worker request 数量。
 
@@ -101,7 +101,7 @@ npm run dev
 Cloudflare Workers 免费额度按 Worker 入站 request 统计。项目当前尽量让正常一局游戏不依赖高频 HTTP：
 
 - 创建房间、加入房间、会话初始化仍走 HTTP。
-- 进入房间后，选座、开始游戏、提交线索、猜密码、推进回合等 action 优先走 WebSocket message。
+- 进入房间后，选座、开始游戏、提交线索、猜密码、推进轮次等 action 优先走 WebSocket message。
 - WebSocket action 有 `clientActionId` ack；连接不可用或超时才回退到原来的 HTTP `/action`。
 - Durable Object 处理 action 后直接通过 WebSocket 广播按玩家过滤后的 snapshot，前端正常情况下不轮询。
 - snapshot GET 只用于初始化、弱网兜底、前台恢复、完整历史等少数场景。

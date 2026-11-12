@@ -1,4 +1,5 @@
 import type { RoomSnapshot, Team } from '../types';
+import { teamName } from '../lib/utils';
 
 export function TeamSubmissionProgress({ progress, fallback }: {
   progress: RoomSnapshot['submissionProgress'];
@@ -9,7 +10,7 @@ export function TeamSubmissionProgress({ progress, fallback }: {
   return (
     <div className="team-submission-progress" role="group" aria-label="提交进度" aria-live="polite" aria-atomic="true">
       {(['A', 'B'] as Team[]).map((team) => {
-        const name = team === 'A' ? '红队' : '蓝队';
+        const name = teamName(team);
         const submitted = progress[team];
         const label = `${name}：${submitted ? '已提交' : '待提交'}`;
         return (

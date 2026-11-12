@@ -41,12 +41,12 @@ export function RoomCodeDisplay({ code, className, invite = false }: { code: str
     }
   }
 
-  const toggleLabel = hidden ? '显示房间号' : '隐藏房间号';
+  const toggleLabel = hidden ? '显示房间码' : '隐藏房间码';
   const copyLabel = copyState === 'copied' ? '已复制邀请链接' : copyState === 'failed' ? '复制失败，点击重试' : '复制邀请链接';
 
   return (
     <p className={`${className} room-code-display`}>
-      <span>房间号</span>
+      <span>房间码</span>
       <span className="room-code-value" aria-label={hidden ? '房间码已隐藏' : undefined}>
         {hidden ? '••••••' : code}
       </span>

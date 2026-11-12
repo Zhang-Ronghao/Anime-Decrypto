@@ -66,6 +66,7 @@ import {
   otherTeam,
   phaseLabel,
   roleName,
+  teamName as displayTeamName,
   teamOrder,
 } from './lib/utils';
 import type {
@@ -494,10 +495,6 @@ function lifeFor(snapshot: RoomSnapshot, team: Team): TeamLife {
   const lifePoints = lifePointsFromRoom(snapshot.room);
   const damage = score.miscomms + opponentScore.intercepts;
   return { remaining: lifePoints - damage, damage };
-}
-
-function displayTeamName(team: Team): string {
-  return team === 'A' ? '红队' : '蓝队';
 }
 
 function teamTone(team: Team): 'red' | 'blue' {
@@ -2253,25 +2250,25 @@ function App() {
             : '本队线索已提交，等待另一队加密者提交线索'
           : '等待本队加密者提交线索'
       : canSubmitDecode
-        ? '根据线索选择 3 位解码'
+        ? '根据线索选择 3 位数字，组成解密答案'
         : canSubmitDecodeFeedback
-          ? '可选择任意线索数字给解码者参考'
+          ? '可选择词语编号给解密者参考'
         : isDecodePhase
           ? myTeamDecodeSubmitted
             ? opponentDecodeSubmitted
-              ? '双方解码已提交，等待进入截码阶段'
-              : '本队解码已提交，等待另一队解码者提交'
-                : '等待本队解码者提交'
+              ? '双方解密答案已提交，等待进入拦截阶段'
+              : '本队解密答案已提交，等待另一队解密者提交'
+                : '等待本队解密者提交'
           : canSubmitIntercept
             ? '根据对方线索进行拦截'
             : canSubmitInterceptFeedback
-              ? '可选择任意线索数字给拦截者参考'
+              ? '可选择词语编号给拦截者参考'
             : isInterceptPhase
               ? myTeamInterceptSubmitted
                 ? opponentInterceptSubmitted
-                  ? '双方截码已提交，等待公布结果'
-                  : '本队截码已提交，等待另一队拦截者提交截码'
-                : '等待本队拦截者提交截码'
+                  ? '双方拦截答案已提交，等待公布结果'
+                  : '本队拦截答案已提交，等待另一队拦截者提交拦截答案'
+                : '等待本队拦截者提交拦截答案'
               : snapshot?.room.phase === 'result'
                 ? '查看本轮结算'
                 : snapshot?.room.phase === 'finished'
@@ -3409,7 +3406,7 @@ function App() {
     const team = self.team;
 
     if (clueForm.some((value) => !value.trim())) {
-      setActionError('需要填写 3 条加密结果');
+      setActionError('需要填写 3 条线索');
       return;
     }
 
@@ -3428,7 +3425,7 @@ function App() {
 
     const guess = normalizeGuess(USE_COLLABORATIVE_GUESS_INPUT ? liveGuessValue : decodeGuess);
     if (guess.length !== 5) {
-      setActionError('解密密码格式应为 1-2-3');
+      setActionError('解密答案格式应为 1-2-3');
       return;
     }
 
@@ -3447,7 +3444,7 @@ function App() {
 
     const guess = normalizeGuess(USE_COLLABORATIVE_GUESS_INPUT ? liveGuessValue : interceptGuess);
     if (guess.length !== 5) {
-      setActionError('拦截密码格式应为 1-2-3');
+      setActionError('拦截答案格式应为 1-2-3');
       return;
     }
 
@@ -4161,7 +4158,7 @@ function App() {
               <div className="action-header-card">
                 <div className="identity-banner">
                   <span className={cn('team-badge', `team-badge-${teamTone(myTeam)}`)}>{displayTeamName(myTeam)}</span>
-                  {isSpectator ? <span className="identity-role">观战视角</span> : self.role ? <span className="identity-role">{collaborativeGuessTask && self.role === 'decoder' ? '解密者' : collaborativeGuessTask && isInterceptPhase && self.role === 'encoder' ? '拦截者' : roleName(self.role)}</span> : null}
+                  {isSpectator ? <span className="identity-role">观战视角</span> : self.role ? <span className="identity-role">{collaborativeGuessTask && isInterceptPhase && self.role === 'encoder' ? '拦截者' : roleName(self.role)}</span> : null}
                   {self.is_host ? <span className="identity-host-badge">房主</span> : null}
                 </div>
                 <h2 className="action-title-with-phase">
@@ -4204,7 +4201,7 @@ function App() {
                   </button>
                 ) : canSubmitDecode ? (
                   <button className="primary-button" disabled={busyKey !== null || (USE_COLLABORATIVE_GUESS_INPUT && !guessDraft.digits.every(Boolean))} onClick={() => void handleDecodeSubmit()} type="button">
-                    {USE_COLLABORATIVE_GUESS_INPUT ? '提交解密答案' : '提交解码'}
+                    提交解密答案
                   </button>
                 ) : canSkipFirstIntercept ? (
                   <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleSkipFirstIntercept()} type="button">
@@ -4212,11 +4209,11 @@ function App() {
                   </button>
                 ) : canSubmitIntercept ? (
                   <button className="primary-button" disabled={busyKey !== null || (USE_COLLABORATIVE_GUESS_INPUT && !guessDraft.digits.every(Boolean))} onClick={() => void handleInterceptSubmit()} type="button">
-                    {USE_COLLABORATIVE_GUESS_INPUT ? '提交拦截答案' : '提交截码'}
+                    提交拦截答案
                   </button>
                 ) : snapshot.room.phase === 'result' && self.is_host ? (
                   <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleAdvanceRound()} type="button">
-                    下一回合
+                    下一轮
                   </button>
                 ) : snapshot.room.phase === 'finished' && self.is_host ? (
                   <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
