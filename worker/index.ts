@@ -40,6 +40,8 @@ interface RoomState {
   room: RoomRecord;
   players: PlayerRecord[];
   teamWords: TeamWordsRecord[];
+  /** Server-only draw history shared by both teams for the current pool cycle. */
+  wordDrawHistory?: string[];
   teamWordFeedbackRequests: TeamWordFeedbackRequestRecord[];
   teamWordFeedbackResponses: TeamWordFeedbackResponseRecord[];
   roundGuessFeedbackResponses: RoundGuessFeedbackResponseRecord[];
@@ -947,19 +949,36 @@ function determineWinner(room: RoomRecord): { gameFinished: boolean; team: Team 
   return { gameFinished: true, team: aWin ? 'A' : 'B' };
 }
 
-function drawTeamSlots(state: RoomState, team: Team): TeamWordSlot[] {
-  const ownRecord = teamWordRecord(state, team);
-  const blocked = new Set([
-    ...teamWordRecord(state, otherTeam(team)).words.filter(Boolean),
-    ...ownRecord.seen_words.filter(Boolean),
-  ]);
+function drawWordTexts(state: RoomState, count: number): string[] {
   const catalogPool = state.bangumiCatalogEntries.map((entry) => entry.title);
   const sourcePool = catalogPool.length > 0 ? catalogPool : DEFAULT_WORD_POOL;
-  const picked = shuffle(sourcePool.filter((word) => !blocked.has(word))).slice(0, 4);
-  if (picked.length < 4) {
-    throw new HttpError(409, '可用词语不足，请手动填写或重新载入词库。');
+  const occupied = new Set(state.teamWords.flatMap((record) => record.words).filter(Boolean));
+  const available = Array.from(new Set(sourcePool)).filter((word) => word && !occupied.has(word));
+  if (available.length < count) {
+    throw new HttpError(409, '词库中没有足够可替换的词语，请手动填写或扩大词库。');
   }
 
+  // Older snapshots only tracked each team's history; merge it on the first draw.
+  const seen = new Set(state.wordDrawHistory ?? state.teamWords.flatMap((record) => record.seen_words));
+  let remaining = shuffle(available.filter((word) => !seen.has(word)));
+  const picked: string[] = [];
+  while (picked.length < count) {
+    if (remaining.length === 0) {
+      // Finish the old cycle before refilling, even when a four-word draw straddles it.
+      seen.clear();
+      remaining = shuffle(available.filter((word) => !picked.includes(word)));
+    }
+    const word = remaining.pop()!;
+    picked.push(word);
+    seen.add(word);
+  }
+  state.wordDrawHistory = Array.from(seen);
+  return picked;
+}
+
+function drawTeamSlots(state: RoomState, team: Team): TeamWordSlot[] {
+  const ownRecord = teamWordRecord(state, team);
+  const picked = drawWordTexts(state, 4);
   const slots = picked.map((word) => {
     const entry = state.bangumiCatalogEntries.find((item) => item.title === word);
     return {
@@ -982,17 +1001,7 @@ function drawTeamWordSlot(state: RoomState, team: Team, index: number): TeamWord
   }
 
   const ownRecord = teamWordRecord(state, team);
-  const blocked = new Set([
-    ...teamWordRecord(state, otherTeam(team)).words.filter(Boolean),
-    ...ownRecord.seen_words.filter(Boolean),
-    ...ownRecord.words.filter((word, wordIndex) => wordIndex !== index && Boolean(word)),
-  ]);
-  const catalogPool = state.bangumiCatalogEntries.map((entry) => entry.title);
-  const sourcePool = catalogPool.length > 0 ? catalogPool : DEFAULT_WORD_POOL;
-  const picked = shuffle(sourcePool.filter((word) => !blocked.has(word)))[0];
-  if (!picked) {
-    throw new HttpError(409, '可用词语不足，请手动填写或重新载入词库。');
-  }
+  const [picked] = drawWordTexts(state, 1);
 
   const entry = state.bangumiCatalogEntries.find((item) => item.title === picked);
   const slot = {
@@ -2005,6 +2014,7 @@ export class RoomDurableObject {
     compressTeamSeats(current);
     assignRoles(current, 1);
     current.teamWords = [createTeamWords(current.room.id, 'A'), createTeamWords(current.room.id, 'B')];
+    current.wordDrawHistory = [];
     current.roundCodes = [];
     current.submissions = [];
     current.teamWordFeedbackRequests = [];
@@ -2508,6 +2518,7 @@ export class RoomDurableObject {
     current.room.team_a_words_confirmed = false;
     current.room.team_b_words_confirmed = false;
     current.teamWords = [];
+    current.wordDrawHistory = [];
     current.roundCodes = [];
     current.submissions = [];
     current.teamWordFeedbackRequests = [];
