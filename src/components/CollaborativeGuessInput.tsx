@@ -79,7 +79,7 @@ export function CollaborativeGuessInput({ clues, tone, task, choices, players, s
   const submitterRole = task?.phase === 'intercept' ? '拦截者' : '解密者';
   const isSubmitter = Boolean(task?.submitterId && task.submitterId === selfId);
   const instruction = submittedDigits ? '本队已提交' : task?.locked ? '本轮答题已结束' :
-    readOnly ? '队友建议' : isSubmitter ? '点选编号，暂定答案' : '点选编号，提供建议';
+    readOnly ? '查看队友选择的词语编号' : isSubmitter ? '选择线索对应的词语编号' : '选择对应词语编号，提供建议';
   const status = submittedDigits ? `已提交 ${submittedDigits.join('－')}` : task?.locked ? '当前答题已结束' :
     !connected ? '连接恢复中，暂时无法点选' : null;
   return <div className={`collaborative-guess collaborative-guess-${tone}`}>
