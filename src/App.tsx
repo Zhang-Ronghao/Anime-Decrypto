@@ -2231,7 +2231,11 @@ function App() {
               : '等待其他玩家';
   const effectiveActionHint = (() => {
     // Public progress remains available when a spectator cannot see the submitted answer.
-    if (myTeamTaskSubmitted) return null;
+    if (myTeamTaskSubmitted) {
+      if (!playerGuessPhase) return null;
+      const submittedGuess = isDecodePhase ? submittedDecodeGuess : submittedInterceptGuess;
+      return !isSpectator && submittedGuess ? `已提交：${submittedGuess}` : `${displayTeamName(myTeam)}已提交`;
+    }
     if (forcedPhaseExpired && (isCurrentEncryptPhase || playerGuessPhase)) return '时间已到，等待同步';
     if (isFirstRoundInterceptSkip) return null;
 
@@ -4139,9 +4143,9 @@ function App() {
                   </span>
                   <span>{actionTitle}</span>
                 </h2>
-                {effectiveActionHint && (
-                  <p className={cn('action-hint', collaborativeGuessTask && 'action-hint-guess')}>{effectiveActionHint}</p>
-                )}
+                <p className={cn('action-hint', collaborativeGuessTask && 'action-hint-guess')} role="status" aria-atomic="true">
+                  {effectiveActionHint}
+                </p>
               </div>
 
               <div className="action-header-actions">
@@ -4192,17 +4196,6 @@ function App() {
                 ) : snapshot.room.phase === 'finished' && self.is_host ? (
                   <button className="primary-button" disabled={busyKey !== null} onClick={() => void handleRestartRoom()} type="button">
                     返回房间大厅
-                  </button>
-                ) : collaborativeGuessTask && !isSpectator ? (
-                  <p className="guess-submit-wait" role="status">
-                    {myTeamTaskSubmitted ? '本队答案已提交' :
-                      collaborativeGuessTask.locked ? '本轮答题已结束' : guessSubmitter ? <>
-                        等待<GuessSubmitterName name={guessSubmitter.player_name} />提交
-                      </> : `等待本队${guessSubmitterRole}就位`}
-                  </p>
-                ) : !isSpectator ? (
-                  <button className="primary-button" disabled type="button">
-                    等待中
                   </button>
                 ) : null}
               </div>
@@ -4496,6 +4489,7 @@ function App() {
                     selfId={self.id}
                     digits={guessDraft.digits}
                     submittedDigits={isDecodePhase ? myTeamSubmission?.own_guess ? displayedDecodeDigits : null : opponentSubmission?.intercept_guess ? displayedInterceptDigits : null}
+                    submitted={myTeamTaskSubmitted}
                     clueTeamLabel={discussionTeam ? `${displayTeamName(discussionTeam)}线索` : undefined}
                     canEdit={guessDraft.canEdit && !forcedPhaseExpired}
                     readOnly={isGuessReadOnly}

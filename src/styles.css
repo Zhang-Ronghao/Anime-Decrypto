@@ -1033,6 +1033,7 @@ body:has(.home-shell) {
 
 .action-hint {
   max-width: 24ch;
+  min-height: 1.45em;
   margin: 0;
   color: var(--muted);
   font-weight: 700;
@@ -1511,6 +1512,7 @@ body:has(.home-shell) {
 .guess-collab-instruction { flex: 0 0 auto; }
 
 .guess-collab-legend {
+  margin-left: auto;
   text-align: right;
   min-width: 0;
 }
@@ -1526,7 +1528,6 @@ body:has(.home-shell) {
 
 .action-hint-guess { max-width: 100%; }
 .action-hint-guess strong { color: var(--text); }
-.guess-submit-wait { margin: 0; padding: 12px 0; color: var(--muted); font-size: 0.92rem; text-align: center; }
 
 .settings-section { display: grid; gap: 12px; }
 .settings-section + .settings-section { margin-top: 8px; }

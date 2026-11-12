@@ -59,7 +59,7 @@ function ChoiceNames({ players, selfId }: { players: PlayerRecord[]; selfId?: st
   </span>;
 }
 
-export function CollaborativeGuessInput({ clues, tone, task, choices, players, selfId, digits, submittedDigits, canEdit, readOnly, busy, connected, onSelect, clueTeamLabel }: {
+export function CollaborativeGuessInput({ clues, tone, task, choices, players, selfId, digits, submittedDigits, submitted, canEdit, readOnly, busy, connected, onSelect, clueTeamLabel }: {
   clueTeamLabel?: string;
   clues: string[];
   tone: 'red' | 'blue';
@@ -69,6 +69,7 @@ export function CollaborativeGuessInput({ clues, tone, task, choices, players, s
   selfId?: string;
   digits: GuessDraftDigits;
   submittedDigits: string[] | null;
+  submitted: boolean;
   canEdit: boolean;
   readOnly: boolean;
   busy: boolean;
@@ -78,20 +79,22 @@ export function CollaborativeGuessInput({ clues, tone, task, choices, players, s
   const submitter = players.find(player => player.id === task?.submitterId);
   const submitterRole = task?.phase === 'intercept' ? '拦截者' : '解密者';
   const isSubmitter = Boolean(task?.submitterId && task.submitterId === selfId);
-  const instruction = submittedDigits ? '本队已提交' : task?.locked ? '本轮答题已结束' :
+  const locked = submitted || Boolean(submittedDigits) || task?.locked;
+  const instruction = locked ? null :
     readOnly ? '查看队友选择的词语编号' : isSubmitter ? '选择线索对应的词语编号' : '选择对应词语编号，提供建议';
-  const status = submittedDigits ? `已提交 ${submittedDigits.join('－')}` : task?.locked ? '当前答题已结束' :
-    !connected ? '连接恢复中，暂时无法点选' : null;
+  const status = !connected && !locked ? '连接恢复中，暂时无法点选' : null;
   return <div className={`collaborative-guess collaborative-guess-${tone}`}>
     <div className="guess-collab-scroll">
       <div className="action-lines guess-collab-lines">
         <div className="guess-collab-row action-line-head">
           <span className="action-line-head-cell">{clueTeamLabel ?? (task?.phase === 'intercept' ? '对方线索' : '本队线索')}</span>
           <span className="guess-collab-heading">
-            <span className="guess-collab-instruction">{instruction}</span>
-            <span className="guess-collab-legend">粗框：{submittedDigits ? '已提交的答案' : <>
-              {isSubmitter ? '你' : <>{submitterRole}·<GuessSubmitterName name={submitter?.player_name} /></>}暂定提交的答案
-            </>}</span>
+            {instruction && <span className="guess-collab-instruction">{instruction}</span>}
+            {(submittedDigits || !locked) && (
+              <span className="guess-collab-legend">粗框：{submittedDigits ? '已提交的答案' : <>
+                {isSubmitter ? '你' : <>{submitterRole}·<GuessSubmitterName name={submitter?.player_name} /></>}暂定提交的答案
+              </>}</span>
+            )}
           </span>
         </div>
         {clues.map((clue, index) => <div className="guess-collab-row" key={index}>
