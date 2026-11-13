@@ -9,9 +9,10 @@ type AuthChangeCallback = (_event: 'SIGNED_IN', session: Session | null) => void
 const listeners = new Set<AuthChangeCallback>();
 let cachedSession: Session | null = null;
 const SESSION_STORAGE_KEY = 'decrypto-session-id';
+const SESSION_TIMEOUT_MS = 10_000;
 
 function apiBase(): string {
-  return (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+  return (import.meta.env?.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 }
 
 export const isBackendConfigured = true;
@@ -54,19 +55,35 @@ export function getSessionIdForRequest(): string {
 
 export async function ensureSession(): Promise<Session | null> {
   const sessionId = getStoredSessionId();
-  const response = await fetch(`${apiBase()}/api/session?session=${encodeURIComponent(sessionId)}`, {
-    credentials: 'include',
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SESSION_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new Error('Cloudflare 匿名会话创建失败。');
+  try {
+    const response = await fetch(`${apiBase()}/api/session?session=${encodeURIComponent(sessionId)}`, {
+      credentials: 'include',
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error('匿名会话创建失败，请稍后重试');
+    }
+
+    const session = (await response.json()) as Session;
+    cachedSession = session;
+    for (const listener of listeners) {
+      listener('SIGNED_IN', session);
+    }
+
+    return session;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('连接超时，请检查网络或服务是否正常后重试');
+    }
+    if (error instanceof TypeError) {
+      throw new Error('无法连接服务，请检查网络或服务是否启动');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const session = (await response.json()) as Session;
-  cachedSession = session;
-  for (const listener of listeners) {
-    listener('SIGNED_IN', session);
-  }
-
-  return session;
 }

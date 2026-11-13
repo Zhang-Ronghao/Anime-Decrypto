@@ -7,9 +7,10 @@ import { GrowingGameInput } from './components/GrowingGameInput';
 import { CollaborativeGuessInput, GuessSubmitterName } from './components/CollaborativeGuessInput';
 import { PhaseTransitionNotice } from './components/PhaseTransitionNotice';
 import { TeamSubmissionProgress } from './components/TeamSubmissionProgress';
+import { TeamWordSelectionDialog } from './components/TeamWordSelectionDialog';
 import { discussionTarget, guessPhaseForTeam } from './lib/discussion';
 import { HIDE_TOP_TEAM_SCORES, USE_COLLABORATIVE_GUESS_INPUT } from './config/features';
-import { DEFAULT_BANGUMI_POPULAR_CATALOG } from './config/bangumi';
+import { BANGUMI_POPULAR_SOURCE_DATE, DEFAULT_BANGUMI_POPULAR_CATALOG } from './config/bangumi';
 import { useGuessDrafts } from './hooks/useGuessDrafts';
 import type { GuessDraftClientEvent, GuessDraftStateEvent } from './types/guessDraft';
 import {
@@ -22,7 +23,6 @@ import {
   extractBangumiCharacters,
   fetchRoomSnapshot,
   getRoomJoinStatus,
-  generateTeamWords,
   joinRoom,
   joinAsSpectator,
   joinMidgameRoom,
@@ -41,6 +41,7 @@ import {
   submitOwnGuess,
   submitRoundGuessFeedbackBatch,
   submitTeamWordFeedbackBatch,
+  submitTeamWordSelection,
   submitTimeoutDraft,
   subscribeToSelfNotifications,
   subscribeToRoom,
@@ -144,7 +145,6 @@ const BANGUMI_COLLECTION_TYPE_OPTIONS: BangumiCollectionTypeOption[] = [
   { value: 4, label: '搁置' },
   { value: 5, label: '抛弃' },
 ];
-const BANGUMI_POPULAR_SOURCE_DATE = '2026-05-19';
 const BANGUMI_POPULAR_LIMIT_MIN = 100;
 const BANGUMI_POPULAR_LIMIT_MAX = 3000;
 const BANGUMI_POPULAR_LIMIT_STEP = 100;
@@ -1162,7 +1162,7 @@ function App() {
 
         setSessionUserId(session?.user.id ?? null);
         if (session?.user.id) {
-          await cleanupExpiredRooms().catch(() => undefined);
+          void cleanupExpiredRooms().catch(() => undefined);
         }
 
         const roomCodeFromUrl = new URLSearchParams(window.location.search).get('room');
@@ -1888,6 +1888,9 @@ function App() {
     optimisticLobbySettings?.bangumi_character_extract_enabled ?? (snapshot?.room.bangumi_character_extract_enabled === true);
   const forcePhaseTimeoutEnabled =
     optimisticLobbySettings?.force_phase_timeout_enabled ?? (snapshot?.room.force_phase_timeout_enabled === true);
+  const teamWordSelection = snapshot?.teamWordSelection;
+  const candidateSelectionPending = Boolean(snapshot?.room.phase === 'word_assignment'
+    && teamWordSelection && !teamWordSelection.completed);
   const bangumiPopularRangePercent =
     ((bangumiPopularCatalogLimit - BANGUMI_POPULAR_LIMIT_MIN) / (BANGUMI_POPULAR_LIMIT_MAX - BANGUMI_POPULAR_LIMIT_MIN)) *
     100;
@@ -1965,7 +1968,7 @@ function App() {
   const canToggleSourceTitles = canOmitSourceTitles || canRestoreSourceTitles;
   const showsDualWordColumns = teamWordSlotsDraft.some((slot) => slotShowsSourceTitle(slot));
   const canEditWordAssignment = Boolean(
-    isWordAssignmentPhase && self?.team && self.role === 'encoder' && myTeamWordRecord && !myTeamWordRecord.confirmed,
+    isWordAssignmentPhase && !candidateSelectionPending && self?.team && self.role === 'encoder' && myTeamWordRecord && !myTeamWordRecord.confirmed,
   );
   const canViewWordAssignment = Boolean(isWordAssignmentPhase && self?.team);
   const isWordAssignmentReadOnly = canViewWordAssignment && !canEditWordAssignment;
@@ -2861,6 +2864,12 @@ function App() {
     setOptimisticLobbySettings(null);
   }
 
+  async function handleCandidateSelectionSubmit(indices: number[]) {
+    if (!snapshot || !teamWordSelection) return;
+    await withAction('submit-word-selection', () => submitTeamWordSelection(snapshot.room.id, teamWordSelection.id, indices),
+      { refreshRoomId: snapshot.room.id });
+  }
+
   async function handleLobbyTimerChange(phase: TimedPhase, minutes: number) {
     if (!snapshot || !self?.is_host) {
       return;
@@ -3036,27 +3045,6 @@ function App() {
     setWordAssignmentNotice(null);
     setDecodeGuess('');
     setInterceptGuess('');
-  }
-
-  async function handleGenerateWords() {
-    if (!snapshot || !self?.team) {
-      return;
-    }
-
-    const team = self.team;
-    const result = await withAction('generate-team-words', () => generateTeamWords(snapshot.room.id, team));
-    if (!result || result.length !== 4) {
-      return;
-    }
-
-    invalidateTeamWordDraftAsyncResults();
-    freezeTeamWordServerSync();
-    setTeamWordSlotsDraft(result.map((slot) => normalizeTeamWordSlot(slot)));
-    setTeamWordDraftMode('generated');
-    setTeamWordFormDirty(true);
-    setTeamWordManualModePinned(false);
-    setPendingConfirmedTeamWordSlots(null);
-    setWordAssignmentNotice(null);
   }
 
   async function handleReplaceTeamWord(index: number) {
@@ -3611,6 +3599,19 @@ function App() {
     );
   }
 
+  if (!sessionUserId) {
+    return (
+      <main className="app-shell">
+        <section className="panel hero-panel">
+          <p className="eyebrow">动漫高手——截码战</p>
+          <h1>暂时无法连接服务</h1>
+          <p className="error-text" role="alert">{actionError ?? '请稍后重试'}</p>
+          <button className="primary-button" type="button" onClick={() => window.location.reload()}>重新连接</button>
+        </section>
+      </main>
+    );
+  }
+
   if (roomId && !snapshot) {
     return (
       <main className="app-shell">
@@ -4029,7 +4030,7 @@ function App() {
                     <path d="M9 7a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
                     <path d="M15 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
                   </svg>
-                  <span>其他设置</span>
+                  <span>更多设置</span>
                 </button>
               </div>
               {!self.is_host ? <p className="muted lobby-settings-permission">仅房主可修改设置</p> : null}
@@ -4354,6 +4355,9 @@ function App() {
                             ) : null}
                           </div>
                           <div className="word-feedback-inline">
+                            {teamWordSelection?.completed && (teamWordSelection.unfamiliar_by_word[slot.text] ?? 0) > 0 ? (
+                              <span className="word-candidate-unfamiliar">{teamWordSelection.unfamiliar_by_word[slot.text]} 人不熟悉</span>
+                            ) : null}
                             {latestTeamWordFeedbackRequest && isFeedbackSlotCurrent ? (
                               canSubmitTeamWordFeedback ? (
                                 <div className="word-feedback-choice" role="group" aria-label={`第 ${index + 1} 个词反馈`}>
@@ -4422,14 +4426,6 @@ function App() {
                     })}
 
                     <div className="assignment-toolbar">
-                      <button
-                        className="ghost-button"
-                        disabled={isWordAssignmentReadOnly || busyKey !== null}
-                        onClick={() => void handleGenerateWords()}
-                        type="button"
-                      >
-                        随机生成动画标题
-                      </button>
                       {bangumiCharacterExtractEnabled ? (
                         <button
                           className="ghost-button"
@@ -5034,6 +5030,13 @@ function App() {
         />
       ) : null}
 
+      {isWordAssignmentPhase && !isSpectator && teamWordSelection && (candidateSelectionPending
+        || (teamWordSelection.completed && !hasCompleteTeamWordDraft && !teamWordFormDirty)) ? (
+        <TeamWordSelectionDialog key={`${teamWordSelection.id}-${self?.id}`}
+          selection={teamWordSelection} memberCount={myTeamPlayers.filter(player => !player.is_spectator).length}
+          busy={busyKey !== null} error={actionError} onSubmit={handleCandidateSelectionSubmit} />
+      ) : null}
+
       {lobbySettingsModalOpen ? (
         <div
           className="modal-backdrop"
@@ -5047,7 +5050,7 @@ function App() {
           <section aria-modal="true" className="modal-card modal-card-settings" role="dialog">
             <div className="modal-card-head">
               <div>
-                <h2>其他设置</h2>
+                <h2>更多设置</h2>
               </div>
               <button
                 className="ghost-button"
@@ -5060,19 +5063,6 @@ function App() {
             </div>
 
             <div className="modal-form-stack">
-              <div className="settings-section discussion-settings">
-                <strong>游戏流程</strong>
-                <div className="settings-mode-grid" role="radiogroup" aria-label="游戏流程">
-                  {([
-                    { mode: 'parallel', title: '按阶段进行', detail: '加密后，双方先解密己方线索，再拦截对方线索' },
-                    { mode: 'sequential', title: '按线索进行', detail: '加密后，双方同时解密与拦截，先红队线索、后蓝队线索（首轮各自解密）' },
-                  ] as const).map(option => <label className={cn('settings-mode-card', 'settings-mode-choice', discussionMode === option.mode && 'settings-mode-card-active')} key={option.mode}>
-                    <input type="radio" name="discussion-mode" checked={discussionMode === option.mode}
-                      disabled={!self.is_host || busyKey !== null} onChange={() => void handleDiscussionSettingsChange(option.mode)} />
-                    <span><strong>{option.title}</strong><small>{option.detail}</small></span>
-                  </label>)}
-                </div>
-              </div>
               <div className="settings-section">
                 <strong>胜负规则</strong>
                 <div className="settings-mode-grid" role="radiogroup" aria-label="胜负规则">
@@ -5137,6 +5127,20 @@ function App() {
                       </select>
                     </label>
                   </section>
+                </div>
+              </div>
+
+              <div className="settings-section discussion-settings">
+                <strong>游戏流程</strong>
+                <div className="settings-mode-grid" role="radiogroup" aria-label="游戏流程">
+                  {([
+                    { mode: 'parallel', title: '按阶段进行', detail: '加密后，双方先解密己方线索，再拦截对方线索' },
+                    { mode: 'sequential', title: '按线索进行', detail: '加密后，双方同时解密与拦截，先红队线索、后蓝队线索（首轮各自解密）' },
+                  ] as const).map(option => <label className={cn('settings-mode-card', 'settings-mode-choice', discussionMode === option.mode && 'settings-mode-card-active')} key={option.mode}>
+                    <input type="radio" name="discussion-mode" checked={discussionMode === option.mode}
+                      disabled={!self.is_host || busyKey !== null} onChange={() => void handleDiscussionSettingsChange(option.mode)} />
+                    <span><strong>{option.title}</strong><small>{option.detail}</small></span>
+                  </label>)}
                 </div>
               </div>
 

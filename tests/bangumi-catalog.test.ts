@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { RoomRecord, RoomSnapshot } from '../src/types';
 import { RoomDurableObject, type Env } from '../worker/index';
 import { BANGUMI_POPULAR_ANIME } from '../worker/data/bangumi-popular-anime';
+import { DEFAULT_BANGUMI_POPULAR_CATALOG } from '../src/config/bangumi';
 
 type StoredRoom = { room: RoomRecord; bangumiCatalogEntries: Array<{ subjectId: number; title: string }> };
 
@@ -40,10 +41,10 @@ test('new rooms persist a usable default catalog before any catalog action', asy
   const state = harness.stored.get('state') as StoredRoom;
   assert.equal(state.room.bangumi_popular_catalog_limit, 1000);
   assert.equal(state.room.bangumi_popular_year_min, 2005);
-  assert.equal(state.room.bangumi_popular_year_max, 2026);
+  assert.equal(state.room.bangumi_popular_year_max, DEFAULT_BANGUMI_POPULAR_CATALOG.yearMax);
   assert.equal(state.room.bangumi_catalog_word_count, 1000);
   const expected = BANGUMI_POPULAR_ANIME
-    .filter((entry) => entry.year !== null && entry.year >= 2005 && entry.year <= 2026)
+    .filter((entry) => entry.year !== null && entry.year >= 2005 && entry.year <= DEFAULT_BANGUMI_POPULAR_CATALOG.yearMax)
     .slice(0, 1000).map(({ subjectId, title }) => ({ subjectId, title }));
   assert.deepEqual(state.bangumiCatalogEntries, expected);
   harness.reload();

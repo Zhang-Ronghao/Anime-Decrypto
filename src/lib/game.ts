@@ -116,6 +116,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
+export function fetchBangumiCovers(subjectIds: number[], signal: AbortSignal) {
+  return request<{ covers: Record<number, string | null> }>('/api/bangumi/covers', {
+    method: 'POST', body: JSON.stringify({ subjectIds }),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+  });
+}
+
 async function action<T = null>(roomId: string, payload: Record<string, unknown>): Promise<T> {
   const body = {
     ...payload,
@@ -339,8 +346,8 @@ export async function startGame(roomId: string) {
   await action(roomId, { type: 'startGame' });
 }
 
-export async function generateTeamWords(roomId: string, team: Team) {
-  return action<TeamWordSlot[]>(roomId, { type: 'generateTeamWords', team });
+export async function submitTeamWordSelection(roomId: string, selectionId: string, excludedIndices: number[]) {
+  await action(roomId, { type: 'submitTeamWordSelection', selectionId, excludedIndices });
 }
 
 export async function replaceTeamWordSlot(roomId: string, team: Team, index: number) {

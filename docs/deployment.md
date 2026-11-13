@@ -178,7 +178,9 @@ npm run build
 npm run worker:deploy
 ```
 
-如果 Pages 走 GitHub 自动部署，push 到对应分支即可触发前端部署；Worker 仍需要 `npm run worker:deploy`。
+如果 Pages 和 Worker 都已连接 GitHub 自动部署，push 到对应生产分支即可分别触发部署。若只有 Pages 关联 GitHub，Worker 仍需要 `npm run worker:deploy`。
+
+本项目的 Bangumi 每周更新工作流会自动提交精简词库及版本文件，沿用上述 Git 部署流程；需确保 Worker 的构建监听范围包括 `worker/data/`。封面缓存复用现有 `bangumi_source_cache` 表，已执行 `0002_bangumi_cache.sql` 的环境无需新增迁移。详情见 [Bangumi 数据自动更新](./bangumi-catalog.md#统计数据自动更新)。
 
 如果 Pages 手动部署，则再执行：
 

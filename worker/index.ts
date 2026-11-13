@@ -29,6 +29,9 @@ import { GuessDrafts } from './guessDrafts';
 import { discussionTarget, guessPhaseForTeam } from '../src/lib/discussion';
 import { DEFAULT_BANGUMI_POPULAR_CATALOG } from '../src/config/bangumi';
 import { teamName } from '../src/lib/utils';
+import { selectCandidateIndices, type TeamWordSelectionState } from './teamWordSelection';
+import { animeStatistics } from './bangumiStatistics';
+import { getBangumiCovers } from './bangumiCovers';
 
 export interface Env {
   DB: D1Database;
@@ -42,6 +45,7 @@ interface RoomState {
   teamWords: TeamWordsRecord[];
   /** Server-only draw history shared by both teams for the current pool cycle. */
   wordDrawHistory?: string[];
+  teamWordSelections?: TeamWordSelectionState[];
   teamWordFeedbackRequests: TeamWordFeedbackRequestRecord[];
   teamWordFeedbackResponses: TeamWordFeedbackResponseRecord[];
   roundGuessFeedbackResponses: RoundGuessFeedbackResponseRecord[];
@@ -96,6 +100,7 @@ type Action =
     | { type: 'randomizeTeams' }
     | { type: 'startGame' }
     | { type: 'generateTeamWords'; team: Team }
+    | { type: 'submitTeamWordSelection'; selectionId: string; excludedIndices: number[] }
     | { type: 'replaceTeamWordSlot'; team: Team; index: number }
     | { type: 'loadBangumiCatalog'; payload: LoadBangumiCatalogPayload }
     | { type: 'saveTeamWords'; team: Team; words: string[] }
@@ -379,6 +384,8 @@ function ensureRevision(state: RoomState): RoomState {
   }
 
   state.room.force_phase_timeout_enabled = state.room.force_phase_timeout_enabled === true;
+  // Discard the retired switch without restarting selection in an active legacy room.
+  if ('candidate_selection_enabled' in state.room) delete state.room.candidate_selection_enabled;
   state.room.discussion_mode = state.room.discussion_mode === 'sequential' ? 'sequential' : 'parallel';
   state.room.discussion_phase_minutes = clampInt(state.room.discussion_phase_minutes ?? 2, 1, 5);
   state.room.discussion_team = state.room.phase === 'discuss' ? state.room.discussion_team ?? 'A' : null;
@@ -683,11 +690,13 @@ function publicSnapshot(state: RoomState, userId: string, fullRoundHistory = fal
     .map((submission) => filterSubmission(submission, self, state.room.phase))
     .sort((left, right) => right.round_number - left.round_number || left.team.localeCompare(right.team));
   return {
+    teamWordSelection: selectionSnapshot(state, self),
     submissionProgress: roomSubmissionProgress(state.room, state.submissions),
     server_now: nowIso(),
     room: state.room,
     players: [...state.players].sort(sortPlayers),
-    teamWords: state.teamWords.filter((record) => canSeeTeamWords(record.team, self, state.room.phase)),
+    teamWords: state.teamWords.filter((record) => canSeeTeamWords(record.team, self, state.room.phase))
+      .map(record => ({ ...record, seen_words: [] })),
     teamWordFeedbackRequests: state.teamWordFeedbackRequests.filter((record) => self.team === record.team),
     teamWordFeedbackResponses: state.teamWordFeedbackResponses.filter((record) => self.team === record.team),
     roundGuessFeedbackResponses: state.roundGuessFeedbackResponses.filter((record) => self.team === record.team),
@@ -974,6 +983,46 @@ function drawWordTexts(state: RoomState, count: number): string[] {
   }
   state.wordDrawHistory = Array.from(seen);
   return picked;
+}
+
+function slotForWord(state: RoomState, word: string): TeamWordSlot {
+  const entry = state.bangumiCatalogEntries.find((item) => item.title === word);
+  return { text: word, subjectId: entry?.subjectId ?? null, sourceTitle: entry?.title ?? null,
+    showSourceTitle: false, characterOptions: [] };
+}
+
+function selectionSnapshot(state: RoomState, self: PlayerRecord): RoomSnapshot['teamWordSelection'] {
+  if (self.is_spectator || !self.team || state.room.phase !== 'word_assignment') return null;
+  const selection = state.teamWordSelections?.find(entry => entry.team === self.team);
+  if (!selection) return null;
+  const members = state.players.filter(player => player.team === self.team && !player.is_spectator);
+  return {
+    id: selection.id, team: selection.team,
+    candidates: selection.candidates.map(slot => ({ ...slot, statistics: animeStatistics(slot.subjectId) })),
+    submitted_player_ids: members.filter(player => Object.hasOwn(selection.exclusions, player.id)).map(player => player.id),
+    own_excluded_indices: selection.exclusions[self.id] ?? null,
+    completed: selection.completed,
+    unfamiliar_by_word: selection.completed ? selection.unfamiliar_by_word : {},
+  };
+}
+
+function completeCandidateSelections(state: RoomState): void {
+  if (state.room.phase !== 'word_assignment') return;
+  for (const selection of state.teamWordSelections ?? []) {
+    if (selection.completed) continue;
+    const members = state.players.filter(player => player.team === selection.team && !player.is_spectator);
+    if (!members.length || members.some(player => !Object.hasOwn(selection.exclusions, player.id))) continue;
+    const exclusions = members.map(player => selection.exclusions[player.id]);
+    const occupied = new Set(state.teamWords.filter(record => record.team !== selection.team).flatMap(record => record.words));
+    const available = selection.candidates.flatMap((slot, i) => occupied.has(slot.text) ? [] : [i]);
+    const indices = selectCandidateIndices(selection.candidates.length, exclusions, available);
+    const record = teamWordRecord(state, selection.team);
+    record.word_slots = indices.map(i => selection.candidates[i]);
+    record.words = record.word_slots.map(slot => slot.text);
+    selection.unfamiliar_by_word = Object.fromEntries(indices.map(i => [selection.candidates[i].text,
+      exclusions.filter(vote => vote.includes(i)).length]));
+    selection.completed = true;
+  }
 }
 
 function drawTeamSlots(state: RoomState, team: Team): TeamWordSlot[] {
@@ -1402,6 +1451,7 @@ export class RoomDurableObject {
     options: { persistImmediately?: boolean } = {},
   ): Promise<void> {
     ensureRevision(current);
+    completeCandidateSelections(current);
     current.room.revision += 1;
     touch(current);
     this.stateCache = current;
@@ -1793,9 +1843,32 @@ export class RoomDurableObject {
         return null;
       case 'generateTeamWords': {
         this.requireTeamEncoder(current, userId, action.team);
+        // Keep this action only for already-running rooms from before screening was mandatory.
+        if (current.teamWordSelections?.length) throw new HttpError(409, '筛选完成后仅支持单个换词。');
         const slots = drawTeamSlots(current, action.team);
         await this.save(current, ['team_words', 'rooms']);
         return slots;
+      }
+      case 'submitTeamWordSelection': {
+        const self = requireSelf(current, userId);
+        const selection = current.teamWordSelections?.find(entry => entry.id === action.selectionId);
+        if (!selection || self.is_spectator || self.team !== selection.team) {
+          throw new HttpError(403, '只有本队玩家可以筛选候选词。');
+        }
+        if (current.room.phase !== 'word_assignment' || selection.completed) {
+          throw new HttpError(409, '本队候选筛选已结束。');
+        }
+        if (Object.hasOwn(selection.exclusions, self.id)) {
+          throw new HttpError(409, '已提交筛选，请等待队友。');
+        }
+        const indices = action.excludedIndices;
+        if (!Array.isArray(indices) || indices.some(i => !Number.isInteger(i) || i < 0 || i >= selection.candidates.length)
+          || new Set(indices).size !== indices.length) {
+          throw new HttpError(400, '排除的候选词无效。');
+        }
+        selection.exclusions[self.id] = [...indices];
+        await this.save(current, ['team_words', 'rooms'], { persistImmediately: true });
+        return null;
       }
       case 'replaceTeamWordSlot': {
         this.requireTeamEncoder(current, userId, action.team);
@@ -2015,6 +2088,15 @@ export class RoomDurableObject {
     assignRoles(current, 1);
     current.teamWords = [createTeamWords(current.room.id, 'A'), createTeamWords(current.room.id, 'B')];
     current.wordDrawHistory = [];
+    current.teamWordSelections = [];
+    const source = current.bangumiCatalogEntries.length ? current.bangumiCatalogEntries.map(entry => entry.title) : DEFAULT_WORD_POOL;
+    // Small custom catalogs retain all their available terms instead of requiring a larger catalog.
+    const count = Math.min(12, new Set(source).size);
+    for (const team of ['A', 'B'] as const) {
+      const candidates = drawWordTexts(current, count).map(word => slotForWord(current, word));
+      teamWordRecord(current, team).seen_words = candidates.map(slot => slot.text);
+      current.teamWordSelections.push({ id: id(), team, candidates, exclusions: {}, completed: false, unfamiliar_by_word: {} });
+    }
     current.roundCodes = [];
     current.submissions = [];
     current.teamWordFeedbackRequests = [];
@@ -2027,6 +2109,11 @@ export class RoomDurableObject {
     const self = requireSelf(current, userId);
     if (self.team !== team || self.role !== 'encoder' || self.is_spectator) {
       throw new HttpError(403, '只有本队加密/拦截者可以执行该操作。');
+    }
+
+    if (current.room.phase === 'word_assignment'
+      && current.teamWordSelections?.some(entry => entry.team === team && !entry.completed)) {
+      throw new HttpError(409, '请等待本队完成候选筛选。');
     }
 
     return self;
@@ -2519,6 +2606,7 @@ export class RoomDurableObject {
     current.room.team_b_words_confirmed = false;
     current.teamWords = [];
     current.wordDrawHistory = [];
+    current.teamWordSelections = [];
     current.roundCodes = [];
     current.submissions = [];
     current.teamWordFeedbackRequests = [];
@@ -3010,6 +3098,14 @@ export default {
       }
 
       const userId = requireSession(request);
+      if (url.pathname === '/api/bangumi/covers' && request.method === 'POST') {
+        const body: unknown = await request.json();
+        const ids = body && typeof body === 'object' && 'subjectIds' in body ? body.subjectIds : null;
+        if (!Array.isArray(ids) || ids.length > 16 || ids.some(id => !Number.isSafeInteger(id) || id <= 0 || id > 1_000_000_000)) {
+          throw new HttpError(400, '作品 ID 无效。');
+        }
+        return json({ covers: await getBangumiCovers(env.DB, ids) }, {}, request, env);
+      }
       if (url.pathname === '/api/rooms' && request.method === 'POST') {
         const body = (await request.json()) as { playerName?: string; desiredRoomCode?: string | null; clientActionId?: string };
         const roomId = id();

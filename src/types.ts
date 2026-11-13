@@ -10,12 +10,20 @@ export interface BangumiCatalogEntry {
   title: string;
 }
 
+export interface BangumiAnimeStatistics {
+  year: number | null;
+  score: number | null;
+  collectionCount: number;
+}
+
 export interface TeamWordSlot {
   text: string;
   subjectId: number | null;
   sourceTitle: string | null;
   showSourceTitle: boolean;
   characterOptions: string[];
+  /** Offline Archive statistics, included only with visible candidates. */
+  statistics?: BangumiAnimeStatistics | null;
 }
 
 export interface RoomRecord {
@@ -100,6 +108,17 @@ export interface TeamWordFeedbackRequestRecord {
   created_at: string;
 }
 
+/** Only the viewer's team pool and own exclusions are sent to the client. */
+export interface TeamWordSelectionSnapshot {
+  id: string;
+  team: Team;
+  candidates: TeamWordSlot[];
+  submitted_player_ids: string[];
+  own_excluded_indices: number[] | null;
+  completed: boolean;
+  unfamiliar_by_word: Record<string, number>;
+}
+
 export interface TeamWordFeedbackResponseRecord {
   id: string;
   request_id: string;
@@ -158,6 +177,7 @@ export interface RoundSubmissionRecord {
 }
 
 export interface RoomSnapshot {
+  teamWordSelection?: TeamWordSelectionSnapshot | null;
   /** Public completion of each team's current task, independent of answer visibility. */
   submissionProgress: Record<Team, boolean> | null;
   server_now: string;

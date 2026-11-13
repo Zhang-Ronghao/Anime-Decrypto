@@ -1,0 +1,49 @@
+name: Update Bangumi catalog
+
+on:
+  schedule:
+    # Wednesday 08:23 Asia/Shanghai, after the official weekly snapshot.
+    - cron: '23 0 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-bangumi-catalog
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Refresh compact anime statistics
+        run: python scripts/update-bangumi-catalog.py
+      - name: Validate generated data and application
+        run: |
+          npm test
+          npm run build
+          npm run worker:typecheck
+      - name: Commit validated data for Cloudflare Git deployments
+        run: |
+          if git diff --quiet -- worker/data/bangumi-popular-anime.ts worker/data/bangumi-popular-anime.meta.json && [ -z "$(git ls-files --others --exclude-standard worker/data/bangumi-popular-anime.meta.json)" ]; then
+            echo "Catalog unchanged"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add worker/data/bangumi-popular-anime.ts worker/data/bangumi-popular-anime.meta.json
+          git commit -m 'data: refresh Bangumi anime catalog'
+          git push

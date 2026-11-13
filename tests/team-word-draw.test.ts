@@ -6,6 +6,7 @@ import { RoomDurableObject, type Env } from '../worker/index';
 type StoredRoom = Pick<RoomSnapshot, 'room' | 'teamWords'> & {
   bangumiCatalogEntries: Array<{ subjectId: number; title: string }>;
   wordDrawHistory?: string[];
+  teamWordSelections?: Array<{ candidates: TeamWordSlot[]; completed: boolean }>;
 };
 
 async function drawHarness(poolSize: number) {
@@ -38,6 +39,11 @@ async function drawHarness(poolSize: number) {
   }
   await request(1, { type: 'startGame' });
   const current = () => stored.get('state') as StoredRoom;
+  // Legacy in-progress rooms still support their original draw actions. New games
+  // use mandatory screening, covered separately by team-word-selection.test.ts.
+  delete current().teamWordSelections;
+  current().wordDrawHistory = [];
+  current().teamWords.forEach(record => { record.seen_words = []; });
   const pool = Array.from({ length: poolSize }, (_, index) => `动画 ${index + 1}`);
   current().bangumiCatalogEntries = pool.map((title, subjectId) => ({ subjectId, title }));
   const reload = () => { object = new RoomDurableObject(state, env); };
@@ -165,8 +171,11 @@ test('starting a new game clears the shared draw cycle', async () => {
     await h.request(index, { type: 'updateSelfTeam', team: index <= 2 ? 'A' : 'B' });
   }
   await h.request(1, { type: 'startGame' });
-  assert.deepEqual(h.current().wordDrawHistory, []);
-  assert.ok(h.current().teamWords.every((record) => record.seen_words.length === 0));
-  await h.draw('B');
-  assert.equal(h.current().wordDrawHistory!.length, 4);
+  const selections = h.current().teamWordSelections!;
+  assert.equal(selections.length, 2);
+  assert.ok(selections.every(selection => !selection.completed));
+  const candidates = new Set(selections.flatMap(selection => selection.candidates.map(slot => slot.text)));
+  assert.deepEqual(new Set(h.current().wordDrawHistory), candidates);
+  assert.equal(candidates.size, 12);
+  assert.ok(h.current().teamWords.every(record => record.words.every(word => !word)));
 });
