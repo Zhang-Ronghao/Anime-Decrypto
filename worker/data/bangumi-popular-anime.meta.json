@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "assetName": "dump-2026-11-10.210405Z.zip",
-  "sha256": "sha256:caaac0ea65e38def9c811aa3b748c8bf7b35287928ef688069343c2970c2675d",
-  "sourceDate": "2026-11-10",
-  "generatedAt": "2026-11-10T21:04:06Z",
-  "entryCount": 31265,
-  "archiveLineCount": 703118
+  "assetName": "dump-2026-11-17.210420Z.zip",
+  "sha256": "sha256:1060d50eec3755a3be4e52b8ceb998a93fdda65c6b8f52c787aea585772103b2",
+  "sourceDate": "2026-11-17",
+  "generatedAt": "2026-11-17T21:04:20Z",
+  "entryCount": 31312,
+  "archiveLineCount": 705022
 }
